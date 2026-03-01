@@ -1,13 +1,21 @@
 <template>
   <button @click="handleClick" :disabled="loading"
-    class="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+    class="inline-flex items-center gap-1.5 rounded-button px-3 py-1.5 text-sm font-medium
+           bg-gray-100 text-gray-700 hover:bg-gray-200
+           dark:bg-slate-700 dark:text-gray-300 dark:hover:bg-slate-600
+           disabled:opacity-50 transition-colors">
+    <LanguageIcon class="h-4 w-4" />
     {{ loading ? '翻译中...' : (show ? '隐藏翻译' : '翻译') }}
   </button>
 </template>
 
 <script setup>
 import { ref } from 'vue'
+import { LanguageIcon } from '@heroicons/vue/24/outline'
 import client from '../api/client'
+import { useToast } from '../composables/useToast'
+
+const toast = useToast()
 
 const props = defineProps({
   questionId: Number,
@@ -27,7 +35,7 @@ async function handleClick() {
     const res = await client.post('/ai/translate', { question_id: props.questionId })
     emit('translated', res.data)
   } catch (e) {
-    alert(e.response?.data?.error || '翻译失败')
+    toast.error(e.response?.data?.error || '翻译失败')
   } finally {
     loading.value = false
   }
