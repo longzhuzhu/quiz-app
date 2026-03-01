@@ -136,7 +136,7 @@
               </div>
 
               <!-- AI 按钮 -->
-              <div class="mt-4 flex gap-2">
+              <div class="mt-4 flex flex-wrap items-center gap-2">
                 <TranslateButton
                   :question-id="w.question.id"
                   :has-translation="!!w.question.content_zh"
@@ -144,8 +144,17 @@
                   @translated="onTranslated(w, $event)"
                   @toggle="translationVisible[w.id] = !translationVisible[w.id]"
                 />
-                <ExplainButton :question-id="w.question.id" />
+                <ExplainButton :question-id="w.question.id" @explained="(e) => explainResults[w.id] = e" />
                 <AddVocabButton />
+              </div>
+              <!-- AI 解析内容 -->
+              <div v-if="explainResults[w.id]"
+                class="mt-3 rounded-card border border-sky-200 bg-sky-50 p-4 text-sm
+                       dark:border-sky-800 dark:bg-sky-900/20">
+                <p class="font-medium text-sky-800 dark:text-sky-300">AI 解析</p>
+                <p class="mt-1 whitespace-pre-wrap text-gray-700 dark:text-gray-300">{{ explainResults[w.id].explanation }}</p>
+                <p v-if="explainResults[w.id].explanation_zh"
+                  class="mt-2 whitespace-pre-wrap text-gray-600 dark:text-gray-400">{{ explainResults[w.id].explanation_zh }}</p>
               </div>
             </div>
           </div>
@@ -180,6 +189,7 @@ const selectedBankId = ref(null)
 const banks = ref([])
 const expandedId = ref(null)
 const translationVisible = reactive({})
+const explainResults = reactive({})
 const wrongStats = ref({ unresolved: 0, resolved: 0, total: 0 })
 
 const masteryRate = computed(() => {

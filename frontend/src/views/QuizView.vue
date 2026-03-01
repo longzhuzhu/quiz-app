@@ -28,14 +28,14 @@
     <div class="flex gap-4 items-start">
       <!-- 左侧题目导航 -->
       <div class="hidden md:block w-48 flex-shrink-0">
-        <div class="sticky top-20 rounded-xl bg-white dark:bg-slate-800 shadow-card overflow-hidden">
-          <div class="px-4 py-2.5 bg-gray-50 dark:bg-slate-700/50 border-b border-gray-100 dark:border-slate-700 flex items-center justify-between">
+        <div class="sticky top-20 rounded-xl bg-white dark:bg-slate-800 shadow-card overflow-hidden flex flex-col max-h-[calc(100vh-7rem)]">
+          <div class="px-4 py-2.5 bg-gray-50 dark:bg-slate-700/50 border-b border-gray-100 dark:border-slate-700 flex items-center justify-between flex-shrink-0">
             <span class="text-xs font-semibold text-gray-500 dark:text-gray-400">题目导航</span>
             <span class="text-[10px] text-gray-400 dark:text-gray-500">
               {{ correctCount + wrongCount }} / {{ quizStore.questions.length }}
             </span>
           </div>
-          <div class="max-h-[calc(100vh-12rem)] overflow-y-auto">
+          <div class="flex-1 overflow-y-auto">
             <div class="py-1">
               <button v-for="(q, i) in quizStore.questions" :key="q.id"
                 @click="jumpTo(i)"
@@ -60,7 +60,7 @@
             </div>
           </div>
           <!-- 底部统计 -->
-          <div class="px-4 py-2 bg-gray-50 dark:bg-slate-700/50 border-t border-gray-100 dark:border-slate-700 flex justify-between text-[10px] text-gray-400 dark:text-gray-500">
+          <div class="px-4 py-2 bg-gray-50 dark:bg-slate-700/50 border-t border-gray-100 dark:border-slate-700 flex justify-between text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0">
             <span class="flex items-center gap-1">
               <span class="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>
               正确 {{ correctCount }}
