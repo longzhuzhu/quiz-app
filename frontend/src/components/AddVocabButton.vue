@@ -32,7 +32,7 @@
           </button>
         </div>
       </div>
-      <div v-if="message" class="mt-2 text-xs" :class="messageOk ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'">{{ message }}</div>
+      <div v-if="message" class="mt-2 text-xs" :class="messageOk ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'">{{ message }}</div>
     </div>
   </div>
 </template>

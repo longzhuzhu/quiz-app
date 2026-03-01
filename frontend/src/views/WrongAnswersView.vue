@@ -73,7 +73,7 @@
               </span>
               <span>正确答案: <span class="text-emerald-600 dark:text-emerald-400 font-medium">{{ w.question.correct_answer }}</span></span>
               <span v-if="w.question.question_type === 'multiple'" class="rounded-full bg-amber-100 dark:bg-amber-900/30 px-2 py-0.5 text-amber-600 dark:text-amber-400">多选</span>
-              <span v-else-if="w.question.question_type === 'truefalse'" class="rounded-full bg-blue-100 dark:bg-blue-900/30 px-2 py-0.5 text-blue-600 dark:text-blue-400">判断</span>
+              <span v-else-if="w.question.question_type === 'truefalse'" class="rounded-full bg-sky-100 dark:bg-sky-900/30 px-2 py-0.5 text-sky-600 dark:text-sky-400">判断</span>
             </div>
           </div>
           <div class="ml-4 flex items-center gap-2 flex-shrink-0">

@@ -2,7 +2,11 @@
   <div class="min-h-screen bg-slate-50 dark:bg-slate-900 transition-colors">
     <NavBar v-if="authStore.isLoggedIn" />
     <main class="mx-auto max-w-6xl px-4 py-6 pb-24 md:pb-6">
-      <router-view />
+      <router-view v-slot="{ Component }">
+        <transition name="fade" mode="out-in">
+          <component :is="Component" />
+        </transition>
+      </router-view>
     </main>
     <MobileNav v-if="authStore.isLoggedIn" />
     <ToastNotification />

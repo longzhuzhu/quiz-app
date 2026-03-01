@@ -6,9 +6,9 @@
 
   <!-- 加载错误 -->
   <div v-else-if="session.error" class="py-16 text-center">
-    <XCircleIcon class="mx-auto h-12 w-12 text-gray-300" />
-    <p class="mt-4 text-gray-500">加载失败，请返回重试</p>
-    <router-link to="/" class="mt-4 inline-block text-primary-600 hover:text-primary-500">返回首页</router-link>
+    <XCircleIcon class="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600" />
+    <p class="mt-4 text-gray-500 dark:text-gray-400">加载失败，请返回重试</p>
+    <router-link to="/" class="mt-4 inline-block text-primary-600 hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300">返回首页</router-link>
   </div>
 
   <!-- 结果 -->

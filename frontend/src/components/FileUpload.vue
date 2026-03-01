@@ -18,7 +18,7 @@
     </div>
     <div v-if="uploading" class="mt-4 text-sm text-primary-600 dark:text-primary-400">上传中...</div>
     <div v-if="result" class="mt-4 text-sm"
-      :class="result.error ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'">
+      :class="result.error ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'">
       {{ result.message || result.error }}
     </div>
   </div>
