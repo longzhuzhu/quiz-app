@@ -1,68 +1,108 @@
 <template>
   <div>
+    <!-- 标题栏 -->
     <div class="mb-6 flex items-center justify-between">
-      <h1 class="text-2xl font-bold text-gray-900">答题历史</h1>
-      <button v-if="sessions.length > 0" @click="confirmClear"
-        class="rounded-md border border-red-300 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50">
+      <h1 class="text-2xl font-bold text-gray-900 dark:text-white">答题历史</h1>
+      <BaseButton v-if="sessions.length > 0" variant="danger" size="sm" @click="showConfirmClear = true">
         清空历史
-      </button>
+      </BaseButton>
     </div>
 
-    <div v-if="loading" class="text-center text-gray-500">加载中...</div>
-    <div v-else-if="sessions.length === 0" class="py-12 text-center text-gray-400">暂无答题记录</div>
+    <!-- 加载骨架屏 -->
+    <SkeletonLoader v-if="loading" type="list" :count="3" />
+
+    <!-- 空状态 -->
+    <div v-else-if="sessions.length === 0" class="flex flex-col items-center justify-center py-20 text-gray-400 dark:text-gray-500">
+      <ClockIcon class="h-16 w-16 mb-4" />
+      <p class="text-lg font-medium">暂无答题记录</p>
+      <p class="mt-1 text-sm">完成一次练习后，记录将显示在这里</p>
+    </div>
+
+    <!-- 历史记录列表 -->
     <template v-else>
       <div class="space-y-3">
-        <router-link v-for="s in sessions" :key="s.id" :to="`/quiz/${s.id}/result`"
-          class="block rounded-lg bg-white p-5 shadow hover:shadow-md transition-shadow">
-          <div class="flex items-center justify-between">
-            <div>
-              <p class="font-medium text-gray-900">{{ s.bank_name }}</p>
-              <p class="mt-1 text-sm text-gray-500">
-                {{ s.mode === 'sequential' ? '顺序' : s.mode === 'random' ? '随机' : '错题' }}练习
-                · {{ new Date(s.created_at).toLocaleDateString('zh-CN') }}
-              </p>
+        <router-link
+          v-for="s in sessions"
+          :key="s.id"
+          :to="`/quiz/${s.id}/result`"
+          class="flex items-center gap-4 rounded-xl bg-white dark:bg-slate-800 shadow-card hover:shadow-card-hover transition-all p-5"
+        >
+          <!-- 正确率圆环 -->
+          <svg class="h-10 w-10 flex-shrink-0 -rotate-90" viewBox="0 0 36 36">
+            <circle cx="18" cy="18" r="15" fill="none" stroke-width="3" class="stroke-gray-200 dark:stroke-slate-700" />
+            <circle cx="18" cy="18" r="15" fill="none" stroke-width="3" stroke-linecap="round"
+              :class="s.accuracy >= 60 ? 'stroke-emerald-500' : 'stroke-rose-500'"
+              :stroke-dasharray="94.248"
+              :stroke-dashoffset="94.248 * (1 - s.accuracy / 100)" />
+          </svg>
+
+          <!-- 信息区 -->
+          <div class="flex-1 min-w-0">
+            <p class="font-medium text-gray-900 dark:text-white truncate">{{ s.bank_name }}</p>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ s.mode === 'sequential' ? '顺序' : s.mode === 'random' ? '随机' : '错题' }}练习
+              · {{ new Date(s.created_at).toLocaleDateString('zh-CN') }}
+            </p>
+          </div>
+
+          <!-- 正确率数值 -->
+          <div class="text-right flex-shrink-0">
+            <div class="text-lg font-bold" :class="s.accuracy >= 60 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500 dark:text-rose-400'">
+              {{ s.accuracy }}%
             </div>
-            <div class="text-right">
-              <div class="text-lg font-bold" :class="s.accuracy >= 60 ? 'text-green-600' : 'text-red-500'">
-                {{ s.accuracy }}%
-              </div>
-              <p class="text-xs text-gray-400">{{ s.correct_count }}/{{ s.answered_count }}</p>
-            </div>
+            <p class="text-xs text-gray-400 dark:text-gray-500">{{ s.correct_count }}/{{ s.answered_count }}</p>
           </div>
         </router-link>
       </div>
 
       <!-- 分页 -->
       <div v-if="totalPages > 1" class="mt-6 flex items-center justify-center gap-2">
-        <button @click="goPage(page - 1)" :disabled="page <= 1"
-          class="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-30">
+        <BaseButton variant="secondary" size="sm" :disabled="page <= 1" @click="goPage(page - 1)">
           上一页
-        </button>
+        </BaseButton>
         <template v-for="p in pageList" :key="p">
-          <span v-if="p === '...'" class="px-2 text-sm text-gray-400">...</span>
-          <button v-else @click="goPage(p)"
-            class="rounded-md px-3 py-1.5 text-sm"
-            :class="p === page ? 'bg-indigo-600 text-white' : 'border border-gray-300 text-gray-600 hover:bg-gray-50'">
+          <span v-if="p === '...'" class="px-2 text-sm text-gray-400 dark:text-gray-500">...</span>
+          <BaseButton v-else size="sm"
+            :variant="p === page ? 'primary' : 'secondary'"
+            @click="goPage(p)">
             {{ p }}
-          </button>
+          </BaseButton>
         </template>
-        <button @click="goPage(page + 1)" :disabled="page >= totalPages"
-          class="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-30">
+        <BaseButton variant="secondary" size="sm" :disabled="page >= totalPages" @click="goPage(page + 1)">
           下一页
-        </button>
+        </BaseButton>
       </div>
     </template>
+
+    <!-- 清空确认弹窗 -->
+    <ConfirmDialog
+      :open="showConfirmClear"
+      danger
+      title="清空历史"
+      message="确定要清空所有答题历史吗？此操作不可撤销。"
+      confirm-text="清空"
+      @confirm="doClear"
+      @cancel="showConfirmClear = false"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import client from '../api/client'
+import BaseButton from '../components/BaseButton.vue'
+import ConfirmDialog from '../components/ConfirmDialog.vue'
+import SkeletonLoader from '../components/SkeletonLoader.vue'
+import { useToast } from '../composables/useToast'
+import { ClockIcon } from '@heroicons/vue/24/outline'
+
+const toast = useToast()
 
 const sessions = ref([])
 const loading = ref(false)
 const page = ref(1)
 const totalPages = ref(1)
+const showConfirmClear = ref(false)
 
 const pageList = computed(() => {
   const pages = []
@@ -98,15 +138,16 @@ function goPage(p) {
   fetchHistory()
 }
 
-async function confirmClear() {
-  if (!confirm('确定要清空所有答题历史吗？此操作不可撤销。')) return
+async function doClear() {
+  showConfirmClear.value = false
   try {
     await client.delete('/quiz/history')
     sessions.value = []
     page.value = 1
     totalPages.value = 1
+    toast.success('历史已清空')
   } catch (e) {
-    alert(e.response?.data?.error || '清空失败')
+    toast.error(e.response?.data?.error || '清空失败')
   }
 }
 
