@@ -1,4 +1,5 @@
 <template>
+  <div>
   <div v-if="!quizStore.session" class="text-center py-12 text-gray-500 dark:text-gray-400">加载中...</div>
   <div v-else>
     <!-- 顶部信息栏 -->
@@ -103,6 +104,7 @@
         />
       </div>
     </div>
+  </div>
   </div>
 </template>
 

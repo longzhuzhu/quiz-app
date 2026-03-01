@@ -1,4 +1,5 @@
 <template>
+  <div>
   <!-- 加载中 -->
   <div v-if="!session" class="mx-auto max-w-lg py-12">
     <SkeletonLoader type="card" />
@@ -78,6 +79,7 @@
         <BaseButton variant="secondary" @click="retryQuiz">再来一次</BaseButton>
       </div>
     </div>
+  </div>
   </div>
 </template>
 
