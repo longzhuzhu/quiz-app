@@ -1,1 +1,38 @@
 @import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-primary-50: oklch(0.97 0.014 272);
+  --color-primary-100: oklch(0.94 0.028 272);
+  --color-primary-200: oklch(0.87 0.06 272);
+  --color-primary-300: oklch(0.78 0.1 272);
+  --color-primary-400: oklch(0.68 0.14 272);
+  --color-primary-500: oklch(0.585 0.17 272);
+  --color-primary-600: oklch(0.53 0.18 272);
+  --color-primary-700: oklch(0.46 0.16 272);
+  --color-primary-800: oklch(0.39 0.13 272);
+  --color-primary-900: oklch(0.33 0.1 272);
+
+  --radius-card: 0.75rem;
+  --radius-card-lg: 1rem;
+  --radius-button: 0.5rem;
+
+  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.06);
+  --shadow-card-hover: 0 4px 6px -1px rgb(0 0 0 / 0.07), 0 2px 4px -2px rgb(0 0 0 / 0.07);
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-4px); }
+  40%, 80% { transform: translateX(4px); }
+}
+
+.animate-shake { animation: shake 0.4s ease-in-out; }
+
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* 路由过渡动画 */
+.fade-enter-active, .fade-leave-active { transition: opacity 0.15s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }

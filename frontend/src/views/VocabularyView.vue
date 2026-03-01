@@ -1,75 +1,71 @@
 <template>
   <div class="relative">
-    <h1 class="mb-6 text-2xl font-bold text-gray-900">单词本</h1>
+    <h1 class="mb-6 text-2xl font-bold text-gray-900 dark:text-white">单词本</h1>
 
     <!-- 统计卡片 -->
     <div class="mb-8 grid grid-cols-2 gap-4">
-      <div class="rounded-lg bg-white p-5 shadow hover:shadow-md transition-shadow cursor-pointer"
-        :class="{ 'ring-2 ring-indigo-500': activeTab === 'professional' }"
+      <div class="rounded-card-lg bg-white dark:bg-slate-800 p-5 shadow-card hover:shadow-card-hover transition-shadow cursor-pointer"
+        :class="{ 'ring-2 ring-primary-500': activeTab === 'professional' }"
         @click="activeTab = 'professional'">
-        <div class="text-sm text-gray-500">专业词汇</div>
-        <div class="mt-1 text-2xl font-bold text-indigo-600">{{ stats.professional || 0 }}</div>
-        <p class="mt-1 text-xs text-gray-400">CIPT 考试核心术语</p>
+        <div class="text-sm text-gray-500 dark:text-gray-400">专业词汇</div>
+        <div class="mt-1 text-2xl font-bold text-primary-600 dark:text-primary-400">{{ stats.professional || 0 }}</div>
+        <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">CIPT 考试核心术语</p>
       </div>
-      <div class="rounded-lg bg-white p-5 shadow hover:shadow-md transition-shadow cursor-pointer"
-        :class="{ 'ring-2 ring-indigo-500': activeTab === 'personal' }"
+      <div class="rounded-card-lg bg-white dark:bg-slate-800 p-5 shadow-card hover:shadow-card-hover transition-shadow cursor-pointer"
+        :class="{ 'ring-2 ring-primary-500': activeTab === 'personal' }"
         @click="activeTab = 'personal'">
-        <div class="text-sm text-gray-500">我的单词本</div>
-        <div class="mt-1 text-2xl font-bold text-emerald-600">{{ stats.personal || 0 }}</div>
-        <p class="mt-1 text-xs text-gray-400">学习中收藏的单词</p>
+        <div class="text-sm text-gray-500 dark:text-gray-400">我的单词本</div>
+        <div class="mt-1 text-2xl font-bold text-emerald-600 dark:text-emerald-400">{{ stats.personal || 0 }}</div>
+        <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">学习中收藏的单词</p>
       </div>
     </div>
 
     <!-- ========== 专业词汇 ========== -->
     <div v-if="activeTab === 'professional'">
       <div class="mb-4 flex items-center justify-between gap-2 flex-wrap">
-        <h2 class="text-lg font-semibold text-gray-800">专业词汇</h2>
+        <h2 class="text-lg font-semibold text-gray-800 dark:text-white">专业词汇</h2>
         <div class="flex items-center gap-2">
-          <button v-if="isAdmin && untranslatedCount > 0" @click="batchTranslate" :disabled="translating"
-            class="rounded-md bg-teal-500 px-3 py-1.5 text-sm text-white hover:bg-teal-600 disabled:opacity-50">
+          <BaseButton v-if="isAdmin && untranslatedCount > 0" @click="batchTranslate" :disabled="translating" size="sm">
             {{ translating ? '翻译中...' : `批量翻译（${untranslatedCount}）` }}
-          </button>
-          <button v-if="isAdmin" @click="importIAPP" :disabled="importing"
-            class="rounded-md bg-amber-500 px-3 py-1.5 text-sm text-white hover:bg-amber-600 disabled:opacity-50">
+          </BaseButton>
+          <BaseButton v-if="isAdmin" @click="importIAPP" :disabled="importing" variant="secondary" size="sm">
             {{ importing ? '导入中...' : '从 IAPP 导入' }}
-          </button>
-          <button v-if="isAdmin" @click="showAddForm = !showAddForm"
-            class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm text-white hover:bg-indigo-700">
+          </BaseButton>
+          <BaseButton v-if="isAdmin" @click="showAddForm = !showAddForm" size="sm">
             {{ showAddForm ? '取消' : '添加词汇' }}
-          </button>
+          </BaseButton>
         </div>
       </div>
 
       <!-- 翻译进度 -->
-      <div v-if="translating" class="mb-4 rounded-lg bg-teal-50 px-4 py-3 text-sm text-teal-700">
+      <div v-if="translating" class="mb-4 rounded-card bg-teal-50 dark:bg-teal-900/20 px-4 py-3 text-sm text-teal-700 dark:text-teal-300">
         正在批量翻译，每次 10 个... 剩余 {{ translateRemaining }} 个未翻译
       </div>
 
       <!-- 搜索框 -->
       <div class="mb-4">
         <input v-model="searchQuery" placeholder="搜索术语..."
-          class="w-full rounded-md border border-gray-300 px-4 py-2 text-sm focus:border-indigo-500 focus:outline-none" />
+          class="w-full rounded-card border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-4 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" />
       </div>
 
       <!-- 管理员添加表单 -->
-      <div v-if="showAddForm && isAdmin" class="mb-4 rounded-lg bg-white p-4 shadow">
+      <div v-if="showAddForm && isAdmin" class="mb-4 rounded-card-lg bg-white dark:bg-slate-800 p-4 shadow-card">
         <div class="grid grid-cols-2 gap-3">
-          <input v-model="newWord.term" placeholder="英文术语" class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" />
-          <input v-model="newWord.term_zh" placeholder="中文翻译" class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" />
-          <input v-model="newWord.definition" placeholder="英文释义（可选）" class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" />
-          <input v-model="newWord.definition_zh" placeholder="中文释义（可选）" class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" />
+          <input v-model="newWord.term" placeholder="英文术语" class="rounded-card border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" />
+          <input v-model="newWord.term_zh" placeholder="中文翻译" class="rounded-card border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" />
+          <input v-model="newWord.definition" placeholder="英文释义（可选）" class="rounded-card border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" />
+          <input v-model="newWord.definition_zh" placeholder="中文释义（可选）" class="rounded-card border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" />
         </div>
-        <button @click="addWord('professional')" :disabled="!newWord.term.trim()"
-          class="mt-3 rounded-md bg-indigo-600 px-4 py-1.5 text-sm text-white hover:bg-indigo-700 disabled:opacity-50">
+        <BaseButton @click="addWord('professional')" :disabled="!newWord.term.trim()" size="sm" class="mt-3">
           确认添加
-        </button>
+        </BaseButton>
       </div>
 
-      <div v-if="loadingPro" class="text-center text-gray-500 py-12">加载中...</div>
-      <div v-else-if="filteredProfessional.length === 0 && searchQuery" class="py-12 text-center text-gray-400">
+      <div v-if="loadingPro" class="text-center text-gray-500 dark:text-gray-400 py-12">加载中...</div>
+      <div v-else-if="filteredProfessional.length === 0 && searchQuery" class="py-12 text-center text-gray-400 dark:text-gray-500">
         没有找到匹配「{{ searchQuery }}」的术语
       </div>
-      <div v-else-if="professionalWords.length === 0" class="py-12 text-center text-gray-400">暂无专业词汇</div>
+      <div v-else-if="professionalWords.length === 0" class="py-12 text-center text-gray-400 dark:text-gray-500">暂无专业词汇</div>
       <template v-else>
         <!-- A-Z 导航条 -->
         <div class="mb-4 flex flex-wrap gap-1" v-if="!searchQuery">
@@ -78,10 +74,10 @@
             :disabled="!proGrouped[letter]"
             class="w-8 h-8 rounded-md text-xs font-semibold transition-colors flex items-center justify-center"
             :class="proActiveLetter === letter
-              ? 'bg-indigo-600 text-white'
+              ? 'bg-primary-600 text-white dark:bg-primary-500'
               : proGrouped[letter]
-                ? 'bg-white text-gray-700 shadow hover:bg-indigo-50 hover:text-indigo-600'
-                : 'text-gray-300 cursor-default'">
+                ? 'bg-white dark:bg-slate-800 text-gray-700 dark:text-gray-300 shadow hover:bg-primary-50 dark:hover:bg-primary-900/30 hover:text-primary-600 dark:hover:text-primary-400'
+                : 'text-gray-300 dark:text-gray-600 cursor-default'">
             {{ letter }}
           </button>
         </div>
@@ -91,35 +87,36 @@
             <div v-if="proGrouped[letter]" :ref="el => setLetterRef('pro', letter, el)">
               <!-- 字母分隔头 -->
               <div v-if="!searchQuery"
-                class="sticky top-0 z-10 -mx-1 px-3 py-1.5 mb-1 mt-3 first:mt-0 bg-gray-100/90 backdrop-blur-sm rounded-md">
-                <span class="text-sm font-bold text-indigo-600">{{ letter }}</span>
-                <span class="ml-2 text-xs text-gray-400">{{ proGrouped[letter].length }} 个</span>
+                class="sticky top-0 z-10 -mx-1 px-3 py-1.5 mb-1 mt-3 first:mt-0 bg-gray-100/90 dark:bg-slate-800/90 backdrop-blur-sm rounded-md">
+                <span class="text-sm font-bold text-primary-600 dark:text-primary-400">{{ letter }}</span>
+                <span class="ml-2 text-xs text-gray-400 dark:text-gray-500">{{ proGrouped[letter].length }} 个</span>
               </div>
               <!-- 词汇卡片 -->
               <div class="space-y-2 mb-1">
                 <div v-for="w in proGrouped[letter]" :key="w.id"
-                  class="rounded-lg bg-white px-5 py-4 shadow cursor-pointer hover:shadow-md transition-shadow"
+                  class="rounded-card-lg bg-white dark:bg-slate-800 px-5 py-4 shadow-card cursor-pointer hover:shadow-card-hover transition-shadow"
                   @click="toggleExpand(w.id)">
                   <div class="flex items-start justify-between">
                     <div class="flex-1 min-w-0">
                       <div class="flex items-baseline gap-2 flex-wrap">
-                        <span class="font-semibold text-gray-900">{{ w.term }}</span>
-                        <span v-if="w.term_zh" class="text-sm text-emerald-600">{{ w.term_zh }}</span>
+                        <span class="font-semibold text-gray-900 dark:text-white">{{ w.term }}</span>
+                        <span v-if="w.term_zh" class="text-sm text-emerald-600 dark:text-emerald-400">{{ w.term_zh }}</span>
                       </div>
                       <div v-if="w.definition || w.definition_zh" class="mt-1">
-                        <p v-if="w.definition" class="text-sm text-gray-600"
+                        <p v-if="w.definition" class="text-sm text-gray-600 dark:text-gray-400"
                           :class="{ 'line-clamp-2': !expandedIds.has(w.id) }">{{ w.definition }}</p>
-                        <p v-if="w.definition_zh" class="mt-0.5 text-sm text-emerald-600"
+                        <p v-if="w.definition_zh" class="mt-0.5 text-sm text-emerald-600 dark:text-emerald-400"
                           :class="{ 'line-clamp-2': !expandedIds.has(w.id) }">{{ w.definition_zh }}</p>
                       </div>
                     </div>
                     <div class="ml-3 flex flex-shrink-0 items-center gap-2">
-                      <svg class="w-4 h-4 text-gray-300 transition-transform" :class="{ 'rotate-180': expandedIds.has(w.id) }"
+                      <svg class="w-4 h-4 text-gray-300 dark:text-gray-600 transition-transform" :class="{ 'rotate-180': expandedIds.has(w.id) }"
                         fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
                       </svg>
-                      <button v-if="isAdmin" @click.stop="deleteWord(w.id, 'professional')"
-                        class="text-xs text-red-400 hover:text-red-600">删除</button>
+                      <BaseButton v-if="isAdmin" variant="danger" size="sm" @click.stop="confirmDeleteWord(w.id, 'professional')">
+                        删除
+                      </BaseButton>
                     </div>
                   </div>
                 </div>
@@ -133,29 +130,27 @@
     <!-- ========== 我的单词本 ========== -->
     <div v-if="activeTab === 'personal'">
       <div class="mb-4 flex items-center justify-between">
-        <h2 class="text-lg font-semibold text-gray-800">我的单词本</h2>
-        <button @click="showAddForm = !showAddForm"
-          class="rounded-md bg-emerald-600 px-3 py-1.5 text-sm text-white hover:bg-emerald-700">
+        <h2 class="text-lg font-semibold text-gray-800 dark:text-white">我的单词本</h2>
+        <BaseButton @click="showAddForm = !showAddForm" size="sm">
           {{ showAddForm ? '取消' : '添加单词' }}
-        </button>
+        </BaseButton>
       </div>
 
       <!-- 添加表单 -->
-      <div v-if="showAddForm" class="mb-4 rounded-lg bg-white p-4 shadow">
+      <div v-if="showAddForm" class="mb-4 rounded-card-lg bg-white dark:bg-slate-800 p-4 shadow-card">
         <div class="grid grid-cols-2 gap-3">
-          <input v-model="newWord.term" placeholder="英文单词/短语" class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" />
-          <input v-model="newWord.term_zh" placeholder="中文翻译" class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" />
-          <input v-model="newWord.definition" placeholder="英文释义（可选）" class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" />
-          <input v-model="newWord.definition_zh" placeholder="中文释义（可选）" class="rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" />
+          <input v-model="newWord.term" placeholder="英文单词/短语" class="rounded-card border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" />
+          <input v-model="newWord.term_zh" placeholder="中文翻译" class="rounded-card border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" />
+          <input v-model="newWord.definition" placeholder="英文释义（可选）" class="rounded-card border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" />
+          <input v-model="newWord.definition_zh" placeholder="中文释义（可选）" class="rounded-card border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" />
         </div>
-        <button @click="addWord('personal')" :disabled="!newWord.term.trim()"
-          class="mt-3 rounded-md bg-emerald-600 px-4 py-1.5 text-sm text-white hover:bg-emerald-700 disabled:opacity-50">
+        <BaseButton @click="addWord('personal')" :disabled="!newWord.term.trim()" size="sm" class="mt-3">
           确认添加
-        </button>
+        </BaseButton>
       </div>
 
-      <div v-if="loadingPersonal" class="text-center text-gray-500 py-12">加载中...</div>
-      <div v-else-if="personalWords.length === 0" class="py-12 text-center text-gray-400">还没有收藏单词，点击上方添加</div>
+      <div v-if="loadingPersonal" class="text-center text-gray-500 dark:text-gray-400 py-12">加载中...</div>
+      <div v-else-if="personalWords.length === 0" class="py-12 text-center text-gray-400 dark:text-gray-500">还没有收藏单词，点击上方添加</div>
       <template v-else>
         <!-- A-Z 导航条 -->
         <div class="mb-4 flex flex-wrap gap-1">
@@ -164,10 +159,10 @@
             :disabled="!personalGrouped[letter]"
             class="w-8 h-8 rounded-md text-xs font-semibold transition-colors flex items-center justify-center"
             :class="personalActiveLetter === letter
-              ? 'bg-emerald-600 text-white'
+              ? 'bg-primary-600 text-white dark:bg-primary-500'
               : personalGrouped[letter]
-                ? 'bg-white text-gray-700 shadow hover:bg-emerald-50 hover:text-emerald-600'
-                : 'text-gray-300 cursor-default'">
+                ? 'bg-white dark:bg-slate-800 text-gray-700 dark:text-gray-300 shadow hover:bg-primary-50 dark:hover:bg-primary-900/30 hover:text-primary-600 dark:hover:text-primary-400'
+                : 'text-gray-300 dark:text-gray-600 cursor-default'">
             {{ letter }}
           </button>
         </div>
@@ -175,34 +170,35 @@
         <div ref="personalListRef">
           <template v-for="letter in LETTERS" :key="letter">
             <div v-if="personalGrouped[letter]" :ref="el => setLetterRef('personal', letter, el)">
-              <div class="sticky top-0 z-10 -mx-1 px-3 py-1.5 mb-1 mt-3 first:mt-0 bg-gray-100/90 backdrop-blur-sm rounded-md">
-                <span class="text-sm font-bold text-emerald-600">{{ letter }}</span>
-                <span class="ml-2 text-xs text-gray-400">{{ personalGrouped[letter].length }} 个</span>
+              <div class="sticky top-0 z-10 -mx-1 px-3 py-1.5 mb-1 mt-3 first:mt-0 bg-gray-100/90 dark:bg-slate-800/90 backdrop-blur-sm rounded-md">
+                <span class="text-sm font-bold text-primary-600 dark:text-primary-400">{{ letter }}</span>
+                <span class="ml-2 text-xs text-gray-400 dark:text-gray-500">{{ personalGrouped[letter].length }} 个</span>
               </div>
               <div class="space-y-2 mb-1">
                 <div v-for="w in personalGrouped[letter]" :key="w.id"
-                  class="rounded-lg bg-white px-5 py-4 shadow cursor-pointer hover:shadow-md transition-shadow"
+                  class="rounded-card-lg bg-white dark:bg-slate-800 px-5 py-4 shadow-card cursor-pointer hover:shadow-card-hover transition-shadow"
                   @click="toggleExpand(w.id)">
                   <div class="flex items-start justify-between">
                     <div class="flex-1 min-w-0">
                       <div class="flex items-baseline gap-2 flex-wrap">
-                        <span class="font-semibold text-gray-900">{{ w.term }}</span>
-                        <span v-if="w.term_zh" class="text-sm text-emerald-600">{{ w.term_zh }}</span>
+                        <span class="font-semibold text-gray-900 dark:text-white">{{ w.term }}</span>
+                        <span v-if="w.term_zh" class="text-sm text-emerald-600 dark:text-emerald-400">{{ w.term_zh }}</span>
                       </div>
                       <div v-if="w.definition || w.definition_zh" class="mt-1">
-                        <p v-if="w.definition" class="text-sm text-gray-600"
+                        <p v-if="w.definition" class="text-sm text-gray-600 dark:text-gray-400"
                           :class="{ 'line-clamp-2': !expandedIds.has(w.id) }">{{ w.definition }}</p>
-                        <p v-if="w.definition_zh" class="mt-0.5 text-sm text-emerald-600"
+                        <p v-if="w.definition_zh" class="mt-0.5 text-sm text-emerald-600 dark:text-emerald-400"
                           :class="{ 'line-clamp-2': !expandedIds.has(w.id) }">{{ w.definition_zh }}</p>
                       </div>
                     </div>
                     <div class="ml-3 flex flex-shrink-0 items-center gap-2">
-                      <svg class="w-4 h-4 text-gray-300 transition-transform" :class="{ 'rotate-180': expandedIds.has(w.id) }"
+                      <svg class="w-4 h-4 text-gray-300 dark:text-gray-600 transition-transform" :class="{ 'rotate-180': expandedIds.has(w.id) }"
                         fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
                       </svg>
-                      <button @click.stop="deleteWord(w.id, 'personal')"
-                        class="text-xs text-red-400 hover:text-red-600">删除</button>
+                      <BaseButton variant="danger" size="sm" @click.stop="confirmDeleteWord(w.id, 'personal')">
+                        删除
+                      </BaseButton>
                     </div>
                   </div>
                 </div>
@@ -215,11 +211,32 @@
 
     <!-- 回到顶部按钮 -->
     <button v-show="showBackTop" @click="scrollToTop"
-      class="fixed bottom-6 right-6 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-indigo-600 text-white shadow-lg hover:bg-indigo-700 transition-colors">
+      class="fixed bottom-6 right-6 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-primary-600 dark:bg-primary-500 text-white shadow-lg hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
       </svg>
     </button>
+
+    <!-- 删除确认对话框 -->
+    <ConfirmDialog
+      :open="deleteConfirm.open"
+      title="删除词汇"
+      message="确定要删除这个词汇吗？"
+      confirm-text="删除"
+      :danger="true"
+      @confirm="doDeleteWord"
+      @cancel="deleteConfirm.open = false"
+    />
+
+    <!-- 导入确认对话框 -->
+    <ConfirmDialog
+      :open="importConfirm.open"
+      title="导入词汇"
+      message="从 IAPP 网站导入隐私专业词汇？已存在的术语会自动跳过。"
+      confirm-text="开始导入"
+      @confirm="doImportIAPP"
+      @cancel="importConfirm.open = false"
+    />
   </div>
 </template>
 
@@ -227,11 +244,15 @@
 import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import client from '../api/client'
+import { useToast } from '../composables/useToast'
+import BaseButton from '../components/BaseButton.vue'
+import ConfirmDialog from '../components/ConfirmDialog.vue'
 
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ#'.split('')
 
 const authStore = useAuthStore()
 const isAdmin = authStore.isAdmin
+const toast = useToast()
 
 const activeTab = ref('professional')
 const stats = ref({})
@@ -251,6 +272,11 @@ const personalActiveLetter = ref('')
 const showBackTop = ref(false)
 const proListRef = ref(null)
 const personalListRef = ref(null)
+
+// 删除确认状态
+const deleteConfirm = reactive({ open: false, id: null, type: '' })
+// 导入确认状态
+const importConfirm = reactive({ open: false })
 
 // 字母分区 DOM 引用
 const letterRefs = { pro: {}, personal: {} }
@@ -388,13 +414,22 @@ async function addWord(type) {
     }
     stats.value[type] = (stats.value[type] || 0) + 1
     resetForm()
+    toast.success('词汇添加成功')
   } catch (e) {
-    alert(e.response?.data?.error || '添加失败')
+    toast.error(e.response?.data?.error || '添加失败')
   }
 }
 
-async function deleteWord(id, type) {
-  if (!confirm('确定要删除这个词汇吗？')) return
+// 删除确认流程
+function confirmDeleteWord(id, type) {
+  deleteConfirm.id = id
+  deleteConfirm.type = type
+  deleteConfirm.open = true
+}
+
+async function doDeleteWord() {
+  const { id, type } = deleteConfirm
+  deleteConfirm.open = false
   try {
     const url = type === 'professional' ? `/vocab/professional/${id}` : `/vocab/personal/${id}`
     await client.delete(url)
@@ -404,21 +439,27 @@ async function deleteWord(id, type) {
       personalWords.value = personalWords.value.filter(w => w.id !== id)
     }
     stats.value[type] = Math.max((stats.value[type] || 1) - 1, 0)
+    toast.success('词汇已删除')
   } catch (e) {
-    alert(e.response?.data?.error || '删除失败')
+    toast.error(e.response?.data?.error || '删除失败')
   }
 }
 
-async function importIAPP() {
-  if (!confirm('从 IAPP 网站导入隐私专业词汇？已存在的术语会自动跳过。')) return
+// 导入确认流程
+function importIAPP() {
+  importConfirm.open = true
+}
+
+async function doImportIAPP() {
+  importConfirm.open = false
   importing.value = true
   try {
     const res = await client.post('/vocab/professional/import-iapp')
-    alert(res.data.message)
+    toast.success(res.data.message)
     await fetchProfessional()
     await fetchStats()
   } catch (e) {
-    alert(e.response?.data?.error || '导入失败')
+    toast.error(e.response?.data?.error || '导入失败')
   } finally {
     importing.value = false
   }
@@ -433,9 +474,10 @@ async function batchTranslate() {
       translateRemaining.value = res.data.remaining
       if (res.data.remaining <= 0) break
     }
+    toast.success('批量翻译完成')
     await fetchProfessional()
   } catch (e) {
-    alert(e.response?.data?.error || '翻译出错，已保存已完成部分')
+    toast.error(e.response?.data?.error || '翻译出错，已保存已完成部分')
     await fetchProfessional()
   } finally {
     translating.value = false

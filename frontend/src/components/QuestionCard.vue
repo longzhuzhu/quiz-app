@@ -1,103 +1,104 @@
 <template>
-  <div class="rounded-lg bg-white p-6 shadow">
-    <!-- Progress -->
-    <div v-if="!hideProgress" class="mb-4 flex items-center justify-between text-sm text-gray-500">
-      <span>第 {{ currentIndex + 1 }} / {{ total }} 题</span>
-      <span v-if="question.question_type === 'multiple'" class="rounded bg-amber-100 px-2 py-0.5 text-amber-700">多选</span>
-      <span v-else-if="question.question_type === 'truefalse'" class="rounded bg-blue-100 px-2 py-0.5 text-blue-700">判断</span>
+  <div class="rounded-xl bg-white dark:bg-slate-800 shadow-card p-6">
+    <!-- 题目信息 -->
+    <div class="mb-4 flex items-center justify-between">
+      <span class="text-sm text-gray-500 dark:text-gray-400">
+        第 {{ currentIndex + 1 }}{{ !hideProgress ? ` / ${total}` : '' }} 题
+      </span>
+      <span v-if="question.question_type === 'multiple'" class="rounded-full bg-amber-100 dark:bg-amber-900/30 px-2.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400">多选</span>
+      <span v-else-if="question.question_type === 'truefalse'" class="rounded-full bg-sky-100 dark:bg-sky-900/30 px-2.5 py-0.5 text-xs font-medium text-sky-700 dark:text-sky-400">判断</span>
     </div>
 
-    <!-- Progress bar -->
-    <div v-if="!hideProgress" class="mb-6 h-1.5 w-full rounded-full bg-gray-200">
-      <div class="h-1.5 rounded-full bg-indigo-600 transition-all"
+    <!-- 进度条（仅 !hideProgress） -->
+    <div v-if="!hideProgress" class="mb-6 h-1.5 w-full rounded-full bg-gray-200 dark:bg-slate-700">
+      <div class="h-1.5 rounded-full bg-gradient-to-r from-primary-500 to-sky-400 transition-all duration-300"
         :style="{ width: `${((currentIndex + 1) / total) * 100}%` }"></div>
     </div>
 
-    <!-- Question type badge (when progress is hidden) -->
-    <div v-if="hideProgress" class="mb-4 flex items-center justify-between">
-      <span class="text-sm text-gray-500">第 {{ currentIndex + 1 }} 题</span>
-      <span v-if="question.question_type === 'multiple'" class="rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-700">多选</span>
-      <span v-else-if="question.question_type === 'truefalse'" class="rounded bg-blue-100 px-2 py-0.5 text-xs text-blue-700">判断</span>
-    </div>
-
-    <!-- Question content -->
+    <!-- 题目内容 -->
     <div class="mb-6">
-      <p class="text-lg font-medium text-gray-900 leading-relaxed">{{ question.content }}</p>
-      <p v-if="showTranslation && question.content_zh" class="mt-2 text-base text-gray-600 leading-relaxed">{{ question.content_zh }}</p>
+      <p class="text-lg font-medium text-gray-900 dark:text-white leading-relaxed">{{ question.content }}</p>
+      <p v-if="showTranslation && question.content_zh" class="mt-2 text-base text-gray-600 dark:text-gray-400 leading-relaxed">{{ question.content_zh }}</p>
     </div>
 
-    <!-- Options -->
+    <!-- 选项 -->
     <div class="space-y-3">
       <label v-for="option in question.options" :key="option.key"
-        class="flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition-colors"
         :class="optionClass(option.key)"
         @click="!answered && toggleOption(option.key)">
         <input v-if="question.question_type === 'multiple'"
           type="checkbox" :checked="selectedAnswers.includes(option.key)"
-          :disabled="answered" class="mt-0.5 h-4 w-4 rounded text-indigo-600" />
+          :disabled="answered" class="mt-0.5 h-4 w-4 rounded text-primary-600 dark:text-primary-500" />
         <input v-else
           type="radio" :checked="selectedAnswers.includes(option.key)"
-          :disabled="answered" class="mt-0.5 h-4 w-4 text-indigo-600" />
+          :disabled="answered" class="mt-0.5 h-4 w-4 text-primary-600 dark:text-primary-500" />
         <div>
-          <span class="font-medium">{{ option.key }}.</span> {{ option.text }}
-          <span v-if="showTranslation && option.text_zh" class="block text-sm text-gray-500 mt-1">{{ option.text_zh }}</span>
+          <span class="font-medium text-gray-900 dark:text-white">{{ option.key }}.</span>
+          <span class="text-gray-700 dark:text-gray-300">{{ option.text }}</span>
+          <span v-if="showTranslation && option.text_zh" class="block text-sm text-gray-500 dark:text-gray-400 mt-1">{{ option.text_zh }}</span>
         </div>
       </label>
     </div>
 
-    <!-- AI buttons row -->
-    <div class="mt-4 flex gap-2">
+    <!-- AI 按钮区 -->
+    <div class="mt-4 flex flex-wrap items-center gap-2">
       <TranslateButton :question-id="question.id" :has-translation="!!question.content_zh" :show="showTranslation"
         @translated="(e) => { $emit('translated', e); showTranslation = true }"
         @toggle="showTranslation = !showTranslation" />
-      <ExplainButton v-if="answered" :question-id="question.id" />
+      <ExplainButton v-if="answered" :question-id="question.id" @explained="(e) => explainData = e" />
       <AddVocabButton />
     </div>
 
-    <!-- Answer result -->
-    <div v-if="answered" class="mt-4 rounded-lg p-4" :class="result.is_correct ? 'bg-green-50' : 'bg-red-50'">
-      <p class="font-medium" :class="result.is_correct ? 'text-green-700' : 'text-red-700'">
-        {{ result.is_correct ? '回答正确' : '回答错误' }}
-      </p>
-      <p class="mt-1 text-sm text-gray-600">正确答案: {{ result.correct_answer }}</p>
-      <div v-if="result.explanation" class="mt-2 text-sm text-gray-700">
+    <!-- AI 解析内容（独立于按钮行） -->
+    <div v-if="explainData"
+      class="mt-3 rounded-card border border-sky-200 bg-sky-50 p-4 text-sm
+             dark:border-sky-800 dark:bg-sky-900/20">
+      <p class="font-medium text-sky-800 dark:text-sky-300">AI 解析</p>
+      <p class="mt-1 whitespace-pre-wrap text-gray-700 dark:text-gray-300">{{ explainData.explanation }}</p>
+      <p v-if="explainData.explanation_zh"
+        class="mt-2 whitespace-pre-wrap text-gray-600 dark:text-gray-400">{{ explainData.explanation_zh }}</p>
+    </div>
+
+    <!-- 答题反馈 -->
+    <div v-if="answered" class="mt-4 rounded-xl p-4 border"
+      :class="result.is_correct
+        ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800'
+        : 'bg-rose-50 dark:bg-rose-900/20 border-rose-200 dark:border-rose-800'">
+      <div class="flex items-center gap-2">
+        <CheckCircleIcon v-if="result.is_correct" class="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+        <XCircleIcon v-else class="h-5 w-5 text-rose-600 dark:text-rose-400" />
+        <p class="font-medium" :class="result.is_correct ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'">
+          {{ result.is_correct ? '回答正确！' : '回答错误' }}
+        </p>
+      </div>
+      <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">正确答案: {{ result.correct_answer }}</p>
+      <div v-if="result.explanation" class="mt-2 text-sm text-gray-700 dark:text-gray-300">
         <p class="font-medium">解析:</p>
         <p class="whitespace-pre-wrap">{{ result.explanation }}</p>
       </div>
-      <div v-if="result.explanation_zh" class="mt-2 text-sm text-gray-600">
+      <div v-if="result.explanation_zh" class="mt-2 text-sm text-gray-600 dark:text-gray-400">
         <p class="font-medium">中文解析:</p>
         <p class="whitespace-pre-wrap">{{ result.explanation_zh }}</p>
       </div>
     </div>
 
-    <!-- Actions -->
+    <!-- 操作栏 -->
     <div class="mt-6 flex justify-between">
-      <button @click="$emit('prev')" :disabled="currentIndex === 0"
-        class="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-30">
-        上一题
-      </button>
-      <button v-if="!answered" @click="handleSubmit"
-        :disabled="selectedAnswers.length === 0"
-        class="rounded-md bg-indigo-600 px-6 py-2 text-sm text-white hover:bg-indigo-700 disabled:opacity-50">
-        提交答案
-      </button>
-      <button v-else-if="currentIndex < total - 1" @click="$emit('next')"
-        class="rounded-md bg-indigo-600 px-6 py-2 text-sm text-white hover:bg-indigo-700">
-        下一题
-      </button>
-      <button v-else @click="$emit('finish')"
-        class="rounded-md bg-emerald-600 px-6 py-2 text-sm text-white hover:bg-emerald-700">
-        完成答题
-      </button>
+      <BaseButton variant="secondary" @click="$emit('prev')" :disabled="currentIndex === 0">上一题</BaseButton>
+      <BaseButton v-if="!answered" variant="primary" @click="handleSubmit" :disabled="selectedAnswers.length === 0">提交答案</BaseButton>
+      <BaseButton v-else-if="currentIndex < total - 1" variant="primary" @click="$emit('next')">下一题</BaseButton>
+      <BaseButton v-else variant="primary" @click="$emit('finish')" class="!bg-emerald-600 hover:!bg-emerald-700">完成答题</BaseButton>
     </div>
   </div>
 </template>
 
 <script setup>
 import { ref, watch } from 'vue'
+import { CheckCircleIcon, XCircleIcon } from '@heroicons/vue/24/outline'
 import TranslateButton from './TranslateButton.vue'
 import ExplainButton from './ExplainButton.vue'
 import AddVocabButton from './AddVocabButton.vue'
+import BaseButton from './BaseButton.vue'
 
 const props = defineProps({
   question: Object,
@@ -112,12 +113,14 @@ const selectedAnswers = ref([])
 const answered = ref(false)
 const result = ref(null)
 const showTranslation = ref(false)
+const explainData = ref(null)
 
 watch(() => props.currentIndex, () => {
   selectedAnswers.value = []
   answered.value = false
   result.value = null
   showTranslation.value = false
+  explainData.value = null
 })
 
 function toggleOption(key) {
@@ -134,15 +137,19 @@ function toggleOption(key) {
 }
 
 function optionClass(key) {
+  const base = 'flex cursor-pointer items-start gap-3 rounded-xl border-2 p-4 transition-all duration-200'
   if (!answered.value) {
-    return selectedAnswers.value.includes(key) ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 hover:border-gray-300'
+    if (selectedAnswers.value.includes(key)) {
+      return `${base} border-primary-500 bg-primary-50 dark:bg-primary-900/20 ring-2 ring-primary-500/20`
+    }
+    return `${base} border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500 hover:bg-gray-50 dark:hover:bg-slate-700/50`
   }
   const correct = result.value.correct_answer.split(',').map(s => s.trim())
   const isCorrect = correct.includes(key)
   const isSelected = selectedAnswers.value.includes(key)
-  if (isCorrect) return 'border-green-500 bg-green-50'
-  if (isSelected && !isCorrect) return 'border-red-500 bg-red-50'
-  return 'border-gray-200 opacity-60'
+  if (isCorrect) return `${base} border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20`
+  if (isSelected && !isCorrect) return `${base} border-rose-500 bg-rose-50 dark:bg-rose-900/20 animate-shake`
+  return `${base} border-gray-200 dark:border-slate-700 opacity-50`
 }
 
 async function handleSubmit() {
