@@ -1,5 +1,6 @@
 <template>
   <div class="rounded-xl bg-white dark:bg-slate-800 shadow-card p-6">
+    <template v-if="question">
     <!-- 题目信息 -->
     <div class="mb-4 flex items-center justify-between">
       <span class="text-sm text-gray-500 dark:text-gray-400">
@@ -25,13 +26,13 @@
     <div class="space-y-3">
       <label v-for="option in question.options" :key="option.key"
         :class="optionClass(option.key)"
-        @click="!answered && toggleOption(option.key)">
+        @click="toggleOption(option.key)">
         <input v-if="question.question_type === 'multiple'"
           type="checkbox" :checked="selectedAnswers.includes(option.key)"
-          :disabled="answered" class="mt-0.5 h-4 w-4 rounded text-primary-600 dark:text-primary-500" />
+           class="mt-0.5 h-4 w-4 rounded text-primary-600 dark:text-primary-500" />
         <input v-else
           type="radio" :checked="selectedAnswers.includes(option.key)"
-          :disabled="answered" class="mt-0.5 h-4 w-4 text-primary-600 dark:text-primary-500" />
+           class="mt-0.5 h-4 w-4 text-primary-600 dark:text-primary-500" />
         <div>
           <span class="font-medium text-gray-900 dark:text-white">{{ option.key }}.</span>
           <span class="text-gray-700 dark:text-gray-300">{{ option.text }}</span>
@@ -83,12 +84,15 @@
     </div>
 
     <!-- 操作栏 -->
-    <div class="mt-6 flex justify-between">
+    <div class="mt-6 flex justify-between items-center gap-2">
       <BaseButton variant="secondary" @click="$emit('prev')" :disabled="currentIndex === 0">上一题</BaseButton>
-      <BaseButton v-if="!answered" variant="primary" @click="handleSubmit" :disabled="selectedAnswers.length === 0">提交答案</BaseButton>
-      <BaseButton v-else-if="currentIndex < total - 1" variant="primary" @click="$emit('next')">下一题</BaseButton>
-      <BaseButton v-else variant="primary" @click="$emit('finish')" class="!bg-emerald-600 hover:!bg-emerald-700">完成答题</BaseButton>
+      <div class="flex items-center gap-2">
+        <BaseButton variant="primary" @click="handleSubmit" :disabled="selectedAnswers.length === 0">提交答案</BaseButton>
+        <BaseButton v-if="answered && currentIndex < total - 1" variant="primary" @click="$emit('next')">下一题</BaseButton>
+        <BaseButton v-else-if="answered" variant="primary" @click="$emit('finish')" class="!bg-emerald-600 hover:!bg-emerald-700">完成答题</BaseButton>
+      </div>
     </div>
+    </template>
   </div>
 </template>
 
@@ -105,6 +109,8 @@ const props = defineProps({
   currentIndex: Number,
   total: Number,
   hideProgress: { type: Boolean, default: false },
+  initialAnswer: { type: String, default: '' },
+  initialResult: { type: Object, default: null },
 })
 
 const emit = defineEmits(['submit', 'next', 'prev', 'finish', 'translated'])
@@ -115,15 +121,28 @@ const result = ref(null)
 const showTranslation = ref(false)
 const explainData = ref(null)
 
-watch(() => props.currentIndex, () => {
-  selectedAnswers.value = []
-  answered.value = false
-  result.value = null
-  showTranslation.value = false
-  explainData.value = null
-})
+watch(
+  [() => props.currentIndex, () => props.initialAnswer, () => props.initialResult],
+  () => {
+    selectedAnswers.value = props.initialAnswer
+      ? props.initialAnswer.split(',').map(s => s.trim()).filter(Boolean)
+      : []
+    answered.value = !!props.initialResult
+    result.value = props.initialResult
+    showTranslation.value = false
+    explainData.value = null
+  },
+  { immediate: true }
+)
 
 function toggleOption(key) {
+  if (!props.question) return
+
+  if (answered.value) {
+    answered.value = false
+    result.value = null
+  }
+
   if (props.question.question_type === 'multiple') {
     const idx = selectedAnswers.value.indexOf(key)
     if (idx >= 0) {
@@ -144,7 +163,7 @@ function optionClass(key) {
     }
     return `${base} border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500 hover:bg-gray-50 dark:hover:bg-slate-700/50`
   }
-  const correct = result.value.correct_answer.split(',').map(s => s.trim())
+  const correct = (result.value?.correct_answer || '').split(',').map(s => s.trim()).filter(Boolean)
   const isCorrect = correct.includes(key)
   const isSelected = selectedAnswers.value.includes(key)
   if (isCorrect) return `${base} border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20`

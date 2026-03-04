@@ -96,6 +96,8 @@
           :current-index="quizStore.currentIndex"
           :total="quizStore.questions.length"
           :hide-progress="true"
+          :initial-answer="currentInitialAnswer"
+          :initial-result="currentInitialResult"
           @submit="handleSubmit"
           @next="quizStore.nextQuestion()"
           @prev="quizStore.prevQuestion()"
@@ -125,35 +127,74 @@ const currentQuestion = computed(() => quizStore.questions[quizStore.currentInde
 
 // 记录每题的答题结果：{ [index]: true/false }
 const answerResults = reactive({})
+// 会话恢复映射：questionId -> user_answer
+const questionAnswerMap = reactive({})
+// 会话恢复映射：questionId -> { is_correct, correct_answer, explanation, explanation_zh }
+const questionResultMap = reactive({})
 const autoNext = ref(true)
 
 const correctCount = computed(() => Object.values(answerResults).filter(v => v === true).length)
 const wrongCount = computed(() => Object.values(answerResults).filter(v => v === false).length)
 const unansweredCount = computed(() => quizStore.questions.length - correctCount.value - wrongCount.value)
 
+const currentInitialAnswer = computed(() => {
+  const questionId = currentQuestion.value?.id
+  if (!questionId) return null
+  return questionAnswerMap[questionId] ?? null
+})
+
+const currentInitialResult = computed(() => {
+  const questionId = currentQuestion.value?.id
+  if (!questionId) return null
+  return questionResultMap[questionId] ?? null
+})
+
+function clearReactiveMap(map) {
+  Object.keys(map).forEach((k) => delete map[k])
+}
+
+function restoreSessionState(sessionData) {
+  clearReactiveMap(questionAnswerMap)
+  clearReactiveMap(questionResultMap)
+  clearReactiveMap(answerResults)
+
+  ;(sessionData.answers || []).forEach((a) => {
+    questionAnswerMap[a.question_id] = a.user_answer
+    questionResultMap[a.question_id] = {
+      is_correct: a.is_correct,
+      correct_answer: a.correct_answer,
+      explanation: a.explanation,
+      explanation_zh: a.explanation_zh,
+    }
+  })
+
+  ;(sessionData.questions || []).forEach((q, i) => {
+    if (questionResultMap[q.id]) {
+      answerResults[i] = questionResultMap[q.id].is_correct
+    }
+  })
+
+  const firstUnanswered = (sessionData.questions || []).findIndex(q => !questionResultMap[q.id])
+  quizStore.currentIndex = firstUnanswered >= 0 ? firstUnanswered : 0
+}
+
 onMounted(async () => {
-  if (!quizStore.session || String(quizStore.session.id) !== route.params.sessionId) {
-    try {
-      const res = await client.get(`/quiz/session/${route.params.sessionId}`)
-      if (res.data.session.is_completed) {
-        router.replace(`/quiz/${route.params.sessionId}/result`)
-        return
-      }
-      if (res.data.questions) {
-        quizStore.session = res.data.session
-        quizStore.questions = res.data.questions
-        // 恢复已答题的状态
-        res.data.questions.forEach((q, i) => {
-          if (q.answered) answerResults[i] = q.is_correct
-        })
-        const firstUnanswered = res.data.questions.findIndex(q => !q.answered)
-        quizStore.currentIndex = firstUnanswered >= 0 ? firstUnanswered : 0
-      } else {
-        router.replace('/')
-      }
-    } catch {
+  try {
+    const res = await client.get(`/quiz/session/${route.params.sessionId}`)
+    if (res.data.session.is_completed) {
+      router.replace(`/quiz/${route.params.sessionId}/result`)
+      return
+    }
+
+    if (res.data.questions) {
+      quizStore.session = res.data.session
+      quizStore.questions = res.data.questions
+      restoreSessionState(res.data)
+    } else {
       router.replace('/')
     }
+  } catch {
+    router.replace('/')
   }
 })
 
@@ -175,11 +216,32 @@ function navBtnClass(index) {
 
 async function handleSubmit(answer, callback) {
   try {
-    const res = await quizStore.submitAnswer(currentQuestion.value.id, answer)
-    answerResults[quizStore.currentIndex] = res.is_correct
+    // 冻结提交上下文，避免异步期间 currentIndex 变化导致回写错位
+    const submitQuestionId = currentQuestion.value.id
+    const submitIndex = quizStore.currentIndex
+    const canAutoNext = autoNext.value
+    const hasNext = submitIndex < quizStore.questions.length - 1
+
+    const res = await quizStore.submitAnswer(submitQuestionId, answer)
+
+    // 提交后覆盖映射，保证切回本题时展示最新答案与结果
+    questionAnswerMap[submitQuestionId] = answer
+    questionResultMap[submitQuestionId] = {
+      is_correct: res.is_correct,
+      correct_answer: res.correct_answer,
+      explanation: res.explanation,
+      explanation_zh: res.explanation_zh,
+    }
+
+    answerResults[submitIndex] = res.is_correct
     callback(res)
-    if (autoNext.value && quizStore.currentIndex < quizStore.questions.length - 1) {
-      setTimeout(() => quizStore.nextQuestion(), 1500)
+
+    if (canAutoNext && hasNext) {
+      setTimeout(() => {
+        if (quizStore.currentIndex === submitIndex) {
+          quizStore.nextQuestion()
+        }
+      }, 1500)
     }
   } catch (e) {
     toast.error(e.response?.data?.error || '提交失败')
