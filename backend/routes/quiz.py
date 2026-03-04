@@ -80,28 +80,43 @@ def submit_answer():
     if session.is_completed:
         return jsonify({'error': '答题已结束'}), 400
 
+    session_question_ids = json.loads(session.question_ids) if session.question_ids else []
+    if question_id not in session_question_ids:
+        return jsonify({'error': '题目不属于当前答题会话'}), 400
+
     existing = QuizAnswer.query.filter_by(
         session_id=session_id, question_id=question_id
     ).first()
-    if existing:
-        return jsonify({'error': '该题已作答'}), 400
 
     question = Question.query.get_or_404(question_id)
     is_correct = user_answer.strip().upper() == question.correct_answer.strip().upper()
 
-    answer = QuizAnswer(
-        session_id=session_id,
-        question_id=question_id,
-        user_answer=user_answer,
-        is_correct=is_correct,
-    )
-    db.session.add(answer)
+    if existing:
+        old_is_correct = existing.is_correct
+        existing.user_answer = user_answer
+        existing.is_correct = is_correct
+        existing.answered_at = datetime.now(timezone.utc)
 
-    session.answered_count += 1
-    if is_correct:
-        session.correct_count += 1
+        # answered_count 保持不变，仅按正确性变化修正 correct_count
+        if (not old_is_correct) and is_correct:
+            session.correct_count += 1
+        elif old_is_correct and (not is_correct):
+            session.correct_count = max(session.correct_count - 1, 0)
     else:
-        # Auto-collect wrong answer
+        answer = QuizAnswer(
+            session_id=session_id,
+            question_id=question_id,
+            user_answer=user_answer,
+            is_correct=is_correct,
+        )
+        db.session.add(answer)
+
+        session.answered_count += 1
+        if is_correct:
+            session.correct_count += 1
+
+    if not is_correct:
+        # Auto-collect wrong answer（保持现有错题累积行为）
         wrong = WrongAnswer.query.filter_by(
             user_id=user_id, question_id=question_id
         ).first()
