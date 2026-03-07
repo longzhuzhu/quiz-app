@@ -3,7 +3,7 @@
     <h1 class="mb-6 text-2xl font-bold text-gray-900 dark:text-white">单词本</h1>
 
     <!-- 统计卡片 -->
-    <div class="mb-8 grid grid-cols-2 gap-4">
+    <div class="mb-8 grid gap-4 md:grid-cols-3">
       <div class="rounded-card-lg bg-white dark:bg-slate-800 p-5 shadow-card hover:shadow-card-hover transition-shadow cursor-pointer"
         :class="{ 'ring-2 ring-primary-500': activeTab === 'professional' }"
         @click="activeTab = 'professional'">
@@ -17,6 +17,13 @@
         <div class="text-sm text-gray-500 dark:text-gray-400">我的单词本</div>
         <div class="mt-1 text-2xl font-bold text-emerald-600 dark:text-emerald-400">{{ stats.personal || 0 }}</div>
         <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">学习中收藏的单词</p>
+      </div>
+      <div class="rounded-card-lg bg-white dark:bg-slate-800 p-5 shadow-card hover:shadow-card-hover transition-shadow cursor-pointer"
+        :class="{ 'ring-2 ring-primary-500': activeTab === 'frequent' }"
+        @click="activeTab = 'frequent'">
+        <div class="text-sm text-gray-500 dark:text-gray-400">高频词汇</div>
+        <div class="mt-1 text-2xl font-bold text-amber-600 dark:text-amber-400">{{ frequentTotal || 0 }}</div>
+        <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">{{ selectedBankName ? `${selectedBankName} 的高频词与翻译` : '按题库查看导入词频与翻译' }}</p>
       </div>
     </div>
 
@@ -209,6 +216,93 @@
       </template>
     </div>
 
+    <!-- ========== 高频词汇 ========== -->
+    <div v-if="activeTab === 'frequent'">
+      <div class="mb-4 flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h2 class="text-lg font-semibold text-gray-800 dark:text-white">高频词汇</h2>
+          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">按题库查看导入题目中的高频英文词及中文翻译</p>
+        </div>
+        <select
+          v-model="selectedBankId"
+          class="min-w-[220px] rounded-card border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-4 py-2 text-sm text-gray-900 dark:text-gray-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+        >
+          <option :value="null" disabled>请选择题库</option>
+          <option v-for="bank in banks" :key="bank.id" :value="bank.id">{{ bank.name }}</option>
+        </select>
+      </div>
+
+      <div v-if="banks.length === 0" class="py-12 text-center text-gray-400 dark:text-gray-500">暂无题库，请先导入题库</div>
+      <div v-else-if="loadingFrequent" class="py-12 text-center text-gray-500 dark:text-gray-400">加载中...</div>
+      <div v-else-if="!selectedBankId" class="py-12 text-center text-gray-400 dark:text-gray-500">请选择题库查看高频词</div>
+      <template v-else>
+        <div class="mb-4 rounded-card-lg bg-white dark:bg-slate-800 p-5 shadow-card">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <div class="text-sm text-gray-500 dark:text-gray-400">当前题库</div>
+              <div class="mt-1 text-lg font-semibold text-gray-900 dark:text-white">{{ selectedBankName }}</div>
+            </div>
+            <div class="text-right">
+              <div class="text-sm text-gray-500 dark:text-gray-400">高频词条</div>
+              <div class="mt-1 text-2xl font-bold text-amber-600 dark:text-amber-400">{{ frequentTotal }}</div>
+              <div class="mt-1 text-xs text-gray-400 dark:text-gray-500">仅展示前 {{ frequentTopLimit }} 个高频词</div>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="frequentWords.length === 0" class="py-12 text-center text-gray-400 dark:text-gray-500">当前题库暂无高频词，请先重新导入题库生成词频</div>
+        <div v-else>
+          <div class="space-y-3">
+            <div
+              v-for="(item, index) in frequentWords"
+              :key="item.term"
+              class="rounded-card-lg bg-white dark:bg-slate-800 px-5 py-4 shadow-card hover:shadow-card-hover transition-shadow"
+            >
+              <div class="flex items-center gap-4">
+                <div class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-amber-100 text-sm font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                  {{ pageStartIndex + index + 1 }}
+                </div>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-baseline gap-2 flex-wrap">
+                    <div class="font-semibold text-gray-900 dark:text-white">{{ item.term }}</div>
+                    <div v-if="item.term_zh" class="text-sm text-emerald-600 dark:text-emerald-400">{{ item.term_zh }}</div>
+                  </div>
+                  <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">在当前题库中出现 {{ item.frequency }} 次</div>
+                </div>
+                <div class="rounded-full bg-amber-50 px-3 py-1 text-sm font-medium text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+                  {{ item.frequency }} 次
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-5 flex items-center justify-between gap-3 rounded-card-lg bg-white dark:bg-slate-800 px-5 py-4 shadow-card flex-wrap">
+            <div class="text-sm text-gray-500 dark:text-gray-400">
+              第 {{ frequentPage }} / {{ frequentTotalPages }} 页，共 {{ frequentTotal }} 个词条
+            </div>
+            <div class="flex items-center gap-2 flex-wrap justify-end">
+              <label class="text-sm text-gray-500 dark:text-gray-400">跳转到</label>
+              <select
+                v-model.number="frequentPage"
+                class="min-w-[88px] rounded-card border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                :disabled="loadingFrequent || frequentTotalPages <= 1"
+              >
+                <option v-for="page in frequentPageOptions" :key="page" :value="page">
+                  第 {{ page }} 页
+                </option>
+              </select>
+              <BaseButton variant="secondary" size="sm" :disabled="frequentPage <= 1 || loadingFrequent" @click="changeFrequentPage(frequentPage - 1)">
+                上一页
+              </BaseButton>
+              <BaseButton variant="secondary" size="sm" :disabled="frequentPage >= frequentTotalPages || loadingFrequent" @click="changeFrequentPage(frequentPage + 1)">
+                下一页
+              </BaseButton>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+
     <!-- 回到顶部按钮 -->
     <button v-show="showBackTop" @click="scrollToTop"
       class="fixed bottom-6 right-6 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-primary-600 dark:bg-primary-500 text-white shadow-lg hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors">
@@ -241,8 +335,9 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useAuthStore } from '../stores/auth'
+import { useBankStore } from '../stores/bank'
 import client from '../api/client'
 import { useToast } from '../composables/useToast'
 import BaseButton from '../components/BaseButton.vue'
@@ -251,6 +346,7 @@ import ConfirmDialog from '../components/ConfirmDialog.vue'
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ#'.split('')
 
 const authStore = useAuthStore()
+const bankStore = useBankStore()
 const isAdmin = authStore.isAdmin
 const toast = useToast()
 
@@ -258,8 +354,17 @@ const activeTab = ref('professional')
 const stats = ref({})
 const professionalWords = ref([])
 const personalWords = ref([])
+const banks = ref([])
+const selectedBankId = ref(null)
+const frequentWords = ref([])
 const loadingPro = ref(false)
 const loadingPersonal = ref(false)
+const loadingFrequent = ref(false)
+const frequentTotal = ref(0)
+const frequentPage = ref(1)
+const frequentPerPage = ref(20)
+const frequentTotalPages = ref(1)
+const frequentTopLimit = ref(5000)
 const showAddForm = ref(false)
 const importing = ref(false)
 const translating = ref(false)
@@ -304,6 +409,15 @@ function groupByLetter(words) {
 
 const untranslatedCount = computed(() =>
   professionalWords.value.filter(w => !w.term_zh).length
+)
+
+const selectedBankName = computed(() =>
+  banks.value.find(bank => bank.id === selectedBankId.value)?.name || ''
+)
+
+const pageStartIndex = computed(() => (frequentPage.value - 1) * frequentPerPage.value)
+const frequentPageOptions = computed(() =>
+  Array.from({ length: frequentTotalPages.value }, (_, index) => index + 1)
 )
 
 const filteredProfessional = computed(() => {
@@ -402,6 +516,50 @@ async function fetchPersonal() {
   }
 }
 
+async function fetchBanks() {
+  await bankStore.fetchBanks()
+  banks.value = bankStore.banks
+  if (!selectedBankId.value && banks.value.length > 0) {
+    selectedBankId.value = banks.value[0].id
+  }
+}
+
+async function fetchFrequent() {
+  if (!selectedBankId.value) {
+    frequentWords.value = []
+    frequentTotal.value = 0
+    frequentTotalPages.value = 1
+    return
+  }
+
+  loadingFrequent.value = true
+  try {
+    const res = await client.get('/vocab/frequent', {
+      params: {
+        bank_id: selectedBankId.value,
+        page: frequentPage.value,
+        per_page: frequentPerPage.value,
+      },
+    })
+    frequentWords.value = res.data.items || []
+    frequentTotal.value = res.data.summary?.total_terms || 0
+    frequentTopLimit.value = res.data.summary?.top_terms_limit || 5000
+    frequentTotalPages.value = res.data.pagination?.total_pages || 1
+  } catch (e) {
+    frequentWords.value = []
+    frequentTotal.value = 0
+    frequentTotalPages.value = 1
+    toast.error(e.response?.data?.error || '加载高频词失败')
+  } finally {
+    loadingFrequent.value = false
+  }
+}
+
+function changeFrequentPage(page) {
+  if (page < 1 || page > frequentTotalPages.value || page === frequentPage.value) return
+  frequentPage.value = page
+}
+
 async function addWord(type) {
   try {
     const url = type === 'professional' ? '/vocab/professional' : '/vocab/personal'
@@ -488,7 +646,18 @@ watch(activeTab, () => {
   showAddForm.value = false
 })
 
-onMounted(() => {
+watch(selectedBankId, () => {
+  if (frequentPage.value !== 1) {
+    frequentPage.value = 1
+    return
+  }
+  fetchFrequent()
+})
+
+watch(frequentPage, fetchFrequent)
+
+onMounted(async () => {
+  await fetchBanks()
   fetchStats()
   fetchProfessional()
   fetchPersonal()

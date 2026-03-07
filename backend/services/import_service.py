@@ -1,6 +1,37 @@
 import re
 import io
 import json
+from collections import Counter
+
+
+MIN_FREQUENCY = 2
+TOP_FREQUENT_TERMS_LIMIT = 5000
+WORD_PATTERN = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
+EXCLUDED_TERMS = {
+    'a', 'an', 'the',
+    'i', 'me', 'my', 'mine', 'myself', 'we', 'us', 'our', 'ours', 'ourselves',
+    'you', 'your', 'yours', 'yourself', 'yourselves', 'he', 'him', 'his', 'himself',
+    'she', 'her', 'hers', 'herself', 'it', 'its', 'itself', 'they', 'them', 'their',
+    'theirs', 'themselves', 'this', 'that', 'these', 'those', 'who', 'whom', 'whose',
+    'which', 'what', 'whatever', 'whoever', 'whichever', 'someone', 'somebody', 'something',
+    'anyone', 'anybody', 'anything', 'everyone', 'everybody', 'everything', 'none', 'nothing',
+    'one', 'ones', 'another', 'others', 'other', 'each', 'either', 'neither', 'both', 'all',
+    'few', 'many', 'several', 'some', 'any', 'most', 'such',
+    'zero', 'first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth',
+    'tenth', 'eleventh', 'twelfth', 'thirteenth', 'fourteenth', 'fifteenth', 'sixteenth',
+    'seventeenth', 'eighteenth', 'nineteenth', 'twentieth', 'once', 'twice',
+    'in', 'on', 'at', 'by', 'for', 'from', 'to', 'of', 'with', 'without', 'within', 'into', 'onto',
+    'over', 'under', 'above', 'below', 'between', 'among', 'through', 'during', 'before', 'after',
+    'since', 'until', 'upon', 'about', 'across', 'against', 'around', 'behind', 'beyond', 'beside',
+    'besides', 'near', 'inside', 'outside', 'toward', 'towards', 'via', 'per', 'past',
+    'and', 'or', 'but', 'nor', 'so', 'yet', 'for', 'although', 'though', 'because', 'if', 'unless',
+    'while', 'whereas', 'whether', 'than', 'once',
+    'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+    'do', 'does', 'did', 'done', 'doing', 'have', 'has', 'had', 'having',
+    'can', 'could', 'may', 'might', 'must', 'shall', 'should', 'will', 'would',
+    'not', 'no', 'yes', 'as',
+    'oh', 'ah', 'wow', 'hey', 'oops', 'alas', 'hurray', 'bravo'
+}
 
 
 def parse_file(file_storage, filename):
@@ -76,6 +107,54 @@ def _extract_docx(file_storage):
     from docx import Document
     doc = Document(file_storage)
     return '\n'.join(p.text for p in doc.paragraphs if p.text.strip())
+
+
+def build_bank_word_frequencies(questions, min_frequency=MIN_FREQUENCY):
+    counter = Counter()
+
+    for question in questions:
+        counter.update(_extract_terms_from_question(question))
+
+    items = []
+    for term, frequency in counter.items():
+        if frequency >= min_frequency:
+            items.append({'term': term, 'frequency': frequency})
+
+    return sorted(items, key=lambda item: (-item['frequency'], item['term']))
+
+
+def _extract_terms_from_question(question):
+    texts = [question.get('content', '')]
+    texts.extend(option.get('text', '') for option in question.get('options', []))
+
+    terms = []
+    for text in texts:
+        for token in WORD_PATTERN.findall(text or ''):
+            normalized = _normalize_term(token)
+            if normalized and not _should_exclude_term(normalized):
+                terms.append(normalized)
+    return terms
+
+
+def _normalize_term(token):
+    term = token.strip("'\".,;:!?()[]{}<>").lower()
+    if term.endswith("'s"):
+        term = term[:-2]
+    elif term.endswith("s'"):
+        term = term[:-1]
+    return term.strip("'\"")
+
+
+def _should_exclude_term(term):
+    if not term:
+        return True
+    if len(term) <= 4:
+        return True
+    if term in EXCLUDED_TERMS:
+        return True
+    if re.fullmatch(r'\d+(?:st|nd|rd|th)?', term):
+        return True
+    return False
 
 
 def _parse_questions(text):

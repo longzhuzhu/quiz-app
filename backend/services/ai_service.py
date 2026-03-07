@@ -128,6 +128,22 @@ def batch_translate_vocab(vocab_list):
             entry['definition'] = v.definition
         terms_data.append(entry)
 
+    results = batch_translate_terms(terms_data)
+    result_map = {r['id']: r for r in results}
+
+    count = 0
+    for v in vocab_list:
+        r = result_map.get(v.id)
+        if r:
+            v.term_zh = r.get('term_zh') or v.term_zh
+            v.definition_zh = r.get('definition_zh') or v.definition_zh
+            count += 1
+
+    db.session.commit()
+    return count
+
+
+def batch_translate_terms(terms_data):
     terms_json = json.dumps(terms_data, ensure_ascii=False)
     messages = [
         {
@@ -153,19 +169,7 @@ def batch_translate_vocab(vocab_list):
         result_text = result_text.split('\n', 1)[1]
         result_text = result_text.rsplit('```', 1)[0]
 
-    results = json.loads(result_text)
-    result_map = {r['id']: r for r in results}
-
-    count = 0
-    for v in vocab_list:
-        r = result_map.get(v.id)
-        if r:
-            v.term_zh = r.get('term_zh') or v.term_zh
-            v.definition_zh = r.get('definition_zh') or v.definition_zh
-            count += 1
-
-    db.session.commit()
-    return count
+    return json.loads(result_text)
 
 
 def explain_question(question):
