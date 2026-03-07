@@ -105,6 +105,28 @@ class Vocabulary(db.Model):
     user = db.relationship('User', backref='vocabularies')
 
 
+class BankWordFrequency(db.Model):
+    __tablename__ = 'bank_word_frequencies'
+    id = db.Column(db.Integer, primary_key=True)
+    bank_id = db.Column(db.Integer, db.ForeignKey('question_banks.id'), nullable=False, index=True)
+    term = db.Column(db.String(200), nullable=False)
+    term_zh = db.Column(db.String(200), nullable=True)
+    frequency = db.Column(db.Integer, nullable=False)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(
+        db.DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc)
+    )
+
+    bank = db.relationship('QuestionBank', backref=db.backref('word_frequencies', lazy='dynamic', cascade='all, delete-orphan'))
+
+    __table_args__ = (
+        db.UniqueConstraint('bank_id', 'term'),
+        db.Index('idx_bank_word_frequency_bank_frequency', 'bank_id', 'frequency'),
+    )
+
+
 class SystemSetting(db.Model):
     __tablename__ = 'system_settings'
     id = db.Column(db.Integer, primary_key=True)

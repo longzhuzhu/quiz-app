@@ -1,7 +1,10 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
-from models import db, Vocabulary, User
+from math import ceil
+
+from models import db, Vocabulary, User, QuestionBank, BankWordFrequency
+from services.import_service import MIN_FREQUENCY, TOP_FREQUENT_TERMS_LIMIT
 
 vocab_bp = Blueprint('vocab', __name__)
 
@@ -174,6 +177,53 @@ def import_iapp_glossary():
         })
     except Exception as e:
         return jsonify({'error': f'导入失败：{str(e)}'}), 500
+
+
+@vocab_bp.route('/frequent', methods=['GET'])
+@jwt_required()
+def list_frequent():
+    bank_id = request.args.get('bank_id', type=int)
+    if not bank_id:
+        return jsonify({'error': '缺少 bank_id 参数'}), 400
+
+    bank = QuestionBank.query.get(bank_id)
+    if not bank:
+        return jsonify({'error': '题库不存在'}), 404
+
+    page = request.args.get('page', default=1, type=int) or 1
+    per_page = request.args.get('per_page', default=50, type=int) or 50
+    page = max(1, page)
+    per_page = max(1, min(per_page, 100))
+
+    top_terms = BankWordFrequency.query.filter_by(bank_id=bank_id).order_by(
+        BankWordFrequency.frequency.desc(),
+        BankWordFrequency.term.asc(),
+    ).limit(TOP_FREQUENT_TERMS_LIMIT).all()
+
+    total_terms = len(top_terms)
+    total_pages = max(1, ceil(total_terms / per_page)) if total_terms else 1
+    start = (page - 1) * per_page
+    end = start + per_page
+    items = top_terms[start:end]
+
+    return jsonify({
+        'bank': {'id': bank.id, 'name': bank.name},
+        'summary': {
+            'total_terms': total_terms,
+            'min_frequency': MIN_FREQUENCY,
+            'top_terms_limit': TOP_FREQUENT_TERMS_LIMIT,
+        },
+        'pagination': {
+            'page': page,
+            'per_page': per_page,
+            'total_pages': total_pages,
+            'total_items': total_terms,
+        },
+        'items': [
+            {'term': item.term, 'term_zh': item.term_zh, 'frequency': item.frequency}
+            for item in items
+        ],
+    })
 
 
 @vocab_bp.route('/stats', methods=['GET'])
