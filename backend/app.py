@@ -3,9 +3,22 @@ import os
 from flask import Flask
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
+from sqlalchemy import inspect, text
 
 from config import Config
 from models import db
+
+
+def _ensure_bank_word_frequency_columns():
+    inspector = inspect(db.engine)
+    if 'bank_word_frequencies' not in inspector.get_table_names():
+        return
+
+    columns = {column['name'] for column in inspector.get_columns('bank_word_frequencies')}
+    if 'term_zh' not in columns:
+        db.session.execute(text('ALTER TABLE bank_word_frequencies ADD COLUMN term_zh VARCHAR(200)'))
+        db.session.commit()
+
 
 
 def create_app():
@@ -36,6 +49,7 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        _ensure_bank_word_frequency_columns()
 
     @app.route('/')
     @app.route('/<path:path>')
