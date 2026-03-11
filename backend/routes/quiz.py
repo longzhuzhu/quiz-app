@@ -20,7 +20,7 @@ def start_quiz():
     question_count = data.get('question_count')
 
     query = Question.query.filter_by(bank_id=bank_id)
-    if mode == 'random':
+    if mode in ('random', 'exam'):
         query = query.order_by(func.random())
     else:
         query = query.order_by(Question.order_index)
@@ -129,6 +129,10 @@ def submit_answer():
             db.session.add(wrong)
 
     db.session.commit()
+
+    # 模拟考试模式不返回正确答案和解析
+    if session.mode == 'exam':
+        return jsonify({'submitted': True})
 
     return jsonify({
         'is_correct': is_correct,

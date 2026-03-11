@@ -9,6 +9,29 @@ from config import Config
 from models import db
 
 
+def _apply_runtime_env_overrides(app):
+    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get(
+        'DATABASE_URL',
+        app.config.get('SQLALCHEMY_DATABASE_URI')
+    )
+    app.config['JWT_SECRET_KEY'] = os.environ.get(
+        'JWT_SECRET_KEY',
+        app.config.get('JWT_SECRET_KEY')
+    )
+    app.config['AI_API_BASE_URL'] = os.environ.get(
+        'AI_API_BASE_URL',
+        app.config.get('AI_API_BASE_URL')
+    )
+    app.config['AI_API_KEY'] = os.environ.get(
+        'AI_API_KEY',
+        app.config.get('AI_API_KEY')
+    )
+    app.config['AI_MODEL'] = os.environ.get(
+        'AI_MODEL',
+        app.config.get('AI_MODEL')
+    )
+
+
 def _ensure_bank_word_frequency_columns():
     inspector = inspect(db.engine)
     if 'bank_word_frequencies' not in inspector.get_table_names():
@@ -24,6 +47,7 @@ def _ensure_bank_word_frequency_columns():
 def create_app():
     app = Flask(__name__, static_folder='../frontend/dist', static_url_path='/')
     app.config.from_object(Config)
+    _apply_runtime_env_overrides(app)
 
     db.init_app(app)
     CORS(app, resources={r"/api/*": {"origins": "*"}})

@@ -3,20 +3,23 @@
   <div v-if="!quizStore.session" class="text-center py-12 text-gray-500 dark:text-gray-400">加载中...</div>
   <div v-else>
     <!-- 顶部信息栏 -->
-    <div class="mb-4 flex items-center justify-between">
-      <div class="flex items-center gap-3">
-        <h1 class="text-lg font-bold text-gray-900 dark:text-white">
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
+      <div class="flex items-center gap-2 min-w-0">
+        <h1 class="text-base md:text-lg font-bold text-gray-900 dark:text-white truncate">
           {{ quizStore.session.bank_name || '答题' }}
         </h1>
-        <span class="rounded-full bg-primary-100 dark:bg-primary-900/30 px-2.5 py-0.5 text-xs font-medium text-primary-700 dark:text-primary-400">
+        <span class="rounded-full bg-primary-100 dark:bg-primary-900/30 px-2 py-0.5 text-xs font-medium text-primary-700 dark:text-primary-400 flex-shrink-0">
           {{ quizStore.currentIndex + 1 }} / {{ quizStore.questions.length }}
         </span>
       </div>
-      <label class="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 cursor-pointer select-none">
-        <input type="checkbox" v-model="autoNext"
-          class="h-3.5 w-3.5 rounded border-gray-300 dark:border-slate-600 text-primary-600 dark:text-primary-500" />
-        自动下一题
-      </label>
+      <div class="flex items-center gap-2 flex-shrink-0">
+        <span v-if="isExamMode" class="rounded-full bg-amber-100 dark:bg-amber-900/30 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400">模拟考试</span>
+        <label class="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 cursor-pointer select-none">
+          <input type="checkbox" v-model="autoNext"
+            class="h-3.5 w-3.5 rounded border-gray-300 dark:border-slate-600 text-primary-600 dark:text-primary-500" />
+          自动下一题
+        </label>
+      </div>
     </div>
 
     <!-- 进度条 -->
@@ -32,7 +35,7 @@
           <div class="px-4 py-2.5 bg-gray-50 dark:bg-slate-700/50 border-b border-gray-100 dark:border-slate-700 flex items-center justify-between flex-shrink-0">
             <span class="text-xs font-semibold text-gray-500 dark:text-gray-400">题目导航</span>
             <span class="text-[10px] text-gray-400 dark:text-gray-500">
-              {{ correctCount + wrongCount }} / {{ quizStore.questions.length }}
+              {{ totalAnsweredCount }} / {{ quizStore.questions.length }}
             </span>
           </div>
           <div class="flex-1 overflow-y-auto">
@@ -52,7 +55,8 @@
                   第 {{ i + 1 }} 题
                 </span>
                 <span v-if="i in answerResults" class="flex-shrink-0">
-                  <span v-if="answerResults[i]" class="inline-flex items-center rounded-full bg-emerald-100 dark:bg-emerald-900/30 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400">正确</span>
+                  <span v-if="isExamMode" class="inline-flex items-center rounded-full bg-sky-100 dark:bg-sky-900/30 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 dark:text-sky-400">已答</span>
+                  <span v-else-if="answerResults[i]" class="inline-flex items-center rounded-full bg-emerald-100 dark:bg-emerald-900/30 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400">正确</span>
                   <span v-else class="inline-flex items-center rounded-full bg-rose-100 dark:bg-rose-900/30 px-1.5 py-0.5 text-[10px] font-medium text-rose-700 dark:text-rose-400">错误</span>
                 </span>
                 <span v-else class="flex-shrink-0 inline-flex items-center rounded-full bg-gray-100 dark:bg-slate-700 px-1.5 py-0.5 text-[10px] text-gray-400 dark:text-gray-500">未答</span>
@@ -61,24 +65,36 @@
           </div>
           <!-- 底部统计 -->
           <div class="px-4 py-2 bg-gray-50 dark:bg-slate-700/50 border-t border-gray-100 dark:border-slate-700 flex justify-between text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0">
-            <span class="flex items-center gap-1">
-              <span class="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>
-              正确 {{ correctCount }}
-            </span>
-            <span class="flex items-center gap-1">
-              <span class="inline-block w-2 h-2 rounded-full bg-rose-400"></span>
-              错误 {{ wrongCount }}
-            </span>
-            <span class="flex items-center gap-1">
-              <span class="inline-block w-2 h-2 rounded-full bg-gray-300 dark:bg-gray-600"></span>
-              未答 {{ unansweredCount }}
-            </span>
+            <template v-if="isExamMode">
+              <span class="flex items-center gap-1">
+                <span class="inline-block w-2 h-2 rounded-full bg-sky-400"></span>
+                已答 {{ totalAnsweredCount }}
+              </span>
+              <span class="flex items-center gap-1">
+                <span class="inline-block w-2 h-2 rounded-full bg-gray-300 dark:bg-gray-600"></span>
+                未答 {{ unansweredCount }}
+              </span>
+            </template>
+            <template v-else>
+              <span class="flex items-center gap-1">
+                <span class="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>
+                正确 {{ correctCount }}
+              </span>
+              <span class="flex items-center gap-1">
+                <span class="inline-block w-2 h-2 rounded-full bg-rose-400"></span>
+                错误 {{ wrongCount }}
+              </span>
+              <span class="flex items-center gap-1">
+                <span class="inline-block w-2 h-2 rounded-full bg-gray-300 dark:bg-gray-600"></span>
+                未答 {{ unansweredCount }}
+              </span>
+            </template>
           </div>
         </div>
       </div>
 
       <!-- 移动端底部导航 -->
-      <div class="md:hidden fixed bottom-0 left-0 right-0 z-20 bg-white/95 dark:bg-slate-800/95 backdrop-blur border-t border-gray-200 dark:border-slate-700 px-3 py-2 safe-area-bottom">
+      <div class="md:hidden fixed bottom-14 left-0 right-0 z-20 bg-white/95 dark:bg-slate-800/95 backdrop-blur border-t border-gray-200 dark:border-slate-700 px-3 py-2 safe-area-bottom">
         <div class="flex gap-1 overflow-x-auto scrollbar-hide">
           <button v-for="(q, i) in quizStore.questions" :key="q.id"
             @click="jumpTo(i)"
@@ -90,7 +106,7 @@
       </div>
 
       <!-- 右侧答题区 -->
-      <div class="flex-1 min-w-0 pb-16 md:pb-0">
+      <div class="flex-1 min-w-0 pb-28 md:pb-0">
         <QuestionCard
           :question="currentQuestion"
           :current-index="quizStore.currentIndex"
@@ -98,6 +114,7 @@
           :hide-progress="true"
           :initial-answer="currentInitialAnswer"
           :initial-result="currentInitialResult"
+          :exam-mode="isExamMode"
           @submit="handleSubmit"
           @next="quizStore.nextQuestion()"
           @prev="quizStore.prevQuestion()"
@@ -131,11 +148,13 @@ const answerResults = reactive({})
 const questionAnswerMap = reactive({})
 // 会话恢复映射：questionId -> { is_correct, correct_answer, explanation, explanation_zh }
 const questionResultMap = reactive({})
-const autoNext = ref(true)
+const autoNext = ref(false)
 
+const isExamMode = computed(() => quizStore.session?.mode === 'exam')
+const totalAnsweredCount = computed(() => Object.keys(answerResults).length)
 const correctCount = computed(() => Object.values(answerResults).filter(v => v === true).length)
 const wrongCount = computed(() => Object.values(answerResults).filter(v => v === false).length)
-const unansweredCount = computed(() => quizStore.questions.length - correctCount.value - wrongCount.value)
+const unansweredCount = computed(() => quizStore.questions.length - totalAnsweredCount.value)
 
 const currentInitialAnswer = computed(() => {
   const questionId = currentQuestion.value?.id
@@ -158,19 +177,25 @@ function restoreSessionState(sessionData) {
   clearReactiveMap(questionResultMap)
   clearReactiveMap(answerResults)
 
+  const examMode = sessionData.session?.mode === 'exam'
+
   ;(sessionData.answers || []).forEach((a) => {
     questionAnswerMap[a.question_id] = a.user_answer
-    questionResultMap[a.question_id] = {
-      is_correct: a.is_correct,
-      correct_answer: a.correct_answer,
-      explanation: a.explanation,
-      explanation_zh: a.explanation_zh,
+    if (examMode) {
+      questionResultMap[a.question_id] = { submitted: true }
+    } else {
+      questionResultMap[a.question_id] = {
+        is_correct: a.is_correct,
+        correct_answer: a.correct_answer,
+        explanation: a.explanation,
+        explanation_zh: a.explanation_zh,
+      }
     }
   })
 
   ;(sessionData.questions || []).forEach((q, i) => {
     if (questionResultMap[q.id]) {
-      answerResults[i] = questionResultMap[q.id].is_correct
+      answerResults[i] = examMode ? 'submitted' : questionResultMap[q.id].is_correct
     }
   })
 
@@ -207,6 +232,9 @@ function navBtnClass(index) {
     return 'bg-primary-600 text-white shadow-sm ring-2 ring-primary-300 dark:ring-primary-700'
   }
   if (index in answerResults) {
+    if (isExamMode.value) {
+      return 'bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-400 hover:bg-sky-200 dark:hover:bg-sky-900/50'
+    }
     return answerResults[index]
       ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-200 dark:hover:bg-emerald-900/50'
       : 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400 hover:bg-rose-200 dark:hover:bg-rose-900/50'
@@ -224,8 +252,25 @@ async function handleSubmit(answer, callback) {
 
     const res = await quizStore.submitAnswer(submitQuestionId, answer)
 
-    // 提交后覆盖映射，保证切回本题时展示最新答案与结果
     questionAnswerMap[submitQuestionId] = answer
+
+    // 模拟考试模式：仅标记为已提交，不存储对错结果
+    if (isExamMode.value) {
+      questionResultMap[submitQuestionId] = { submitted: true }
+      answerResults[submitIndex] = 'submitted'
+      callback(res)
+
+      if (canAutoNext && hasNext) {
+        setTimeout(() => {
+          if (quizStore.currentIndex === submitIndex) {
+            quizStore.nextQuestion()
+          }
+        }, 300)
+      }
+      return
+    }
+
+    // 提交后覆盖映射，保证切回本题时展示最新答案与结果
     questionResultMap[submitQuestionId] = {
       is_correct: res.is_correct,
       correct_answer: res.correct_answer,

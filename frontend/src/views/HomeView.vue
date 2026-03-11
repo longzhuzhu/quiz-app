@@ -73,23 +73,47 @@
     <div v-else class="space-y-4">
       <div v-for="bank in banks" :key="bank.id"
         class="rounded-xl bg-white dark:bg-slate-800 shadow-card hover:shadow-card-hover transition-all p-6">
-        <div class="flex items-start justify-between">
-          <div class="flex-1 min-w-0">
+        <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+          <div class="min-w-0">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ bank.name }}</h3>
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ bank.description || '暂无描述' }}</p>
             <p class="mt-2 text-xs text-gray-400 dark:text-gray-500">{{ bank.question_count }} 道题目</p>
           </div>
-          <div class="ml-4 flex gap-2 flex-shrink-0">
+          <div class="flex gap-2 flex-wrap flex-shrink-0">
             <BaseButton variant="primary" size="sm" @click="startQuiz(bank, 'sequential')" :disabled="bank.question_count === 0">
               ▶ 顺序练习
             </BaseButton>
             <BaseButton variant="secondary" size="sm" @click="startQuiz(bank, 'random')" :disabled="bank.question_count === 0">
               🔀 随机练习
             </BaseButton>
+            <BaseButton variant="secondary" size="sm" @click="openExamModal(bank)" :disabled="bank.question_count === 0">
+              📝 模拟考试
+            </BaseButton>
           </div>
         </div>
       </div>
     </div>
+
+    <!-- 模拟考试设置弹窗 -->
+    <BaseModal :open="showExamModal" title="模拟考试设置" @close="showExamModal = false">
+      <div class="space-y-4">
+        <label class="block">
+          <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+            题目数量（该题库共 {{ examBank?.question_count }} 题）
+          </span>
+          <input type="number" v-model.number="examQuestionCount"
+            :min="1" :max="examBank?.question_count"
+            class="mt-1 block w-full rounded-lg border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white shadow-sm focus:border-primary-500 focus:ring-primary-500" />
+        </label>
+      </div>
+      <template #actions>
+        <BaseButton variant="secondary" @click="showExamModal = false">取消</BaseButton>
+        <BaseButton variant="primary" @click="startExam"
+          :disabled="!examQuestionCount || examQuestionCount < 1 || examQuestionCount > (examBank?.question_count || 0)">
+          开始考试
+        </BaseButton>
+      </template>
+    </BaseModal>
   </div>
 </template>
 
@@ -101,6 +125,7 @@ import { useQuizStore } from '../stores/quiz'
 import { useToast } from '../composables/useToast'
 import client from '../api/client'
 import BaseButton from '../components/BaseButton.vue'
+import BaseModal from '../components/BaseModal.vue'
 import SkeletonLoader from '../components/SkeletonLoader.vue'
 import { FolderIcon, DocumentTextIcon, CheckBadgeIcon, ExclamationTriangleIcon } from '@heroicons/vue/24/outline'
 
@@ -109,6 +134,9 @@ const quizStore = useQuizStore()
 const router = useRouter()
 const toast = useToast()
 const wrongStats = ref({})
+const showExamModal = ref(false)
+const examBank = ref(null)
+const examQuestionCount = ref(90)
 
 const banks = computed(() => bankStore.banks)
 const loading = computed(() => bankStore.loading)
@@ -134,6 +162,22 @@ async function startQuiz(bank, mode) {
     router.push(`/quiz/${quizStore.session.id}`)
   } catch (e) {
     toast.error(e.response?.data?.error || '开始答题失败')
+  }
+}
+
+function openExamModal(bank) {
+  examBank.value = bank
+  examQuestionCount.value = Math.min(90, bank.question_count)
+  showExamModal.value = true
+}
+
+async function startExam() {
+  showExamModal.value = false
+  try {
+    await quizStore.startQuiz(examBank.value.id, 'exam', examQuestionCount.value)
+    router.push(`/quiz/${quizStore.session.id}`)
+  } catch (e) {
+    toast.error(e.response?.data?.error || '开始考试失败')
   }
 }
 </script>
