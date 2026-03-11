@@ -16,8 +16,8 @@
     <div v-else class="space-y-4">
       <div v-for="bank in banks" :key="bank.id"
         class="rounded-card-lg bg-white dark:bg-slate-800 shadow-card hover:shadow-card-hover transition-all p-5">
-        <div class="flex items-center justify-between">
-          <div class="flex-1 min-w-0">
+        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div class="min-w-0">
             <router-link :to="`/admin/banks/${bank.id}`"
               class="font-semibold text-primary-600 dark:text-primary-400 hover:underline">
               {{ bank.name }}
@@ -25,7 +25,7 @@
             <p v-if="bank.description" class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ bank.description }}</p>
             <p class="mt-1 text-sm text-gray-400 dark:text-gray-500">{{ bank.question_count }} 道题目</p>
           </div>
-          <div class="ml-4 flex gap-2 flex-shrink-0">
+          <div class="flex gap-2 flex-wrap flex-shrink-0">
             <BaseButton variant="secondary" size="sm" @click="startEdit(bank)">
               <PencilSquareIcon class="h-4 w-4" />
               编辑

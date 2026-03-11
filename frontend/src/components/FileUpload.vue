@@ -17,6 +17,9 @@
       </label>
     </div>
     <div v-if="uploading" class="mt-4 text-sm text-primary-600 dark:text-primary-400">上传中...</div>
+    <div v-if="translating" class="mt-4 text-sm text-primary-600 dark:text-primary-400">
+      正在翻译高频词汇... 剩余 {{ translateRemaining }} 个
+    </div>
     <div v-if="result" class="mt-4 text-sm"
       :class="result.error ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'">
       {{ result.message || result.error }}
@@ -36,7 +39,25 @@ const props = defineProps({ bankId: Number })
 const emit = defineEmits(['imported'])
 const dragging = ref(false)
 const uploading = ref(false)
+const translating = ref(false)
+const translateRemaining = ref(0)
 const result = ref(null)
+
+async function translateFrequencies() {
+  translating.value = true
+  try {
+    while (true) {
+      const res = await client.post(`/banks/${props.bankId}/translate-frequencies`)
+      translateRemaining.value = res.data.remaining
+      if (res.data.remaining <= 0) break
+    }
+    toast.success('高频词汇翻译完成')
+  } catch (e) {
+    toast.error('词汇翻译出错，已保存已完成部分')
+  } finally {
+    translating.value = false
+  }
+}
 
 async function uploadFile(file) {
   uploading.value = true
@@ -50,6 +71,11 @@ async function uploadFile(file) {
     result.value = res.data
     toast.success(res.data.message || '上传成功')
     emit('imported', res.data)
+
+    if (res.data.frequency_count > 0) {
+      translateRemaining.value = res.data.frequency_count
+      translateFrequencies()
+    }
   } catch (e) {
     result.value = { error: e.response?.data?.error || '上传失败' }
     toast.error(result.value.error)

@@ -2,8 +2,9 @@ import json
 
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
+from sqlalchemy.exc import SQLAlchemyError
 
-from models import db, QuestionBank, Question, User, BankWordFrequency
+from models import db, QuestionBank, Question, User, BankWordFrequency, QuizSession, QuizAnswer, WrongAnswer
 from services.import_service import parse_file, build_bank_word_frequencies
 from services.ai_service import batch_translate_terms
 
@@ -74,6 +75,8 @@ def list_banks():
 @jwt_required()
 def create_bank():
     user = User.query.get(int(get_jwt_identity()))
+    if not user:
+        return jsonify({'error': '用户不存在，请重新登录'}), 401
     if not user.is_admin:
         return jsonify({'error': '需要管理员权限'}), 403
     data = request.get_json()
@@ -87,6 +90,8 @@ def create_bank():
 @jwt_required()
 def update_bank(bank_id):
     user = User.query.get(int(get_jwt_identity()))
+    if not user:
+        return jsonify({'error': '用户不存在，请重新登录'}), 401
     if not user.is_admin:
         return jsonify({'error': '需要管理员权限'}), 403
     bank = QuestionBank.query.get_or_404(bank_id)
@@ -103,11 +108,31 @@ def update_bank(bank_id):
 @jwt_required()
 def delete_bank(bank_id):
     user = User.query.get(int(get_jwt_identity()))
+    if not user:
+        return jsonify({'error': '用户不存在，请重新登录'}), 401
     if not user.is_admin:
         return jsonify({'error': '需要管理员权限'}), 403
     bank = QuestionBank.query.get_or_404(bank_id)
-    db.session.delete(bank)
-    db.session.commit()
+    try:
+        question_ids_subquery = db.session.query(Question.id).filter(Question.bank_id == bank.id)
+
+        QuizAnswer.query.filter(
+            QuizAnswer.question_id.in_(question_ids_subquery)
+        ).delete(synchronize_session=False)
+        WrongAnswer.query.filter(
+            WrongAnswer.question_id.in_(question_ids_subquery)
+        ).delete(synchronize_session=False)
+
+        QuizSession.query.filter_by(bank_id=bank.id).delete(synchronize_session=False)
+        BankWordFrequency.query.filter_by(bank_id=bank.id).delete(synchronize_session=False)
+        Question.query.filter_by(bank_id=bank.id).delete(synchronize_session=False)
+
+        db.session.delete(bank)
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        return jsonify({'error': '删除题库失败，请稍后重试'}), 500
+
     return jsonify({'message': '题库已删除'})
 
 
@@ -115,6 +140,8 @@ def delete_bank(bank_id):
 @jwt_required()
 def import_questions(bank_id):
     user = User.query.get(int(get_jwt_identity()))
+    if not user:
+        return jsonify({'error': '用户不存在，请重新登录'}), 401
     if not user.is_admin:
         return jsonify({'error': '需要管理员权限'}), 403
     bank = QuestionBank.query.get_or_404(bank_id)
@@ -155,14 +182,12 @@ def import_questions(bank_id):
         }
         for question in full_bank_questions
     ])
-    frequency_items = translate_bank_word_frequencies(frequency_items)
-
     BankWordFrequency.query.filter_by(bank_id=bank.id).delete()
     for item in frequency_items:
         db.session.add(BankWordFrequency(
             bank_id=bank.id,
             term=item['term'],
-            term_zh=item.get('term_zh'),
+            term_zh=None,
             frequency=item['frequency'],
         ))
 
@@ -170,7 +195,45 @@ def import_questions(bank_id):
     bank.source_filename = file.filename
     db.session.commit()
 
+    frequency_count = len(frequency_items)
     msg = f'成功导入 {count} 道题目'
     if missing_answer_count:
         msg += f'，其中 {missing_answer_count} 道未找到正确答案（需手动补充）'
-    return jsonify({'message': msg, 'count': count, 'missing_answer_count': missing_answer_count})
+    return jsonify({'message': msg, 'count': count, 'missing_answer_count': missing_answer_count, 'frequency_count': frequency_count})
+
+
+@banks_bp.route('/<int:bank_id>/translate-frequencies', methods=['POST'])
+@jwt_required()
+def translate_frequencies(bank_id):
+    user = User.query.get(int(get_jwt_identity()))
+    if not user:
+        return jsonify({'error': '用户不存在，请重新登录'}), 401
+    if not user.is_admin:
+        return jsonify({'error': '需要管理员权限'}), 403
+    QuestionBank.query.get_or_404(bank_id)
+
+    untranslated = BankWordFrequency.query.filter_by(
+        bank_id=bank_id, term_zh=None
+    ).order_by(BankWordFrequency.frequency.desc()).limit(100).all()
+
+    if not untranslated:
+        remaining = 0
+        return jsonify({'translated': 0, 'remaining': remaining})
+
+    batch = [{'term': item.term} for item in untranslated]
+    translation_map = _translate_frequency_batch(batch, 1)
+
+    translated_count = 0
+    for index, item in enumerate(untranslated, start=1):
+        zh = translation_map.get(index)
+        if zh:
+            item.term_zh = zh
+            translated_count += 1
+
+    db.session.commit()
+
+    remaining = BankWordFrequency.query.filter_by(
+        bank_id=bank_id, term_zh=None
+    ).count()
+
+    return jsonify({'translated': translated_count, 'remaining': remaining})

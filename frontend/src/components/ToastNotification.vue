@@ -12,7 +12,7 @@
         v-for="toast in toasts"
         :key="toast.id"
         :class="[
-          'rounded-lg border p-4 shadow-lg min-w-[320px] max-w-md flex items-start gap-3',
+          'rounded-lg border p-4 shadow-lg min-w-[280px] sm:min-w-[320px] max-w-[calc(100vw-2rem)] flex items-start gap-3',
           'dark:bg-slate-800 dark:border-slate-700 dark:text-gray-100',
           typeClasses[toast.type]
         ]"
