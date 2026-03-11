@@ -25,7 +25,10 @@ const loading = ref(false)
 const explanation = ref(null)
 
 async function handleExplain() {
-  if (explanation.value) return
+  if (explanation.value) {
+    emit('explained', explanation.value)
+    return
+  }
   loading.value = true
   try {
     const res = await client.post('/ai/explain', { question_id: props.questionId })

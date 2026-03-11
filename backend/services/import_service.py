@@ -164,6 +164,12 @@ def _parse_questions(text):
     if len(exam_splits) >= 3:
         return _parse_exam_dump(exam_splits)
 
+    # 尝试 QUESTION: N 格式（如 AI 生成的考试题 PDF）
+    colon_pattern = r'QUESTION\s*:\s*(\d+)'
+    colon_splits = re.split(colon_pattern, text, flags=re.IGNORECASE)
+    if len(colon_splits) >= 3:
+        return _parse_question_colon(colon_splits)
+
     return _parse_generic(text)
 
 
@@ -209,6 +215,82 @@ def _parse_exam_dump(splits):
 
         if not stem or not options:
             continue
+
+        q_type = 'multiple' if ',' in answer else 'single'
+
+        questions.append({
+            'content': stem,
+            'options': options,
+            'correct_answer': answer or '',
+            'question_type': q_type,
+            'answer_missing': not answer,
+        })
+
+    return questions
+
+
+def _parse_question_colon(splits):
+    """解析 QUESTION: N 格式的题库（如 AI 生成的考试题 PDF）"""
+    questions = []
+
+    for i in range(1, len(splits) - 1, 2):
+        q_text = splits[i + 1].strip()
+
+        # 清理页眉页脚
+        q_text = re.sub(
+            r'\n\s*(?:IAPP\s+CIPT\s*[-–—]\s*Certified\s+Information\s+Privacy\s+Technologist'
+            r'|Page\s+\d+/\d+)\s*',
+            '\n', q_text, flags=re.IGNORECASE
+        )
+
+        # 提取 Answer 行的答案并截断后续解释
+        answer = ''
+        answer_match = re.search(
+            r'\nAnswer\s*:\s*([A-E](?:\s*,\s*[A-E])*)',
+            q_text, re.IGNORECASE
+        )
+        if answer_match:
+            answer = answer_match.group(1).strip().upper().replace(' ', '')
+            q_text = q_text[:answer_match.start()].strip()
+
+        # 提取选项，同时识别 [CORRECT] 标记
+        option_pattern = (
+            r'(?:^|\n)\s*([A-E])\.\s+(.*?)'
+            r'(?=\n\s*[A-E]\.\s|\n\s*Answer\s*:|\Z)'
+        )
+        option_matches = re.findall(option_pattern, q_text, re.DOTALL)
+
+        options = []
+        correct_from_markers = []
+        for key, opt_text in option_matches:
+            opt_text_clean = opt_text.strip().replace('\n', ' ')
+            if '[CORRECT]' in opt_text_clean:
+                correct_from_markers.append(key.upper())
+                opt_text_clean = re.sub(
+                    r'\s*\[CORRECT\]\s*', ' ', opt_text_clean
+                ).strip()
+            options.append({
+                'key': key.upper(),
+                'text': opt_text_clean,
+            })
+
+        # 提取题干
+        if options:
+            first_opt = re.search(r'(?:^|\n)\s*[A-E]\.\s+', q_text)
+            stem = q_text[:first_opt.start()].strip() if first_opt else q_text
+        else:
+            stem = q_text
+
+        # 清理 SCENARIO 标记，保留内容
+        stem = re.sub(r'^SCENARIO\s*-?\s*\n?', '', stem).strip()
+        stem = re.sub(r'\n+', '\n', stem).strip()
+
+        if not stem or not options:
+            continue
+
+        # 优先使用 Answer 行答案，其次使用 [CORRECT] 标记
+        if not answer and correct_from_markers:
+            answer = ','.join(correct_from_markers)
 
         q_type = 'multiple' if ',' in answer else 'single'
 

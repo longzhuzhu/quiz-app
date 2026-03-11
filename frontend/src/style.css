@@ -36,3 +36,6 @@
 /* 路由过渡动画 */
 .fade-enter-active, .fade-leave-active { transition: opacity 0.15s ease; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
+
+/* iOS 安全区域 */
+.safe-area-bottom { padding-bottom: env(safe-area-inset-bottom, 0); }

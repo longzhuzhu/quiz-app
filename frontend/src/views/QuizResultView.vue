@@ -73,7 +73,7 @@
       </div>
 
       <!-- 底部按钮 -->
-      <div class="flex justify-center gap-3">
+      <div class="flex justify-center gap-3 flex-wrap">
         <BaseButton variant="secondary" @click="$router.push('/')">返回首页</BaseButton>
         <BaseButton variant="primary" @click="$router.push('/wrong')">查看错题</BaseButton>
         <BaseButton variant="secondary" @click="retryQuiz">再来一次</BaseButton>

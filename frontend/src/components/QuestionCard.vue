@@ -1,5 +1,5 @@
 <template>
-  <div class="rounded-xl bg-white dark:bg-slate-800 shadow-card p-6">
+  <div class="rounded-xl bg-white dark:bg-slate-800 shadow-card p-4 md:p-6">
     <template v-if="question">
     <!-- 题目信息 -->
     <div class="mb-4 flex items-center justify-between">
@@ -46,12 +46,12 @@
       <TranslateButton :question-id="question.id" :has-translation="!!question.content_zh" :show="showTranslation"
         @translated="(e) => { $emit('translated', e); showTranslation = true }"
         @toggle="showTranslation = !showTranslation" />
-      <ExplainButton v-if="answered" :question-id="question.id" @explained="(e) => explainData = e" />
+      <ExplainButton v-if="!examMode" :key="question.id" :question-id="question.id" @explained="(e) => explainData = e" />
       <AddVocabButton />
     </div>
 
     <!-- AI 解析内容（独立于按钮行） -->
-    <div v-if="explainData"
+    <div v-if="explainData && !examMode"
       class="mt-3 rounded-card border border-sky-200 bg-sky-50 p-4 text-sm
              dark:border-sky-800 dark:bg-sky-900/20">
       <p class="font-medium text-sky-800 dark:text-sky-300">AI 解析</p>
@@ -61,7 +61,7 @@
     </div>
 
     <!-- 答题反馈 -->
-    <div v-if="answered" class="mt-4 rounded-xl p-4 border"
+    <div v-if="answered && !examMode" class="mt-4 rounded-xl p-4 border"
       :class="result.is_correct
         ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800'
         : 'bg-rose-50 dark:bg-rose-900/20 border-rose-200 dark:border-rose-800'">
@@ -84,12 +84,12 @@
     </div>
 
     <!-- 操作栏 -->
-    <div class="mt-6 flex justify-between items-center gap-2">
-      <BaseButton variant="secondary" @click="$emit('prev')" :disabled="currentIndex === 0">上一题</BaseButton>
+    <div class="mt-6 flex flex-wrap justify-between items-center gap-2">
+      <BaseButton variant="secondary" size="sm" @click="$emit('prev')" :disabled="currentIndex === 0">上一题</BaseButton>
       <div class="flex items-center gap-2">
-        <BaseButton variant="primary" @click="handleSubmit" :disabled="selectedAnswers.length === 0">提交答案</BaseButton>
-        <BaseButton v-if="answered && currentIndex < total - 1" variant="primary" @click="$emit('next')">下一题</BaseButton>
-        <BaseButton v-else-if="answered" variant="primary" @click="$emit('finish')" class="!bg-emerald-600 hover:!bg-emerald-700">完成答题</BaseButton>
+        <BaseButton variant="primary" size="sm" @click="handleSubmit" :disabled="selectedAnswers.length === 0">提交答案</BaseButton>
+        <BaseButton v-if="answered && currentIndex < total - 1" variant="primary" size="sm" @click="$emit('next')">下一题</BaseButton>
+        <BaseButton v-else-if="answered" variant="primary" size="sm" @click="$emit('finish')" class="!bg-emerald-600 hover:!bg-emerald-700">完成答题</BaseButton>
       </div>
     </div>
     </template>
@@ -111,6 +111,7 @@ const props = defineProps({
   hideProgress: { type: Boolean, default: false },
   initialAnswer: { type: String, default: '' },
   initialResult: { type: Object, default: null },
+  examMode: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['submit', 'next', 'prev', 'finish', 'translated'])
@@ -162,6 +163,13 @@ function optionClass(key) {
       return `${base} border-primary-500 bg-primary-50 dark:bg-primary-900/20 ring-2 ring-primary-500/20`
     }
     return `${base} border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500 hover:bg-gray-50 dark:hover:bg-slate-700/50`
+  }
+  // 模拟考试模式：已答题后仅显示「已选中」灰色状态
+  if (props.examMode) {
+    if (selectedAnswers.value.includes(key)) {
+      return `${base} border-gray-400 dark:border-slate-500 bg-gray-100 dark:bg-slate-700`
+    }
+    return `${base} border-gray-200 dark:border-slate-700 opacity-50`
   }
   const correct = (result.value?.correct_answer || '').split(',').map(s => s.trim()).filter(Boolean)
   const isCorrect = correct.includes(key)
