@@ -1,19 +1,14 @@
 import json
 
 import requests
-from flask import current_app
 
-from models import db, Question, SystemSetting
+from models import db, Question
+from services.settings_service import get_effective_ai_settings
 
 
 def _get_ai_config():
     """从数据库读取 AI 配置，回退到环境变量/默认值"""
-    config = current_app.config
-    return {
-        'base_url': SystemSetting.get('ai_api_base_url', config.get('AI_API_BASE_URL', 'https://api.openai.com')),
-        'api_key': SystemSetting.get('ai_api_key', config.get('AI_API_KEY', '')),
-        'model': SystemSetting.get('ai_model', config.get('AI_MODEL', 'gpt-4o-mini')),
-    }
+    return get_effective_ai_settings()
 
 
 def call_ai_api(messages):

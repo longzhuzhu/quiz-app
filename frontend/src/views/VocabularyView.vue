@@ -32,8 +32,8 @@
       <div class="mb-4 flex items-center justify-between gap-2 flex-wrap">
         <h2 class="text-lg font-semibold text-gray-800 dark:text-white">专业词汇</h2>
         <div class="flex items-center gap-2">
-          <BaseButton v-if="isAdmin && untranslatedCount > 0" @click="batchTranslate" :disabled="translating" size="sm">
-            {{ translating ? '翻译中...' : `批量翻译（${untranslatedCount}）` }}
+          <BaseButton v-if="isAdmin && professionalUntranslatedCount > 0" @click="batchTranslate" :disabled="translating" size="sm">
+            {{ translating ? '翻译中...' : `批量翻译（${professionalUntranslatedCount}）` }}
           </BaseButton>
           <BaseButton v-if="isAdmin" @click="importIAPP" :disabled="importing" variant="secondary" size="sm">
             {{ importing ? '导入中...' : '从 IAPP 导入' }}
@@ -53,6 +53,20 @@
       <div class="mb-4">
         <input v-model="searchQuery" placeholder="搜索术语..."
           class="w-full rounded-card border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-4 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" />
+      </div>
+
+      <div class="mb-4 flex flex-wrap gap-2">
+        <button
+          v-for="option in masteredFilterOptions"
+          :key="`professional-${option.value}`"
+          class="rounded-full px-3 py-1.5 text-sm font-medium transition-colors"
+          :class="professionalMasteredFilter === option.value
+            ? 'bg-primary-600 text-white dark:bg-primary-500'
+            : 'bg-white text-gray-600 shadow-card hover:text-primary-600 dark:bg-slate-800 dark:text-gray-300 dark:hover:text-primary-400'"
+          @click="professionalMasteredFilter = option.value"
+        >
+          {{ option.label }}
+        </button>
       </div>
 
       <!-- 管理员添加表单 -->
@@ -103,7 +117,7 @@
                 <div v-for="w in proGrouped[letter]" :key="w.id"
                   class="rounded-card-lg bg-white dark:bg-slate-800 px-5 py-4 shadow-card cursor-pointer hover:shadow-card-hover transition-shadow"
                   @click="toggleExpand(w.id)">
-                  <div class="flex items-start justify-between">
+                  <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div class="flex-1 min-w-0">
                       <div class="flex items-baseline gap-2 flex-wrap">
                         <span class="font-semibold text-gray-900 dark:text-white">{{ w.term }}</span>
@@ -116,12 +130,27 @@
                           :class="{ 'line-clamp-2': !expandedIds.has(w.id) }">{{ w.definition_zh }}</p>
                       </div>
                     </div>
-                    <div class="ml-3 flex flex-shrink-0 items-center gap-2">
+                    <div class="flex w-full items-center gap-2 flex-wrap justify-start sm:ml-3 sm:w-auto sm:flex-shrink-0 sm:justify-end">
+                      <span
+                        v-if="w.is_mastered"
+                        class="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300"
+                      >
+                        已掌握
+                      </span>
+                      <BaseButton
+                        v-if="w.can_mark_mastered"
+                        :variant="w.is_mastered ? 'secondary' : 'primary'"
+                        size="sm"
+                        :loading="Boolean(vocabProgressLoading[`professional:${w.id}`])"
+                        @click.stop="toggleVocabMastery(w, 'professional')"
+                      >
+                        {{ w.is_mastered ? '取消掌握' : '掌握' }}
+                      </BaseButton>
                       <svg class="w-4 h-4 text-gray-300 dark:text-gray-600 transition-transform" :class="{ 'rotate-180': expandedIds.has(w.id) }"
                         fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
                       </svg>
-                      <BaseButton v-if="isAdmin" variant="danger" size="sm" @click.stop="confirmDeleteWord(w.id, 'professional')">
+                      <BaseButton v-if="w.can_delete" variant="danger" size="sm" @click.stop="confirmDeleteWord(w.id, 'professional')">
                         删除
                       </BaseButton>
                     </div>
@@ -156,6 +185,20 @@
         </BaseButton>
       </div>
 
+      <div class="mb-4 flex flex-wrap gap-2">
+        <button
+          v-for="option in masteredFilterOptions"
+          :key="`personal-${option.value}`"
+          class="rounded-full px-3 py-1.5 text-sm font-medium transition-colors"
+          :class="personalMasteredFilter === option.value
+            ? 'bg-primary-600 text-white dark:bg-primary-500'
+            : 'bg-white text-gray-600 shadow-card hover:text-primary-600 dark:bg-slate-800 dark:text-gray-300 dark:hover:text-primary-400'"
+          @click="personalMasteredFilter = option.value"
+        >
+          {{ option.label }}
+        </button>
+      </div>
+
       <div v-if="loadingPersonal" class="text-center text-gray-500 dark:text-gray-400 py-12">加载中...</div>
       <div v-else-if="personalWords.length === 0" class="py-12 text-center text-gray-400 dark:text-gray-500">还没有收藏单词，点击上方添加</div>
       <template v-else>
@@ -185,7 +228,7 @@
                 <div v-for="w in personalGrouped[letter]" :key="w.id"
                   class="rounded-card-lg bg-white dark:bg-slate-800 px-5 py-4 shadow-card cursor-pointer hover:shadow-card-hover transition-shadow"
                   @click="toggleExpand(w.id)">
-                  <div class="flex items-start justify-between">
+                  <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div class="flex-1 min-w-0">
                       <div class="flex items-baseline gap-2 flex-wrap">
                         <span class="font-semibold text-gray-900 dark:text-white">{{ w.term }}</span>
@@ -198,12 +241,32 @@
                           :class="{ 'line-clamp-2': !expandedIds.has(w.id) }">{{ w.definition_zh }}</p>
                       </div>
                     </div>
-                    <div class="ml-3 flex flex-shrink-0 items-center gap-2">
+                    <div class="flex w-full items-center gap-2 flex-wrap justify-start sm:ml-3 sm:w-auto sm:flex-shrink-0 sm:justify-end">
+                      <span
+                        v-if="w.is_mastered"
+                        class="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300"
+                      >
+                        已掌握
+                      </span>
+                      <BaseButton
+                        v-if="w.can_mark_mastered"
+                        :variant="w.is_mastered ? 'secondary' : 'primary'"
+                        size="sm"
+                        :loading="Boolean(vocabProgressLoading[`personal:${w.id}`])"
+                        @click.stop="toggleVocabMastery(w, 'personal')"
+                      >
+                        {{ w.is_mastered ? '取消掌握' : '掌握' }}
+                      </BaseButton>
                       <svg class="w-4 h-4 text-gray-300 dark:text-gray-600 transition-transform" :class="{ 'rotate-180': expandedIds.has(w.id) }"
                         fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
                       </svg>
-                      <BaseButton variant="danger" size="sm" @click.stop="confirmDeleteWord(w.id, 'personal')">
+                      <BaseButton
+                        v-if="w.can_delete"
+                        variant="danger"
+                        size="sm"
+                        @click.stop="confirmDeleteWord(w.id, 'personal')"
+                      >
                         删除
                       </BaseButton>
                     </div>
@@ -250,6 +313,20 @@
           </div>
         </div>
 
+        <div class="mb-4 flex flex-wrap gap-2">
+          <button
+            v-for="option in masteredFilterOptions"
+            :key="`frequent-${option.value}`"
+            class="rounded-full px-3 py-1.5 text-sm font-medium transition-colors"
+            :class="frequentMasteredFilter === option.value
+              ? 'bg-primary-600 text-white dark:bg-primary-500'
+              : 'bg-white text-gray-600 shadow-card hover:text-primary-600 dark:bg-slate-800 dark:text-gray-300 dark:hover:text-primary-400'"
+            @click="setFrequentMasteredFilter(option.value)"
+          >
+            {{ option.label }}
+          </button>
+        </div>
+
         <div v-if="frequentWords.length === 0" class="py-12 text-center text-gray-400 dark:text-gray-500">当前题库暂无高频词，请先重新导入题库生成词频</div>
         <div v-else>
           <div class="space-y-3">
@@ -258,7 +335,7 @@
               :key="item.term"
               class="rounded-card-lg bg-white dark:bg-slate-800 px-5 py-4 shadow-card hover:shadow-card-hover transition-shadow"
             >
-              <div class="flex items-center gap-4">
+              <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
                 <div class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-amber-100 text-sm font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
                   {{ pageStartIndex + index + 1 }}
                 </div>
@@ -266,11 +343,37 @@
                   <div class="flex items-baseline gap-2 flex-wrap">
                     <div class="font-semibold text-gray-900 dark:text-white">{{ item.term }}</div>
                     <div v-if="item.term_zh" class="text-sm text-emerald-600 dark:text-emerald-400">{{ item.term_zh }}</div>
+                    <span
+                      v-if="item.is_mastered"
+                      class="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300"
+                    >
+                      已掌握
+                    </span>
                   </div>
                   <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">在当前题库中出现 {{ item.frequency }} 次</div>
                 </div>
-                <div class="rounded-full bg-amber-50 px-3 py-1 text-sm font-medium text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
-                  {{ item.frequency }} 次
+                <div class="flex w-full flex-wrap items-center justify-start gap-2 sm:w-auto sm:justify-end">
+                  <BaseButton
+                    v-if="item.can_mark_mastered"
+                    :variant="item.is_mastered ? 'secondary' : 'primary'"
+                    size="sm"
+                    :loading="Boolean(frequentProgressLoading[item.term])"
+                    @click="toggleFrequentMastery(item)"
+                  >
+                    {{ item.is_mastered ? '已掌握' : '掌握' }}
+                  </BaseButton>
+                  <BaseButton
+                    v-if="item.can_delete"
+                    variant="danger"
+                    size="sm"
+                    :loading="Boolean(frequentDeleteLoading[item.term])"
+                    @click="confirmDeleteWord(null, 'frequent', { term: item.term, bankId: selectedBankId })"
+                  >
+                    删除
+                  </BaseButton>
+                  <div class="rounded-full bg-amber-50 px-3 py-1 text-sm font-medium text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+                    {{ item.frequency }} 次
+                  </div>
                 </div>
               </div>
             </div>
@@ -354,6 +457,10 @@ const activeTab = ref('professional')
 const stats = ref({})
 const professionalWords = ref([])
 const personalWords = ref([])
+const professionalUntranslatedCount = ref(0)
+const professionalMasteredFilter = ref('all')
+const personalMasteredFilter = ref('all')
+const frequentMasteredFilter = ref('all')
 const banks = ref([])
 const selectedBankId = ref(null)
 const frequentWords = ref([])
@@ -379,9 +486,17 @@ const proListRef = ref(null)
 const personalListRef = ref(null)
 
 // 删除确认状态
-const deleteConfirm = reactive({ open: false, id: null, type: '' })
+const deleteConfirm = reactive({ open: false, id: null, type: '', term: '', bankId: null })
 // 导入确认状态
 const importConfirm = reactive({ open: false })
+const vocabProgressLoading = reactive({})
+const frequentProgressLoading = reactive({})
+const frequentDeleteLoading = reactive({})
+const masteredFilterOptions = [
+  { value: 'all', label: '全部' },
+  { value: 'unmastered', label: '未掌握' },
+  { value: 'mastered', label: '已掌握' },
+]
 
 // 字母分区 DOM 引用
 const letterRefs = { pro: {}, personal: {} }
@@ -406,10 +521,6 @@ function groupByLetter(words) {
   }
   return groups
 }
-
-const untranslatedCount = computed(() =>
-  professionalWords.value.filter(w => !w.term_zh).length
-)
 
 const selectedBankName = computed(() =>
   banks.value.find(bank => bank.id === selectedBankId.value)?.name || ''
@@ -499,17 +610,28 @@ async function fetchStats() {
 async function fetchProfessional() {
   loadingPro.value = true
   try {
-    const res = await client.get('/vocab/professional')
+    const res = await client.get('/vocab/professional', {
+      params: buildMasteredFilterParams(professionalMasteredFilter.value),
+    })
     professionalWords.value = res.data
   } finally {
     loadingPro.value = false
   }
 }
 
+async function refreshProfessionalTranslationCount() {
+  try {
+    const res = await client.get('/vocab/professional')
+    professionalUntranslatedCount.value = (res.data || []).filter(word => !word.term_zh).length
+  } catch {}
+}
+
 async function fetchPersonal() {
   loadingPersonal.value = true
   try {
-    const res = await client.get('/vocab/personal')
+    const res = await client.get('/vocab/personal', {
+      params: buildMasteredFilterParams(personalMasteredFilter.value),
+    })
     personalWords.value = res.data
   } finally {
     loadingPersonal.value = false
@@ -539,12 +661,20 @@ async function fetchFrequent() {
         bank_id: selectedBankId.value,
         page: frequentPage.value,
         per_page: frequentPerPage.value,
+        ...buildMasteredFilterParams(frequentMasteredFilter.value),
       },
     })
-    frequentWords.value = res.data.items || []
-    frequentTotal.value = res.data.summary?.total_terms || 0
+    const nextItems = res.data.items || []
+    const nextTotal = res.data.summary?.total_terms || 0
+    const nextTotalPages = res.data.pagination?.total_pages || 1
+    if (nextItems.length === 0 && frequentPage.value > 1 && nextTotalPages < frequentPage.value) {
+      frequentPage.value = nextTotalPages
+      return
+    }
+    frequentWords.value = nextItems
+    frequentTotal.value = nextTotal
     frequentTopLimit.value = res.data.summary?.top_terms_limit || 5000
-    frequentTotalPages.value = res.data.pagination?.total_pages || 1
+    frequentTotalPages.value = nextTotalPages
   } catch (e) {
     frequentWords.value = []
     frequentTotal.value = 0
@@ -555,9 +685,53 @@ async function fetchFrequent() {
   }
 }
 
+async function toggleVocabMastery(item, type) {
+  const nextState = !item.is_mastered
+  const loadingKey = `${type}:${item.id}`
+  vocabProgressLoading[loadingKey] = true
+  try {
+    const res = await client.put(`/vocab/items/${item.id}/progress`, {
+      is_mastered: nextState,
+    })
+    if (type === 'professional') {
+      await fetchProfessional()
+    } else {
+      await fetchPersonal()
+    }
+    toast.success(res.data.message || (nextState ? '已标记为掌握' : '已取消掌握'))
+  } catch (e) {
+    toast.error(e.response?.data?.error || '更新掌握状态失败')
+  } finally {
+    vocabProgressLoading[loadingKey] = false
+  }
+}
+
+async function toggleFrequentMastery(item) {
+  const nextState = !item.is_mastered
+  frequentProgressLoading[item.term] = true
+  try {
+    const res = await client.put('/vocab/frequent-items/progress', {
+      bank_id: selectedBankId.value,
+      term: item.term,
+      is_mastered: nextState,
+    })
+    await fetchFrequent()
+    toast.success(res.data.message || (nextState ? '已标记为掌握' : '已取消掌握'))
+  } catch (e) {
+    toast.error(e.response?.data?.error || '更新掌握状态失败')
+  } finally {
+    frequentProgressLoading[item.term] = false
+  }
+}
+
 function changeFrequentPage(page) {
   if (page < 1 || page > frequentTotalPages.value || page === frequentPage.value) return
   frequentPage.value = page
+}
+
+function setFrequentMasteredFilter(value) {
+  if (frequentMasteredFilter.value === value) return
+  frequentMasteredFilter.value = value
 }
 
 async function addWord(type) {
@@ -567,6 +741,7 @@ async function addWord(type) {
     if (type === 'professional') {
       professionalWords.value.unshift(res.data)
       professionalWords.value.sort((a, b) => a.term.localeCompare(b.term))
+      professionalUntranslatedCount.value += res.data.term_zh ? 0 : 1
     } else {
       personalWords.value.unshift(res.data)
     }
@@ -579,27 +754,56 @@ async function addWord(type) {
 }
 
 // 删除确认流程
-function confirmDeleteWord(id, type) {
+function confirmDeleteWord(id, type, options = {}) {
   deleteConfirm.id = id
   deleteConfirm.type = type
+  deleteConfirm.term = options.term || ''
+  deleteConfirm.bankId = options.bankId || null
   deleteConfirm.open = true
 }
 
 async function doDeleteWord() {
-  const { id, type } = deleteConfirm
+  const { id, type, term, bankId } = deleteConfirm
   deleteConfirm.open = false
   try {
-    const url = type === 'professional' ? `/vocab/professional/${id}` : `/vocab/personal/${id}`
-    await client.delete(url)
-    if (type === 'professional') {
-      professionalWords.value = professionalWords.value.filter(w => w.id !== id)
+    if (type === 'frequent') {
+      frequentDeleteLoading[term] = true
+      await client.delete('/vocab/frequent-items', {
+        params: {
+          bank_id: bankId,
+          term,
+        },
+      })
+      await fetchFrequent()
     } else {
-      personalWords.value = personalWords.value.filter(w => w.id !== id)
+      const url = type === 'professional' ? `/vocab/professional/${id}` : `/vocab/personal/${id}`
+      await client.delete(url)
+      if (type === 'professional') {
+        const removedWord = professionalWords.value.find(w => w.id === id)
+        professionalWords.value = professionalWords.value.filter(w => w.id !== id)
+        if (removedWord && !removedWord.term_zh) {
+          professionalUntranslatedCount.value = Math.max(professionalUntranslatedCount.value - 1, 0)
+        }
+      } else {
+        personalWords.value = personalWords.value.filter(w => w.id !== id)
+      }
+      stats.value[type] = Math.max((stats.value[type] || 1) - 1, 0)
     }
-    stats.value[type] = Math.max((stats.value[type] || 1) - 1, 0)
-    toast.success('词汇已删除')
+    if (type !== 'frequent') {
+      toast.success('词汇已删除')
+    } else {
+      toast.success('词汇已删除')
+    }
   } catch (e) {
     toast.error(e.response?.data?.error || '删除失败')
+  } finally {
+    if (type === 'frequent' && term) {
+      frequentDeleteLoading[term] = false
+    }
+    deleteConfirm.id = null
+    deleteConfirm.type = ''
+    deleteConfirm.term = ''
+    deleteConfirm.bankId = null
   }
 }
 
@@ -615,6 +819,7 @@ async function doImportIAPP() {
     const res = await client.post('/vocab/professional/import-iapp')
     toast.success(res.data.message)
     await fetchProfessional()
+    await refreshProfessionalTranslationCount()
     await fetchStats()
   } catch (e) {
     toast.error(e.response?.data?.error || '导入失败')
@@ -625,7 +830,7 @@ async function doImportIAPP() {
 
 async function batchTranslate() {
   translating.value = true
-  translateRemaining.value = untranslatedCount.value
+  translateRemaining.value = professionalUntranslatedCount.value
   try {
     while (true) {
       const res = await client.post('/vocab/professional/batch-translate')
@@ -634,9 +839,11 @@ async function batchTranslate() {
     }
     toast.success('批量翻译完成')
     await fetchProfessional()
+    await refreshProfessionalTranslationCount()
   } catch (e) {
     toast.error(e.response?.data?.error || '翻译出错，已保存已完成部分')
     await fetchProfessional()
+    await refreshProfessionalTranslationCount()
   } finally {
     translating.value = false
   }
@@ -646,7 +853,18 @@ watch(activeTab, () => {
   showAddForm.value = false
 })
 
+watch(professionalMasteredFilter, fetchProfessional)
+watch(personalMasteredFilter, fetchPersonal)
+
 watch(selectedBankId, () => {
+  if (frequentPage.value !== 1) {
+    frequentPage.value = 1
+    return
+  }
+  fetchFrequent()
+})
+
+watch(frequentMasteredFilter, () => {
   if (frequentPage.value !== 1) {
     frequentPage.value = 1
     return
@@ -660,6 +878,7 @@ onMounted(async () => {
   await fetchBanks()
   fetchStats()
   fetchProfessional()
+  refreshProfessionalTranslationCount()
   fetchPersonal()
   window.addEventListener('scroll', onScroll, { passive: true })
 })
@@ -667,4 +886,14 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener('scroll', onScroll)
 })
+
+function buildMasteredFilterParams(filterValue) {
+  if (filterValue === 'mastered') {
+    return { mastered: true }
+  }
+  if (filterValue === 'unmastered') {
+    return { mastered: false }
+  }
+  return {}
+}
 </script>
