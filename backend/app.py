@@ -6,7 +6,7 @@ from flask_jwt_extended import JWTManager
 from sqlalchemy import inspect, text
 
 from config import Config
-from models import db
+from models import db, UserVocabProgress, UserBankWordProgress, BankWordExclusion
 
 
 def _apply_runtime_env_overrides(app):
@@ -30,6 +30,10 @@ def _apply_runtime_env_overrides(app):
         'AI_MODEL',
         app.config.get('AI_MODEL')
     )
+    app.config['SYSTEM_SETTINGS_ENCRYPTION_KEY'] = os.environ.get(
+        'SYSTEM_SETTINGS_ENCRYPTION_KEY',
+        app.config.get('SYSTEM_SETTINGS_ENCRYPTION_KEY')
+    )
 
 
 def _ensure_bank_word_frequency_columns():
@@ -41,6 +45,24 @@ def _ensure_bank_word_frequency_columns():
     if 'term_zh' not in columns:
         db.session.execute(text('ALTER TABLE bank_word_frequencies ADD COLUMN term_zh VARCHAR(200)'))
         db.session.commit()
+
+
+def _ensure_user_vocab_progress_schema():
+    inspector = inspect(db.engine)
+    if 'user_vocab_progress' not in inspector.get_table_names():
+        UserVocabProgress.__table__.create(bind=db.engine, checkfirst=True)
+
+
+def _ensure_bank_word_progress_schema():
+    inspector = inspect(db.engine)
+    if 'user_bank_word_progress' not in inspector.get_table_names():
+        UserBankWordProgress.__table__.create(bind=db.engine, checkfirst=True)
+
+
+def _ensure_bank_word_exclusion_schema():
+    inspector = inspect(db.engine)
+    if 'bank_word_exclusions' not in inspector.get_table_names():
+        BankWordExclusion.__table__.create(bind=db.engine, checkfirst=True)
 
 
 
@@ -74,6 +96,9 @@ def create_app():
     with app.app_context():
         db.create_all()
         _ensure_bank_word_frequency_columns()
+        _ensure_user_vocab_progress_schema()
+        _ensure_bank_word_progress_schema()
+        _ensure_bank_word_exclusion_schema()
 
     @app.route('/')
     @app.route('/<path:path>')

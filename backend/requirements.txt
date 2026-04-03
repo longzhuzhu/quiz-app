@@ -8,3 +8,5 @@ openpyxl==3.1.5
 python-docx==1.1.2
 requests==2.32.3
 python-dotenv==1.0.1
+cryptography==41.0.7
+waitress>=3,<4
