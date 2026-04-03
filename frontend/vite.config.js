@@ -5,6 +5,8 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   plugins: [vue(), tailwindcss()],
   server: {
+    port: 5001,
+    strictPort: true,
     allowedHosts: ['quiz.nianyu.qzz.io'],
     proxy: {
       '/api': {

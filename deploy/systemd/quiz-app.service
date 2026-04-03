@@ -1,0 +1,20 @@
+[Unit]
+Description=CIPT Quiz App
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/github/quiz-app
+Environment=APP_HOST=0.0.0.0
+Environment=APP_PORT=5003
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/home/ubuntu/github/quiz-app/.env
+ExecStart=/home/ubuntu/github/quiz-app/scripts/start-prod.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

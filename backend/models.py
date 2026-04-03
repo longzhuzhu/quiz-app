@@ -103,6 +103,33 @@ class Vocabulary(db.Model):
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     user = db.relationship('User', backref='vocabularies')
+    progress_entries = db.relationship(
+        'UserVocabProgress',
+        backref='vocabulary',
+        lazy='dynamic',
+        cascade='all, delete-orphan',
+    )
+
+
+class UserVocabProgress(db.Model):
+    __tablename__ = 'user_vocab_progress'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    vocabulary_id = db.Column(db.Integer, db.ForeignKey('vocabularies.id'), nullable=False)
+    is_mastered = db.Column(db.Boolean, nullable=False, default=False)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(
+        db.DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    user = db.relationship(
+        'User',
+        backref=db.backref('vocab_progress_entries', lazy='dynamic', cascade='all, delete-orphan')
+    )
+
+    __table_args__ = (db.UniqueConstraint('user_id', 'vocabulary_id'),)
 
 
 class BankWordFrequency(db.Model):
@@ -124,6 +151,55 @@ class BankWordFrequency(db.Model):
     __table_args__ = (
         db.UniqueConstraint('bank_id', 'term'),
         db.Index('idx_bank_word_frequency_bank_frequency', 'bank_id', 'frequency'),
+    )
+
+
+class UserBankWordProgress(db.Model):
+    __tablename__ = 'user_bank_word_progress'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    bank_id = db.Column(db.Integer, db.ForeignKey('question_banks.id'), nullable=False, index=True)
+    term = db.Column(db.String(200), nullable=False)
+    is_mastered = db.Column(db.Boolean, nullable=False, default=False)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(
+        db.DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    user = db.relationship(
+        'User',
+        backref=db.backref('bank_word_progress_entries', lazy='dynamic', cascade='all, delete-orphan')
+    )
+    bank = db.relationship(
+        'QuestionBank',
+        backref=db.backref('word_progress_entries', lazy='dynamic', cascade='all, delete-orphan')
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'bank_id', 'term'),
+        db.Index('idx_user_bank_word_progress_lookup', 'user_id', 'bank_id', 'term'),
+    )
+
+
+class BankWordExclusion(db.Model):
+    __tablename__ = 'bank_word_exclusions'
+    id = db.Column(db.Integer, primary_key=True)
+    bank_id = db.Column(db.Integer, db.ForeignKey('question_banks.id'), nullable=False, index=True)
+    term = db.Column(db.String(200), nullable=False)
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    bank = db.relationship(
+        'QuestionBank',
+        backref=db.backref('word_exclusions', lazy='dynamic', cascade='all, delete-orphan')
+    )
+    creator = db.relationship('User', backref=db.backref('created_word_exclusions', lazy='dynamic'))
+
+    __table_args__ = (
+        db.UniqueConstraint('bank_id', 'term'),
+        db.Index('idx_bank_word_exclusion_lookup', 'bank_id', 'term'),
     )
 
 

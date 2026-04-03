@@ -91,6 +91,41 @@ npm run build
 
 Flask 会自动托管 `frontend/dist/` 目录，直接访问 `http://localhost:5003` 即可。
 
+## 开机自启动（systemd）
+
+项目仓库已提供生产启动脚本 [`scripts/start-prod.sh`](/home/ubuntu/github/quiz-app/scripts/start-prod.sh) 和安装脚本 [`scripts/install-systemd-service.sh`](/home/ubuntu/github/quiz-app/scripts/install-systemd-service.sh)。
+
+推荐流程：
+
+```bash
+cp .env.example .env
+pip install -r backend/requirements.txt
+cd frontend && npm install
+cd /home/ubuntu/github/quiz-app
+sudo bash scripts/install-systemd-service.sh
+```
+
+说明：
+
+- 服务名默认是 `quiz-app.service`
+- 默认监听 `0.0.0.0:5003`
+- 后端优先使用 `waitress` 启动，依赖已写入 `backend/requirements.txt`
+- 服务启动时会检查 `frontend/dist/`，缺失或过期时自动执行 `npm run build`
+- 如需自定义端口或服务名，可在执行安装脚本时传入环境变量，例如：
+
+```bash
+sudo SERVICE_NAME=quiz-app APP_PORT=5003 bash scripts/install-systemd-service.sh
+```
+
+常用管理命令：
+
+```bash
+sudo systemctl status quiz-app
+sudo systemctl restart quiz-app
+sudo systemctl stop quiz-app
+sudo journalctl -u quiz-app -f
+```
+
 ## 项目结构
 
 ```
