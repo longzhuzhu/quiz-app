@@ -336,13 +336,13 @@
               class="rounded-card-lg bg-white dark:bg-slate-800 px-5 py-4 shadow-card hover:shadow-card-hover transition-shadow"
             >
               <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-                <div class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-amber-100 text-sm font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
-                  {{ pageStartIndex + index + 1 }}
-                </div>
                 <div class="min-w-0 flex-1">
                   <div class="flex items-baseline gap-2 flex-wrap">
                     <div class="font-semibold text-gray-900 dark:text-white">{{ item.term }}</div>
                     <div v-if="item.term_zh" class="text-sm text-emerald-600 dark:text-emerald-400">{{ item.term_zh }}</div>
+                    <span class="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+                      {{ item.frequency }} 次
+                    </span>
                     <span
                       v-if="item.is_mastered"
                       class="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300"
@@ -350,7 +350,6 @@
                       已掌握
                     </span>
                   </div>
-                  <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">在当前题库中出现 {{ item.frequency }} 次</div>
                 </div>
                 <div class="flex w-full flex-wrap items-center justify-start gap-2 sm:w-auto sm:justify-end">
                   <BaseButton
@@ -371,9 +370,6 @@
                   >
                     删除
                   </BaseButton>
-                  <div class="rounded-full bg-amber-50 px-3 py-1 text-sm font-medium text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
-                    {{ item.frequency }} 次
-                  </div>
                 </div>
               </div>
             </div>
@@ -526,7 +522,6 @@ const selectedBankName = computed(() =>
   banks.value.find(bank => bank.id === selectedBankId.value)?.name || ''
 )
 
-const pageStartIndex = computed(() => (frequentPage.value - 1) * frequentPerPage.value)
 const frequentPageOptions = computed(() =>
   Array.from({ length: frequentTotalPages.value }, (_, index) => index + 1)
 )
