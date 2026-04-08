@@ -3,12 +3,15 @@ import sys
 
 import pytest
 from flask_jwt_extended import create_access_token
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import sessionmaker
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
 from app import create_app
-from models import BankWordFrequency, QuestionBank, User, Vocabulary, db
+from models import BackgroundJob, BankWordExclusion, BankWordFrequency, QuestionBank, User, Vocabulary, db
+from services import job_service
 
 
 @pytest.fixture()
@@ -49,6 +52,7 @@ def seed_admin_and_vocab(app):
         return {
             "token": create_access_token(identity=str(admin.id)),
             "bank_id": bank.id,
+            "admin_id": admin.id,
         }
 
 
@@ -60,13 +64,14 @@ def seed_bank_frequency(app):
         db.session.flush()
         db.session.add_all([
             BankWordFrequency(bank_id=bank.id, term="privacy", term_zh=None, frequency=8),
-            BankWordFrequency(bank_id=bank.id, term="controller", term_zh=None, frequency=5),
+            BankWordFrequency(bank_id=bank.id, term="controller", term_zh="   ", frequency=5),
             BankWordFrequency(bank_id=bank.id, term="governance", term_zh="治理", frequency=3),
         ])
         db.session.commit()
         return {
             "token": create_access_token(identity=str(admin.id)),
             "bank_id": bank.id,
+            "admin_id": admin.id,
         }
 
 
@@ -197,6 +202,75 @@ def test_get_active_job_scopes_bank_frequency_by_bank_id(app):
     assert response.get_json()["job"]["id"] == created.get_json()["job"]["id"]
 
 
+def test_post_jobs_counts_blank_term_zh_as_pending(app):
+    seeded = seed_bank_frequency(app)
+    client = app.test_client()
+
+    response = client.post(
+        "/api/jobs",
+        json={"job_type": "bank_frequent_translate", "bank_id": seeded["bank_id"]},
+        headers=auth_headers(seeded["token"]),
+    )
+
+    assert response.status_code == 201
+    payload = response.get_json()
+    assert payload["result"] == "created"
+    assert payload["job"]["progress_total"] == 2
+
+
+def test_post_jobs_returns_json_404_when_bank_not_found(app):
+    seeded = seed_bank_frequency(app)
+    client = app.test_client()
+
+    response = client.post(
+        "/api/jobs",
+        json={"job_type": "bank_frequent_translate", "bank_id": seeded["bank_id"] + 999},
+        headers=auth_headers(seeded["token"]),
+    )
+
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "题库不存在"}
+
+
+def test_post_jobs_rejects_non_integer_bank_id(app):
+    seeded = seed_bank_frequency(app)
+    client = app.test_client()
+
+    response = client.post(
+        "/api/jobs",
+        json={"job_type": "bank_frequent_translate", "bank_id": "abc"},
+        headers=auth_headers(seeded["token"]),
+    )
+
+    assert response.status_code == 400
+    assert response.get_json() == {"error": "bank_id 必须为整数"}
+
+
+def test_post_jobs_bank_pending_ignores_excluded_terms(app):
+    seeded = seed_bank_frequency(app)
+    client = app.test_client()
+
+    with app.app_context():
+        db.session.add_all([
+            BankWordExclusion(bank_id=seeded["bank_id"], term="privacy", created_by=seeded["admin_id"]),
+            BankWordExclusion(bank_id=seeded["bank_id"], term="controller", created_by=seeded["admin_id"]),
+        ])
+        db.session.commit()
+
+    response = client.post(
+        "/api/jobs",
+        json={"job_type": "bank_frequent_translate", "bank_id": seeded["bank_id"]},
+        headers=auth_headers(seeded["token"]),
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "result": "no_work",
+        "job": None,
+        "message": "当前没有待翻译数据",
+    }
+
+
 def test_get_frequent_summary_includes_untranslated_terms(app):
     seeded = seed_bank_frequency(app)
     client = app.test_client()
@@ -210,3 +284,71 @@ def test_get_frequent_summary_includes_untranslated_terms(app):
     payload = response.get_json()
     assert "summary" in payload
     assert payload["summary"].get("untranslated_terms") == 2
+
+
+def test_get_frequent_summary_matches_mastered_filter_scope(app):
+    seeded = seed_bank_frequency(app)
+    client = app.test_client()
+
+    mark_res = client.put(
+        "/api/vocab/frequent-items/progress",
+        json={"bank_id": seeded["bank_id"], "term": "privacy", "is_mastered": True},
+        headers=auth_headers(seeded["token"]),
+    )
+    assert mark_res.status_code == 200
+
+    response = client.get(
+        f"/api/vocab/frequent?bank_id={seeded['bank_id']}&mastered=true",
+        headers=auth_headers(seeded["token"]),
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["summary"]["total_terms"] == 1
+    assert payload["summary"]["untranslated_terms"] == 1
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["term"] == "privacy"
+
+
+def test_create_or_reuse_job_falls_back_to_existing_on_unique_conflict(app, monkeypatch):
+    seeded = seed_admin_and_vocab(app)
+    scope_key = "professional_vocab"
+    original_commit = job_service.db.session.commit
+    state = {"raised": False}
+
+    def conflict_then_commit():
+        if not state["raised"]:
+            state["raised"] = True
+            Session = sessionmaker(bind=db.engine)
+            alt_session = Session()
+            alt_session.add(
+                BackgroundJob(
+                    job_type="professional_vocab_translate",
+                    scope_key=scope_key,
+                    active_scope_key=scope_key,
+                    payload_json="{}",
+                    status="queued",
+                    progress_total=2,
+                    created_by=seeded["admin_id"],
+                )
+            )
+            alt_session.commit()
+            alt_session.close()
+            raise IntegrityError(
+                statement="INSERT INTO background_jobs ...",
+                params={},
+                orig=Exception("UNIQUE constraint failed: background_jobs.active_scope_key"),
+            )
+        return original_commit()
+
+    with app.app_context():
+        monkeypatch.setattr(job_service.db.session, "commit", conflict_then_commit)
+        result, job, _message = job_service.create_or_reuse_job(
+            "professional_vocab_translate",
+            {},
+            seeded["admin_id"],
+        )
+
+        assert result == "existing"
+        assert job is not None
+        assert job.scope_key == scope_key
