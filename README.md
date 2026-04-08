@@ -55,7 +55,7 @@ AI_MODEL=gpt-4o-mini
 > AI 相关配置为可选项。不配置时，翻译和解析功能不可用，其他功能正常使用。
 > AI 配置也可在启动后通过管理后台页面修改，无需重启服务。
 
-### 3. 启动后端
+### 3. 启动后端 API
 
 ```bash
 pip install -r backend/requirements.txt
@@ -64,7 +64,15 @@ python run.py
 
 后端默认运行在 `http://localhost:5003`，首次启动会自动创建数据库。
 
-### 4. 启动前端
+### 4. 启动后台任务 worker
+
+```bash
+bash scripts/start-worker.sh
+```
+
+后台 worker 负责执行批量翻译、导入后自动创建的高频词翻译等异步任务。任务状态会持久化到数据库，**刷新页面或关闭浏览器不会中断任务**；失败任务会自动重试，最多 3 次后进入失败终态。
+
+### 5. 启动前端
 
 ```bash
 cd frontend
@@ -74,7 +82,7 @@ npm run dev
 
 前端开发服务器会自动代理 `/api` 请求到后端。
 
-### 5. 访问应用
+### 6. 访问应用
 
 打开浏览器访问前端开发服务器地址（默认 `http://localhost:5173`）。
 
@@ -91,26 +99,43 @@ npm run build
 
 Flask 会自动托管 `frontend/dist/` 目录，直接访问 `http://localhost:5003` 即可。
 
+如需不用 systemd 手动运行生产环境，请分别启动 Web 服务和 worker：
+
+```bash
+bash scripts/start-prod.sh
+bash scripts/start-worker.sh
+```
+
+## 后台任务说明
+
+- 当前后台任务由 `backend/workers/job_worker.py` 消费，启动方式：`bash scripts/start-worker.sh`
+- 典型场景包括：专业词汇批量翻译、按题库执行高频词翻译、题目导入成功后自动创建高频词翻译任务
+- 任务进度会写入数据库，前端轮询的是任务状态而不是直接长循环调用批量翻译接口
+- 任务失败会自动重试，最多 3 次；达到上限后进入失败终态，可在页面上再次触发，仅继续处理剩余未完成数据
+
 ## 开机自启动（systemd）
 
-项目仓库已提供生产启动脚本 [`scripts/start-prod.sh`](/home/ubuntu/github/quiz-app/scripts/start-prod.sh) 和安装脚本 [`scripts/install-systemd-service.sh`](/home/ubuntu/github/quiz-app/scripts/install-systemd-service.sh)。
+项目仓库已提供生产启动脚本 `scripts/start-prod.sh`、worker 启动脚本 `scripts/start-worker.sh` 和安装脚本 `scripts/install-systemd-service.sh`。
 
 推荐流程：
 
 ```bash
 cp .env.example .env
 pip install -r backend/requirements.txt
-cd frontend && npm install
-cd /home/ubuntu/github/quiz-app
+cd frontend && npm install && npm run build
+cd /path/to/quiz-app
 sudo bash scripts/install-systemd-service.sh
 ```
 
 说明：
 
-- 服务名默认是 `quiz-app.service`
+- Web 服务名默认是 `quiz-app.service`
+- Worker 服务名默认是 `quiz-app-worker.service`
+- 安装脚本会同时执行 `systemctl enable --now quiz-app.service` 和 `systemctl enable --now quiz-app-worker.service`
 - 默认监听 `0.0.0.0:5003`
 - 后端优先使用 `waitress` 启动，依赖已写入 `backend/requirements.txt`
 - 服务启动时会检查 `frontend/dist/`，缺失或过期时自动执行 `npm run build`
+- worker 会持续消费后台任务队列，页面刷新不会影响正在执行的异步翻译任务
 - 如需自定义端口或服务名，可在执行安装脚本时传入环境变量，例如：
 
 ```bash
@@ -121,9 +146,12 @@ sudo SERVICE_NAME=quiz-app APP_PORT=5003 bash scripts/install-systemd-service.sh
 
 ```bash
 sudo systemctl status quiz-app
+sudo systemctl status quiz-app-worker
 sudo systemctl restart quiz-app
+sudo systemctl restart quiz-app-worker
 sudo systemctl stop quiz-app
 sudo journalctl -u quiz-app -f
+sudo journalctl -u quiz-app-worker -f
 ```
 
 ## 项目结构
