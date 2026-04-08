@@ -160,9 +160,8 @@ async function deleteBank() {
   }
 }
 
-function handleImported() {
-  showImport.value = false
-  toast.success('题目导入成功')
+function handleImported(payload) {
+  toast.success(payload?.message || '题目导入成功')
   fetchBanks()
 }
 
