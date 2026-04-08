@@ -1,6 +1,7 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 
 from models import BackgroundJob, BankWordExclusion, BankWordFrequency, QuestionBank, Vocabulary, db
@@ -9,6 +10,8 @@ from services.import_service import TOP_FREQUENT_TERMS_LIMIT
 JOB_TYPE_PROFESSIONAL_VOCAB_TRANSLATE = 'professional_vocab_translate'
 JOB_TYPE_BANK_FREQUENT_TRANSLATE = 'bank_frequent_translate'
 ACTIVE_STATUSES = {'queued', 'running'}
+DEFAULT_JOB_LEASE_SECONDS = 60
+DEFAULT_REQUEUE_DELAY_SECONDS = 10
 
 
 class JobServiceError(Exception):
@@ -73,13 +76,17 @@ def count_pending_items(job_type, payload):
     return sum(1 for item in items if text_missing(item.term_zh))
 
 
+def deserialize_job_payload(job):
+    if not job.payload_json:
+        return {}
+    try:
+        return json.loads(job.payload_json)
+    except json.JSONDecodeError:
+        return {}
+
+
 def serialize_job(job):
-    payload = {}
-    if job.payload_json:
-        try:
-            payload = json.loads(job.payload_json)
-        except json.JSONDecodeError:
-            payload = {}
+    payload = deserialize_job_payload(job)
     return {
         'id': job.id,
         'job_type': job.job_type,
@@ -97,6 +104,9 @@ def serialize_job(job):
         'created_at': job.created_at.isoformat() if job.created_at else None,
         'started_at': job.started_at.isoformat() if job.started_at else None,
         'finished_at': job.finished_at.isoformat() if job.finished_at else None,
+        'next_run_at': job.next_run_at.isoformat() if job.next_run_at else None,
+        'heartbeat_at': job.heartbeat_at.isoformat() if job.heartbeat_at else None,
+        'lease_until': job.lease_until.isoformat() if job.lease_until else None,
     }
 
 
@@ -132,6 +142,113 @@ def create_or_reuse_job(job_type, payload, created_by):
             return 'existing', existing, '已有后台任务正在执行'
         raise
     return 'created', job, '后台任务已创建'
+
+
+def recover_stale_jobs(now=None):
+    now = now or utc_now()
+    recovered = 0
+    running_jobs = BackgroundJob.query.filter_by(status='running').all()
+    for job in running_jobs:
+        if not job.lease_until:
+            continue
+        if _normalize_utc(job.lease_until) >= _normalize_utc(now):
+            continue
+        job.status = 'queued'
+        job.lease_until = None
+        job.heartbeat_at = None
+        job.status_message = '检测到超时 worker，任务已重新排队'
+        recovered += 1
+    if recovered:
+        db.session.commit()
+    return recovered
+
+
+def claim_next_job(worker_id, lease_seconds=DEFAULT_JOB_LEASE_SECONDS):
+    now = utc_now()
+    job = BackgroundJob.query.filter(
+        BackgroundJob.status == 'queued',
+        or_(BackgroundJob.next_run_at.is_(None), BackgroundJob.next_run_at <= now),
+    ).order_by(BackgroundJob.created_at.asc(), BackgroundJob.id.asc()).first()
+
+    if job is None:
+        return None
+
+    job.status = 'running'
+    job.attempt_count = (job.attempt_count or 0) + 1
+    if job.started_at is None:
+        job.started_at = now
+    job.heartbeat_at = now
+    job.lease_until = now + timedelta(seconds=lease_seconds)
+    job.next_run_at = None
+    job.status_message = f'worker {worker_id} 执行中'
+    db.session.commit()
+    return job
+
+
+def heartbeat_job(job, status_message=None, lease_seconds=DEFAULT_JOB_LEASE_SECONDS):
+    now = utc_now()
+    job.heartbeat_at = now
+    job.lease_until = now + timedelta(seconds=lease_seconds)
+    if status_message:
+        job.status_message = status_message
+    db.session.commit()
+    return job
+
+
+def complete_job(job, status_message='后台任务执行完成'):
+    now = utc_now()
+    job.status = 'completed'
+    job.progress_done = job.success_count + job.skipped_count
+    job.progress_total = max(job.progress_total or 0, job.progress_done)
+    job.last_error = None
+    job.status_message = status_message
+    job.finished_at = now
+    job.next_run_at = None
+    job.lease_until = None
+    job.active_scope_key = None
+    db.session.commit()
+    return job
+
+
+def requeue_job(job, error_message, delay_seconds=DEFAULT_REQUEUE_DELAY_SECONDS):
+    now = utc_now()
+    job.status = 'queued'
+    job.progress_done = job.success_count + job.skipped_count
+    job.progress_total = max(job.progress_total or 0, job.progress_done)
+    job.last_error = str(error_message)
+    job.status_message = f'执行失败，准备第 {job.attempt_count + 1} 次重试'
+    job.next_run_at = now + timedelta(seconds=delay_seconds)
+    job.lease_until = None
+    job.heartbeat_at = None
+    db.session.commit()
+    return job
+
+
+def fail_job(job, error_message):
+    now = utc_now()
+    job.status = 'failed'
+    job.progress_done = job.success_count + job.skipped_count
+    job.progress_total = max(job.progress_total or 0, job.progress_done)
+    job.last_error = str(error_message)
+    job.status_message = '执行失败，已达到最大重试次数'
+    job.finished_at = now
+    job.next_run_at = None
+    job.lease_until = None
+    job.active_scope_key = None
+    db.session.commit()
+    return job
+
+
+def should_retry(job):
+    return (job.attempt_count or 0) < (job.max_attempts or 0)
+
+
+def _normalize_utc(dt):
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 def _is_active_scope_unique_conflict(error):

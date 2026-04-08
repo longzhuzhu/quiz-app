@@ -1,0 +1,18 @@
+[Unit]
+Description=CIPT Quiz App Worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/quiz-app
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/opt/quiz-app/.env
+ExecStart=/opt/quiz-app/scripts/start-worker.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
