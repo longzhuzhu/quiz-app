@@ -70,7 +70,7 @@ python run.py
 bash scripts/start-worker.sh
 ```
 
-后台 worker 负责执行批量翻译、导入后自动创建的高频词翻译等异步任务。任务状态会持久化到数据库，**刷新页面或关闭浏览器不会中断任务**；失败任务会自动重试，最多 3 次后进入失败终态。
+后台 worker 负责执行批量翻译、导入后自动创建的高频词翻译等异步任务。任务状态会持久化到数据库，**刷新页面或关闭浏览器不会中断任务**；失败任务会自动重试，最多 3 次后进入失败终态。默认以 2 个并发槽位消费任务，不同任务作用域可并行执行。
 
 ### 5. 启动前端
 
@@ -136,6 +136,7 @@ sudo bash scripts/install-systemd-service.sh
 - 后端优先使用 `waitress` 启动，依赖已写入 `backend/requirements.txt`
 - 服务启动时会检查 `frontend/dist/`，缺失或过期时自动执行 `npm run build`
 - worker 会持续消费后台任务队列，页面刷新不会影响正在执行的异步翻译任务
+- worker 默认以 2 个并发槽位运行；可通过 `JOB_WORKER_CONCURRENCY` 调整，例如 `JOB_WORKER_CONCURRENCY=1 bash scripts/start-worker.sh`
 - 如需自定义端口或服务名，可在执行安装脚本时传入环境变量，例如：
 
 ```bash
