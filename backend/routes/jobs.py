@@ -1,10 +1,11 @@
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
-from models import BackgroundJob, User, db
+from models import BackgroundJob, QuestionBank, User, db
 from services.job_service import (
     JOB_TYPE_BANK_FREQUENT_TRANSLATE,
     JOB_TYPE_PROFESSIONAL_VOCAB_TRANSLATE,
+    JobServiceError,
     build_scope_key,
     create_or_reuse_job,
     serialize_job,
@@ -43,6 +44,9 @@ def _build_payload(job_type, source):
         bank_id = _parse_bank_id(source.get('bank_id'))
         if bank_id is None:
             return None, (jsonify({'error': 'bank_id 必须为整数'}), 400)
+        bank = db.session.get(QuestionBank, bank_id)
+        if not bank:
+            return None, (jsonify({'error': '题库不存在'}), 404)
         payload['bank_id'] = bank_id
     return payload, None
 
@@ -63,7 +67,10 @@ def create_job():
     if payload_error:
         return payload_error
 
-    result, job, message = create_or_reuse_job(job_type, payload, user.id)
+    try:
+        result, job, message = create_or_reuse_job(job_type, payload, user.id)
+    except JobServiceError as exc:
+        return jsonify({'error': exc.message}), exc.status_code
     status_code = 201 if result == 'created' else 200
     return jsonify({'result': result, 'job': serialize_job(job) if job else None, 'message': message}), status_code
 

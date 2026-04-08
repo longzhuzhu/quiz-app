@@ -1,11 +1,20 @@
 import json
 from datetime import datetime, timezone
 
-from models import BackgroundJob, BankWordFrequency, QuestionBank, Vocabulary, db
+from sqlalchemy.exc import IntegrityError
+
+from models import BackgroundJob, BankWordExclusion, BankWordFrequency, QuestionBank, Vocabulary, db
 
 JOB_TYPE_PROFESSIONAL_VOCAB_TRANSLATE = 'professional_vocab_translate'
 JOB_TYPE_BANK_FREQUENT_TRANSLATE = 'bank_frequent_translate'
 ACTIVE_STATUSES = {'queued', 'running'}
+
+
+class JobServiceError(Exception):
+    def __init__(self, message, status_code=400):
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
 
 
 def utc_now():
@@ -41,8 +50,20 @@ def count_pending_items(job_type, payload):
         )
 
     bank_id = payload['bank_id']
-    db.get_or_404(QuestionBank, bank_id)
-    return BankWordFrequency.query.filter_by(bank_id=bank_id, term_zh=None).count()
+    bank = db.session.get(QuestionBank, bank_id)
+    if not bank:
+        raise JobServiceError('题库不存在', status_code=404)
+
+    excluded_terms = {
+        row.term
+        for row in BankWordExclusion.query.filter_by(bank_id=bank_id).all()
+    }
+    frequent_query = BankWordFrequency.query.filter_by(bank_id=bank_id)
+    if excluded_terms:
+        frequent_query = frequent_query.filter(~BankWordFrequency.term.in_(excluded_terms))
+
+    items = frequent_query.all()
+    return sum(1 for item in items if text_missing(item.term_zh))
 
 
 def serialize_job(job):
@@ -93,5 +114,12 @@ def create_or_reuse_job(job_type, payload, created_by):
         created_by=created_by,
     )
     db.session.add(job)
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        existing = BackgroundJob.query.filter_by(active_scope_key=scope_key).order_by(BackgroundJob.id.desc()).first()
+        if existing:
+            return 'existing', existing, '已有后台任务正在执行'
+        raise
     return 'created', job, '后台任务已创建'

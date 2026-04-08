@@ -310,7 +310,6 @@ def list_frequent():
         BankWordFrequency.frequency.desc(),
         BankWordFrequency.term.asc(),
     ).limit(TOP_FREQUENT_TERMS_LIMIT).all()
-    untranslated_terms = sum(1 for item in top_terms if text_missing(item.term_zh))
     visible_terms = top_terms
     if mastered_value is not None:
         visible_terms = [
@@ -318,6 +317,7 @@ def list_frequent():
             if progress_by_term.get(item.term, False) is mastered_value
         ]
 
+    untranslated_terms = sum(1 for item in visible_terms if text_missing(item.term_zh))
     total_terms = len(visible_terms)
     total_pages = max(1, ceil(total_terms / per_page)) if total_terms else 1
     start = (page - 1) * per_page
