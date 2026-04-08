@@ -14,8 +14,13 @@ from models import (
     BankWordExclusion,
 )
 from services.import_service import MIN_FREQUENCY, TOP_FREQUENT_TERMS_LIMIT
+from services.job_service import text_missing, vocabulary_needs_translation
 
 vocab_bp = Blueprint('vocab', __name__)
+
+
+def word_needs_translation(word):
+    return vocabulary_needs_translation(word)
 
 
 @vocab_bp.route('/professional', methods=['GET'])
@@ -218,10 +223,10 @@ def batch_translate_professional():
     from services.ai_service import batch_translate_vocab
 
     # 查询所有未翻译的专业词汇
-    untranslated = Vocabulary.query.filter(
-        Vocabulary.is_system == True,
-        Vocabulary.term_zh.is_(None)
-    ).order_by(Vocabulary.term).all()
+    untranslated = [
+        word for word in Vocabulary.query.filter(Vocabulary.is_system.is_(True)).order_by(Vocabulary.term).all()
+        if word_needs_translation(word)
+    ]
 
     if not untranslated:
         return jsonify({'message': '所有词汇已翻译', 'translated': 0, 'remaining': 0})
@@ -305,6 +310,7 @@ def list_frequent():
         BankWordFrequency.frequency.desc(),
         BankWordFrequency.term.asc(),
     ).limit(TOP_FREQUENT_TERMS_LIMIT).all()
+    untranslated_terms = sum(1 for item in top_terms if text_missing(item.term_zh))
     visible_terms = top_terms
     if mastered_value is not None:
         visible_terms = [
@@ -322,6 +328,7 @@ def list_frequent():
         'bank': {'id': bank.id, 'name': bank.name},
         'summary': {
             'total_terms': total_terms,
+            'untranslated_terms': untranslated_terms,
             'min_frequency': MIN_FREQUENCY,
             'top_terms_limit': TOP_FREQUENT_TERMS_LIMIT,
         },
