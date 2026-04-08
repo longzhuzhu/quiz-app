@@ -17,10 +17,9 @@ BANK_FREQUENT_BATCH_SIZE = 100
 def translate_professional_vocab_batch(batch):
     if not batch:
         return 0, 0
-    translated_count = batch_translate_vocab(batch)
+    batch_translate_vocab(batch)
     completed_count = _count_completed_professional_vocab([word.id for word in batch])
-    skipped_count = max(completed_count - translated_count, 0)
-    return translated_count, skipped_count
+    return completed_count, 0
 
 
 def translate_bank_frequency_batch(rows):

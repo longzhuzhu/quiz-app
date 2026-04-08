@@ -1,7 +1,7 @@
 import json
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import or_
+from sqlalchemy import case, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from models import BackgroundJob, BankWordExclusion, BankWordFrequency, QuestionBank, Vocabulary, db
@@ -10,7 +10,7 @@ from services.import_service import TOP_FREQUENT_TERMS_LIMIT
 JOB_TYPE_PROFESSIONAL_VOCAB_TRANSLATE = 'professional_vocab_translate'
 JOB_TYPE_BANK_FREQUENT_TRANSLATE = 'bank_frequent_translate'
 ACTIVE_STATUSES = {'queued', 'running'}
-DEFAULT_JOB_LEASE_SECONDS = 60
+DEFAULT_JOB_LEASE_SECONDS = 180
 DEFAULT_REQUEUE_DELAY_SECONDS = 15
 
 
@@ -165,24 +165,50 @@ def recover_stale_jobs(now=None):
 
 def claim_next_job(worker_id, lease_seconds=DEFAULT_JOB_LEASE_SECONDS):
     now = utc_now()
-    job = BackgroundJob.query.filter(
-        BackgroundJob.status == 'queued',
-        or_(BackgroundJob.next_run_at.is_(None), BackgroundJob.next_run_at <= now),
-    ).order_by(BackgroundJob.created_at.asc(), BackgroundJob.id.asc()).first()
+    candidate_ids = db.session.execute(
+        select(BackgroundJob.id)
+        .where(
+            BackgroundJob.status == 'queued',
+            or_(BackgroundJob.next_run_at.is_(None), BackgroundJob.next_run_at <= now),
+        )
+        .order_by(BackgroundJob.created_at.asc(), BackgroundJob.id.asc())
+    ).scalars().all()
 
-    if job is None:
+    for job_id in candidate_ids:
+        job = try_claim_job_by_id(job_id, worker_id=worker_id, lease_seconds=lease_seconds, now=now)
+        if job is not None:
+            return job
+    return None
+
+
+def try_claim_job_by_id(job_id, worker_id, lease_seconds=DEFAULT_JOB_LEASE_SECONDS, now=None):
+    now = now or utc_now()
+    lease_until = now + timedelta(seconds=lease_seconds)
+    result = db.session.execute(
+        update(BackgroundJob)
+        .where(
+            BackgroundJob.id == job_id,
+            BackgroundJob.status == 'queued',
+            or_(BackgroundJob.next_run_at.is_(None), BackgroundJob.next_run_at <= now),
+        )
+        .values(
+            status='running',
+            attempt_count=BackgroundJob.attempt_count + 1,
+            started_at=case(
+                (BackgroundJob.started_at.is_(None), now),
+                else_=BackgroundJob.started_at,
+            ),
+            heartbeat_at=now,
+            lease_until=lease_until,
+            next_run_at=None,
+            status_message=f'worker {worker_id} 已接手任务',
+        )
+    )
+    if result.rowcount != 1:
+        db.session.rollback()
         return None
-
-    job.status = 'running'
-    job.attempt_count = (job.attempt_count or 0) + 1
-    if job.started_at is None:
-        job.started_at = now
-    job.heartbeat_at = now
-    job.lease_until = now + timedelta(seconds=lease_seconds)
-    job.next_run_at = None
-    job.status_message = f'worker {worker_id} 已接手任务'
     db.session.commit()
-    return job
+    return db.session.get(BackgroundJob, job_id)
 
 
 def heartbeat_job(job, success_increment=0, skipped_increment=0, status_message=None, lease_seconds=DEFAULT_JOB_LEASE_SECONDS):
