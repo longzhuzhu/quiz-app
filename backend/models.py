@@ -203,6 +203,41 @@ class BankWordExclusion(db.Model):
     )
 
 
+class BackgroundJob(db.Model):
+    __tablename__ = 'background_jobs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    job_type = db.Column(db.String(64), nullable=False)
+    scope_key = db.Column(db.String(255), nullable=False)
+    active_scope_key = db.Column(db.String(255), nullable=True)
+    payload_json = db.Column(db.Text, nullable=False, default='{}')
+    status = db.Column(db.String(20), nullable=False, default='queued')
+    attempt_count = db.Column(db.Integer, nullable=False, default=0)
+    max_attempts = db.Column(db.Integer, nullable=False, default=3)
+    progress_total = db.Column(db.Integer, nullable=False, default=0)
+    progress_done = db.Column(db.Integer, nullable=False, default=0)
+    success_count = db.Column(db.Integer, nullable=False, default=0)
+    skipped_count = db.Column(db.Integer, nullable=False, default=0)
+    last_error = db.Column(db.Text, nullable=True)
+    status_message = db.Column(db.String(255), nullable=True)
+    next_run_at = db.Column(db.DateTime, nullable=True)
+    heartbeat_at = db.Column(db.DateTime, nullable=True)
+    lease_until = db.Column(db.DateTime, nullable=True)
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    started_at = db.Column(db.DateTime, nullable=True)
+    finished_at = db.Column(db.DateTime, nullable=True)
+
+    creator = db.relationship('User', backref=db.backref('background_jobs', lazy='dynamic'))
+
+    __table_args__ = (
+        db.UniqueConstraint('active_scope_key', name='uq_background_jobs_active_scope_key'),
+        db.Index('idx_background_jobs_status_next_run', 'status', 'next_run_at'),
+        db.Index('idx_background_jobs_status_lease', 'status', 'lease_until'),
+        db.Index('idx_background_jobs_type_created_at', 'job_type', 'created_at'),
+    )
+
+
 class SystemSetting(db.Model):
     __tablename__ = 'system_settings'
     id = db.Column(db.Integer, primary_key=True)

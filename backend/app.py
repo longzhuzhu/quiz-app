@@ -6,7 +6,7 @@ from flask_jwt_extended import JWTManager
 from sqlalchemy import inspect, text
 
 from config import Config
-from models import db, UserVocabProgress, UserBankWordProgress, BankWordExclusion
+from models import db, UserVocabProgress, UserBankWordProgress, BankWordExclusion, BackgroundJob
 
 
 def _apply_runtime_env_overrides(app):
@@ -65,6 +65,12 @@ def _ensure_bank_word_exclusion_schema():
         BankWordExclusion.__table__.create(bind=db.engine, checkfirst=True)
 
 
+def _ensure_background_job_schema():
+    inspector = inspect(db.engine)
+    if 'background_jobs' not in inspector.get_table_names():
+        BackgroundJob.__table__.create(bind=db.engine, checkfirst=True)
+
+
 
 def create_app():
     dist_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'frontend', 'dist'))
@@ -82,6 +88,7 @@ def create_app():
     from routes.quiz import quiz_bp
     from routes.wrong import wrong_bp
     from routes.ai import ai_bp
+    from routes.jobs import jobs_bp
     from routes.settings import settings_bp
     from routes.vocab import vocab_bp
 
@@ -91,6 +98,7 @@ def create_app():
     app.register_blueprint(quiz_bp, url_prefix='/api/quiz')
     app.register_blueprint(wrong_bp, url_prefix='/api/wrong')
     app.register_blueprint(ai_bp, url_prefix='/api/ai')
+    app.register_blueprint(jobs_bp, url_prefix='/api/jobs')
     app.register_blueprint(settings_bp, url_prefix='/api/settings')
     app.register_blueprint(vocab_bp, url_prefix='/api/vocab')
 
@@ -100,6 +108,7 @@ def create_app():
         _ensure_user_vocab_progress_schema()
         _ensure_bank_word_progress_schema()
         _ensure_bank_word_exclusion_schema()
+        _ensure_background_job_schema()
 
     @app.route('/')
     @app.route('/<path:path>')
