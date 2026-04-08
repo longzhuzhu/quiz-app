@@ -154,12 +154,12 @@ def normalized_to_utc(dt):
 def test_process_one_job_requeues_failed_job_until_max_attempts(app, monkeypatch):
     seeded = seed_professional_job(app)
 
+    from workers.job_worker import process_one_job
+
     monkeypatch.setattr(
         'services.job_handlers.translate_professional_vocab_batch',
         lambda batch: (_ for _ in ()).throw(RuntimeError('ai timeout')),
     )
-
-    from workers.job_worker import process_one_job
 
     assert process_one_job(app, worker_id='test-worker') is True
 
