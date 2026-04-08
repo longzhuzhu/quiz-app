@@ -2,6 +2,7 @@
 import argparse
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from services.job_handlers import run_job
 
 DEFAULT_WORKER_ID = 'job-worker'
 DEFAULT_POLL_INTERVAL = 2.0
+DEFAULT_CONCURRENCY = 2
 
 
 def process_one_job(app, worker_id=DEFAULT_WORKER_ID):
@@ -39,13 +41,46 @@ def process_one_job(app, worker_id=DEFAULT_WORKER_ID):
         return True
 
 
-def run_worker(app, worker_id=DEFAULT_WORKER_ID, poll_interval=DEFAULT_POLL_INTERVAL, once=False):
+def worker_loop(app, worker_id=DEFAULT_WORKER_ID, poll_interval=DEFAULT_POLL_INTERVAL, once=False):
     while True:
         processed = process_one_job(app, worker_id=worker_id)
         if once:
-            return 0
+            return processed
         if not processed:
             time.sleep(poll_interval)
+
+
+def run_worker(
+    app,
+    worker_id=DEFAULT_WORKER_ID,
+    poll_interval=DEFAULT_POLL_INTERVAL,
+    once=False,
+    concurrency=DEFAULT_CONCURRENCY,
+):
+    concurrency = max(int(concurrency or 1), 1)
+
+    if concurrency == 1:
+        worker_loop(app, worker_id=worker_id, poll_interval=poll_interval, once=once)
+        return 0
+
+    threads = []
+    for index in range(concurrency):
+        thread = threading.Thread(
+            target=worker_loop,
+            kwargs={
+                'app': app,
+                'worker_id': f'{worker_id}-{index + 1}',
+                'poll_interval': poll_interval,
+                'once': once,
+            },
+            daemon=not once,
+        )
+        thread.start()
+        threads.append(thread)
+
+    for thread in threads:
+        thread.join()
+    return 0
 
 
 def build_arg_parser():
@@ -53,13 +88,20 @@ def build_arg_parser():
     parser.add_argument('--once', action='store_true', help='只处理一轮后退出')
     parser.add_argument('--worker-id', default=os.environ.get('JOB_WORKER_ID', DEFAULT_WORKER_ID))
     parser.add_argument('--poll-interval', type=float, default=float(os.environ.get('JOB_WORKER_POLL_INTERVAL', str(DEFAULT_POLL_INTERVAL))))
+    parser.add_argument('--concurrency', type=int, default=int(os.environ.get('JOB_WORKER_CONCURRENCY', str(DEFAULT_CONCURRENCY))))
     return parser
 
 
 def main(argv=None):
     args = build_arg_parser().parse_args(argv)
     app = create_app()
-    return run_worker(app, worker_id=args.worker_id, poll_interval=args.poll_interval, once=args.once)
+    return run_worker(
+        app,
+        worker_id=args.worker_id,
+        poll_interval=args.poll_interval,
+        once=args.once,
+        concurrency=args.concurrency,
+    )
 
 
 if __name__ == '__main__':

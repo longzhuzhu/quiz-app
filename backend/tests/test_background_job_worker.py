@@ -299,3 +299,29 @@ def test_try_claim_job_is_atomic_for_same_job(app):
         assert job.status == 'running'
         assert job.attempt_count == 1
         assert job.status_message == 'worker worker-a 已接手任务'
+
+
+def test_run_worker_processes_multiple_jobs_with_configured_concurrency(app, monkeypatch):
+    professional = seed_professional_job(app)
+    bank = seed_bank_frequency_job(app)
+    processed_ids = []
+
+    def fake_run_job(job):
+        processed_ids.append(job.id)
+        job_service.heartbeat_job(job, success_increment=job.progress_total)
+
+    monkeypatch.setattr('workers.job_worker.run_job', fake_run_job)
+
+    from workers.job_worker import run_worker
+
+    run_worker(app, worker_id='test-worker', once=True, concurrency=2)
+
+    with app.app_context():
+        jobs = {
+            job.id: db.session.get(BackgroundJob, job.id)
+            for job in BackgroundJob.query.order_by(BackgroundJob.id).all()
+        }
+
+    assert sorted(processed_ids) == sorted([professional['job_id'], bank['job_id']])
+    assert jobs[professional['job_id']].status == 'completed'
+    assert jobs[bank['job_id']].status == 'completed'
