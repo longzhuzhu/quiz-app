@@ -515,6 +515,8 @@ const personalActiveLetter = ref('')
 const showBackTop = ref(false)
 const proListRef = ref(null)
 const personalListRef = ref(null)
+let frequentListRequestVersion = 0
+let frequentSummaryRequestVersion = 0
 
 // 删除确认状态
 const deleteConfirm = reactive({ open: false, id: null, type: '', term: '', bankId: null })
@@ -705,36 +707,96 @@ async function fetchFrequent() {
     return
   }
 
+  const bankId = selectedBankId.value
+  const page = frequentPage.value
+  const masteredFilter = frequentMasteredFilter.value
+  const requestVersion = ++frequentListRequestVersion
   loadingFrequent.value = true
   try {
     const res = await client.get('/vocab/frequent', {
       params: {
-        bank_id: selectedBankId.value,
-        page: frequentPage.value,
+        bank_id: bankId,
+        page,
         per_page: frequentPerPage.value,
-        ...buildMasteredFilterParams(frequentMasteredFilter.value),
+        ...buildMasteredFilterParams(masteredFilter),
       },
     })
+
+    if (
+      requestVersion !== frequentListRequestVersion ||
+      bankId !== selectedBankId.value ||
+      page !== frequentPage.value ||
+      masteredFilter !== frequentMasteredFilter.value
+    ) {
+      return
+    }
+
     const nextItems = res.data.items || []
     const nextTotal = res.data.summary?.total_terms || 0
     const nextTotalPages = res.data.pagination?.total_pages || 1
-    if (nextItems.length === 0 && frequentPage.value > 1 && nextTotalPages < frequentPage.value) {
+    if (nextItems.length === 0 && page > 1 && nextTotalPages < page) {
       frequentPage.value = nextTotalPages
       return
     }
     frequentWords.value = nextItems
     frequentTotal.value = nextTotal
     frequentTopLimit.value = res.data.summary?.top_terms_limit || 5000
-    frequentUntranslatedCount.value = res.data.summary?.untranslated_terms || 0
     frequentTotalPages.value = nextTotalPages
   } catch (e) {
+    if (
+      requestVersion !== frequentListRequestVersion ||
+      bankId !== selectedBankId.value ||
+      page !== frequentPage.value ||
+      masteredFilter !== frequentMasteredFilter.value
+    ) {
+      return
+    }
+
     frequentWords.value = []
     frequentTotal.value = 0
     frequentTotalPages.value = 1
-    frequentUntranslatedCount.value = 0
     toast.error(e.response?.data?.error || '加载高频词失败')
   } finally {
-    loadingFrequent.value = false
+    if (
+      requestVersion === frequentListRequestVersion &&
+      bankId === selectedBankId.value &&
+      page === frequentPage.value &&
+      masteredFilter === frequentMasteredFilter.value
+    ) {
+      loadingFrequent.value = false
+    }
+  }
+}
+
+async function refreshFrequentTranslationCount(bankId = selectedBankId.value) {
+  if (!bankId) {
+    frequentUntranslatedCount.value = 0
+    return 0
+  }
+
+  const requestVersion = ++frequentSummaryRequestVersion
+  try {
+    const res = await client.get('/vocab/frequent', {
+      params: {
+        bank_id: bankId,
+        page: 1,
+        per_page: 1,
+      },
+    })
+
+    if (requestVersion !== frequentSummaryRequestVersion || bankId !== selectedBankId.value) {
+      return null
+    }
+
+    frequentUntranslatedCount.value = res.data.summary?.untranslated_terms || 0
+    return frequentUntranslatedCount.value
+  } catch {
+    if (requestVersion !== frequentSummaryRequestVersion || bankId !== selectedBankId.value) {
+      return null
+    }
+
+    frequentUntranslatedCount.value = 0
+    return 0
   }
 }
 
@@ -827,7 +889,7 @@ async function doDeleteWord() {
           term,
         },
       })
-      await fetchFrequent()
+      await Promise.all([fetchFrequent(), refreshFrequentTranslationCount(bankId)])
     } else {
       const url = type === 'professional' ? `/vocab/professional/${id}` : `/vocab/personal/${id}`
       await client.delete(url)
@@ -898,6 +960,8 @@ async function batchTranslate() {
       },
     )
 
+    if (!result) return
+
     if (result.result === 'no_work') {
       toast.success(result.message)
       await fetchProfessional()
@@ -939,7 +1003,7 @@ async function batchTranslateFrequent() {
       { job_type: 'bank_frequent_translate', bank_id: selectedBankId.value },
       {
         onFinished: async (job) => {
-          await fetchFrequent()
+          await Promise.all([fetchFrequent(), refreshFrequentTranslationCount()])
           if (job?.status === 'completed') {
             toast.success('任务完成，已自动刷新未翻译数量')
           } else if (job?.status === 'failed') {
@@ -949,9 +1013,11 @@ async function batchTranslateFrequent() {
       },
     )
 
+    if (!result) return
+
     if (result.result === 'no_work') {
       toast.success(result.message)
-      await fetchFrequent()
+      await Promise.all([fetchFrequent(), refreshFrequentTranslationCount()])
       return
     }
     if (result.result === 'created') {
@@ -975,7 +1041,7 @@ async function restoreFrequentJob() {
       { job_type: 'bank_frequent_translate', bank_id: selectedBankId.value },
       {
         onFinished: async (job) => {
-          await fetchFrequent()
+          await Promise.all([fetchFrequent(), refreshFrequentTranslationCount()])
           if (job?.status === 'failed') {
             toast.error(getFailedJobMessage(job))
           }
@@ -994,15 +1060,22 @@ watch(personalMasteredFilter, fetchPersonal)
 
 watch(selectedBankId, async () => {
   if (!selectedBankId.value) {
-    await fetchFrequent()
     frequentJobState.clearJob()
+    await fetchFrequent()
+    await refreshFrequentTranslationCount()
     return
   }
+
+  const restorePromise = restoreFrequentJob()
+  const countPromise = refreshFrequentTranslationCount()
+
   if (frequentPage.value !== 1) {
     frequentPage.value = 1
+    await Promise.all([restorePromise, countPromise])
+    return
   }
-  await fetchFrequent()
-  await restoreFrequentJob()
+
+  await Promise.all([fetchFrequent(), restorePromise, countPromise])
 })
 
 watch(frequentMasteredFilter, () => {
