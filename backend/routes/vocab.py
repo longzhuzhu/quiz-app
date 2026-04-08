@@ -14,7 +14,7 @@ from models import (
     BankWordExclusion,
 )
 from services.import_service import MIN_FREQUENCY, TOP_FREQUENT_TERMS_LIMIT
-from services.job_service import text_missing, vocabulary_needs_translation
+from services.job_service import list_bank_frequent_terms, text_missing, vocabulary_needs_translation
 
 vocab_bp = Blueprint('vocab', __name__)
 
@@ -295,7 +295,6 @@ def list_frequent():
     page = max(1, page)
     per_page = max(1, min(per_page, 100))
 
-    excluded_terms = _get_excluded_term_set(bank_id)
     progress_by_term = _get_bank_word_progress_map(user.id, bank_id)
     mastered_filter = request.args.get('mastered')
     mastered_value = None
@@ -303,13 +302,7 @@ def list_frequent():
         mastered_value = _parse_bool_arg(mastered_filter)
         if mastered_value is None:
             return jsonify({'error': 'mastered 参数无效'}), 400
-    frequent_query = BankWordFrequency.query.filter_by(bank_id=bank_id)
-    if excluded_terms:
-        frequent_query = frequent_query.filter(~BankWordFrequency.term.in_(excluded_terms))
-    top_terms = frequent_query.order_by(
-        BankWordFrequency.frequency.desc(),
-        BankWordFrequency.term.asc(),
-    ).limit(TOP_FREQUENT_TERMS_LIMIT).all()
+    top_terms = list_bank_frequent_terms(bank_id)
     visible_terms = top_terms
     if mastered_value is not None:
         visible_terms = [
