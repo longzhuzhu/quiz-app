@@ -8,7 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
 from app import create_app
-from models import BackgroundJob, BankWordFrequency, QuestionBank, User, Vocabulary, db
+from models import BankWordFrequency, QuestionBank, User, Vocabulary, db
 
 
 @pytest.fixture()
@@ -98,6 +98,7 @@ def test_post_jobs_reuses_existing_professional_vocab_job(app):
         json={"job_type": "professional_vocab_translate"},
         headers=auth_headers(seeded["token"]),
     )
+    assert first.status_code == 201
     second = client.post(
         "/api/jobs",
         json={"job_type": "professional_vocab_translate"},
@@ -119,6 +120,8 @@ def test_get_job_detail_returns_serialized_job(app):
         headers=auth_headers(seeded["token"]),
     )
 
+    assert created.status_code == 201
+
     response = client.get(
         f"/api/jobs/{created.get_json()["job"]["id"]}",
         headers=auth_headers(seeded["token"]),
@@ -139,6 +142,8 @@ def test_get_active_job_returns_professional_job_by_scope(app):
         json={"job_type": "professional_vocab_translate"},
         headers=auth_headers(seeded["token"]),
     )
+
+    assert created.status_code == 201
 
     response = client.get(
         "/api/jobs/active?job_type=professional_vocab_translate",
@@ -180,6 +185,8 @@ def test_get_active_job_scopes_bank_frequency_by_bank_id(app):
         headers=auth_headers(seeded["token"]),
     )
 
+    assert created.status_code == 201
+
     response = client.get(
         f"/api/jobs/active?job_type=bank_frequent_translate&bank_id={seeded['bank_id']}",
         headers=auth_headers(seeded["token"]),
@@ -200,4 +207,6 @@ def test_get_frequent_summary_includes_untranslated_terms(app):
     )
 
     assert response.status_code == 200
-    assert response.get_json()["summary"]["untranslated_terms"] == 2
+    payload = response.get_json()
+    assert "summary" in payload
+    assert payload["summary"].get("untranslated_terms") == 2
