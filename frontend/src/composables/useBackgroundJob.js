@@ -5,74 +5,122 @@ export function useBackgroundJob() {
   const job = ref(null)
   const polling = ref(false)
   let timerId = null
+  let generation = 0
 
-  function stopPolling() {
+  function clearTimer() {
     if (timerId) {
       clearTimeout(timerId)
       timerId = null
     }
+  }
+
+  function beginGeneration() {
+    generation += 1
+    clearTimer()
     polling.value = false
+    return generation
   }
 
-  function clearJob() {
-    stopPolling()
-    job.value = null
+  function isCurrentGeneration(currentGeneration) {
+    return currentGeneration === generation
   }
 
-  async function fetchJob(jobId) {
-    const res = await client.get(`/jobs/${jobId}`)
-    job.value = res.data.job
+  function setJobSafely(nextJob, currentGeneration) {
+    if (!isCurrentGeneration(currentGeneration)) return null
+    job.value = nextJob
     return job.value
   }
 
-  function startPolling(jobId, { onFinished } = {}) {
-    stopPolling()
+  function stopPolling() {
+    beginGeneration()
+  }
+
+  function clearJob() {
+    const currentGeneration = beginGeneration()
+    setJobSafely(null, currentGeneration)
+  }
+
+  async function fetchJob(jobId, currentGeneration) {
+    const res = await client.get(`/jobs/${jobId}`)
+    return setJobSafely(res.data.job, currentGeneration)
+  }
+
+  function startPolling(jobId, { onFinished } = {}, currentGeneration = beginGeneration()) {
+    clearTimer()
+    if (!isCurrentGeneration(currentGeneration)) return currentGeneration
     polling.value = true
 
     const tick = async () => {
+      if (!isCurrentGeneration(currentGeneration)) return
+
       try {
-        const current = await fetchJob(jobId)
+        const current = await fetchJob(jobId, currentGeneration)
+        if (!isCurrentGeneration(currentGeneration)) return
+
         if (!current || ['completed', 'failed'].includes(current.status)) {
           polling.value = false
           if (onFinished) await onFinished(current)
           return
         }
-        timerId = window.setTimeout(tick, 2000)
-      } catch {
-        stopPolling()
-        if (job.value) {
-          job.value = {
-            ...job.value,
-            status: 'unknown',
-            status_message: '任务状态获取失败，可刷新页面后重试',
+
+        timerId = window.setTimeout(() => {
+          if (isCurrentGeneration(currentGeneration)) {
+            tick()
           }
-        }
+        }, 2000)
+      } catch {
+        if (!isCurrentGeneration(currentGeneration)) return
+
+        clearTimer()
+        polling.value = false
+        setJobSafely(
+          job.value
+            ? {
+                ...job.value,
+                status: 'unknown',
+                status_message: '任务状态获取失败，可刷新页面后重试',
+              }
+            : null,
+          currentGeneration,
+        )
       }
     }
 
     tick()
+    return currentGeneration
   }
 
   async function createJob(payload, options = {}) {
+    const currentGeneration = beginGeneration()
+    setJobSafely(null, currentGeneration)
+
     const res = await client.post('/jobs', payload)
-    job.value = res.data.job
-    if (job.value && ['queued', 'running'].includes(job.value.status)) {
-      startPolling(job.value.id, options)
+    const nextJob = setJobSafely(res.data.job, currentGeneration)
+    if (!isCurrentGeneration(currentGeneration)) return null
+
+    if (nextJob && ['queued', 'running'].includes(nextJob.status)) {
+      startPolling(nextJob.id, options, currentGeneration)
     } else {
-      stopPolling()
+      polling.value = false
     }
     return res.data
   }
 
   async function restoreActiveJob(params, options = {}) {
-    stopPolling()
+    const currentGeneration = beginGeneration()
+    setJobSafely(null, currentGeneration)
+
     const query = new URLSearchParams(params).toString()
     const res = await client.get(`/jobs/active?${query}`)
-    job.value = res.data.job
-    if (job.value && ['queued', 'running'].includes(job.value.status)) {
-      startPolling(job.value.id, options)
+    const nextJob = setJobSafely(res.data.job, currentGeneration)
+    if (!isCurrentGeneration(currentGeneration)) return null
+
+    if (nextJob && ['queued', 'running'].includes(nextJob.status)) {
+      startPolling(nextJob.id, options, currentGeneration)
+    } else {
+      polling.value = false
     }
-    return job.value
+    return nextJob
   }
 
   onUnmounted(stopPolling)
