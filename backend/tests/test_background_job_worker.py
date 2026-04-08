@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import timedelta, timezone
 from pathlib import Path
 import json
 import sys
@@ -90,12 +90,12 @@ def test_process_one_job_completes_professional_vocab_job(app, monkeypatch):
         db.session.commit()
         return len(batch), 0
 
+    from workers.job_worker import process_one_job
+
     monkeypatch.setattr(
         'services.job_handlers.translate_professional_vocab_batch',
         fake_translate_professional_vocab_batch,
     )
-
-    from workers.job_worker import process_one_job
 
     processed = process_one_job(app, worker_id='test-worker')
 
@@ -143,6 +143,14 @@ def test_recover_stale_jobs_requeues_running_job(app):
         assert job.lease_until is None
 
 
+def normalized_to_utc(dt):
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def test_process_one_job_requeues_failed_job_until_max_attempts(app, monkeypatch):
     seeded = seed_professional_job(app)
 
@@ -162,7 +170,7 @@ def test_process_one_job_requeues_failed_job_until_max_attempts(app, monkeypatch
         assert job.last_error == 'ai timeout'
         assert job.active_scope_key == 'professional_vocab'
         assert job.next_run_at is not None
-        assert job.next_run_at > job_service.utc_now()
+        assert normalized_to_utc(job.next_run_at) > normalized_to_utc(job_service.utc_now())
         job.next_run_at = job_service.utc_now() - timedelta(seconds=1)
         db.session.commit()
 
@@ -171,7 +179,7 @@ def test_process_one_job_requeues_failed_job_until_max_attempts(app, monkeypatch
         job = db.session.get(BackgroundJob, seeded['job_id'])
         assert job.attempt_count == 2
         assert job.next_run_at is not None
-        assert job.next_run_at > job_service.utc_now()
+        assert normalized_to_utc(job.next_run_at) > normalized_to_utc(job_service.utc_now())
         job.next_run_at = job_service.utc_now() - timedelta(seconds=1)
         db.session.commit()
 
