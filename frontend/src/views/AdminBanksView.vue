@@ -30,7 +30,7 @@
               <PencilSquareIcon class="h-4 w-4" />
               编辑
             </BaseButton>
-            <BaseButton variant="secondary" size="sm" @click="selectedBankId = bank.id; showImport = true">
+            <BaseButton variant="secondary" size="sm" @click="openImportModal(bank.id)">
               <ArrowUpTrayIcon class="h-4 w-4" />
               导入题目
             </BaseButton>
@@ -84,10 +84,10 @@
     </BaseModal>
 
     <!-- 导入题目 Modal -->
-    <BaseModal :open="showImport" title="导入题目" maxWidth="lg" @close="showImport = false">
+    <BaseModal :open="showImport" title="导入题目" maxWidth="lg" @close="closeImportModal">
       <FileUpload :bank-id="selectedBankId" @imported="handleImported" />
       <template #actions>
-        <BaseButton variant="secondary" @click="showImport = false">关闭</BaseButton>
+        <BaseButton variant="secondary" @click="closeImportModal">关闭</BaseButton>
       </template>
     </BaseModal>
 
@@ -126,6 +126,7 @@ const showEdit = ref(false)
 const editBank = ref({ id: null, name: '', description: '' })
 const showDeleteConfirm = ref(false)
 const deleteBankId = ref(null)
+const IMPORT_MODAL_BANK_STORAGE_KEY = 'admin-banks:import-bank-id'
 
 async function fetchBanks() {
   await bankStore.fetchBanks()
@@ -147,6 +148,44 @@ async function createBank() {
 function confirmDeleteBank(id) {
   deleteBankId.value = id
   showDeleteConfirm.value = true
+}
+
+function persistImportBankId(bankId) {
+  if (typeof window === 'undefined') return
+  window.sessionStorage.setItem(IMPORT_MODAL_BANK_STORAGE_KEY, String(bankId))
+}
+
+function clearImportBankId() {
+  if (typeof window === 'undefined') return
+  window.sessionStorage.removeItem(IMPORT_MODAL_BANK_STORAGE_KEY)
+}
+
+function openImportModal(bankId) {
+  selectedBankId.value = bankId
+  showImport.value = true
+  persistImportBankId(bankId)
+}
+
+function closeImportModal() {
+  showImport.value = false
+  selectedBankId.value = null
+  clearImportBankId()
+}
+
+function restoreImportModal() {
+  if (typeof window === 'undefined') return
+
+  const rawBankId = window.sessionStorage.getItem(IMPORT_MODAL_BANK_STORAGE_KEY)
+  if (!rawBankId) return
+
+  const bankId = Number(rawBankId)
+  if (!Number.isInteger(bankId) || !banks.value.some((bank) => bank.id === bankId)) {
+    clearImportBankId()
+    return
+  }
+
+  selectedBankId.value = bankId
+  showImport.value = true
 }
 
 async function deleteBank() {
@@ -183,5 +222,8 @@ async function saveEdit() {
   }
 }
 
-onMounted(fetchBanks)
+onMounted(async () => {
+  await fetchBanks()
+  restoreImportModal()
+})
 </script>

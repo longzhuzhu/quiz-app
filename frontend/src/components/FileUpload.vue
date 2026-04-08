@@ -34,7 +34,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { ArrowUpTrayIcon } from '@heroicons/vue/24/outline'
 import client from '../api/client'
 import { useBackgroundJob } from '../composables/useBackgroundJob'
@@ -49,6 +49,28 @@ const emit = defineEmits(['imported'])
 const dragging = ref(false)
 const uploading = ref(false)
 const result = ref(null)
+
+function handleFrequencyJobFinished(job) {
+  if (job?.status === 'completed') {
+    toast.success('高频词后台翻译完成')
+  } else if (job?.status === 'failed') {
+    toast.error(job.last_error || '高频词后台翻译已自动执行 3 次仍失败')
+  }
+}
+
+async function restoreFrequencyJob(bankId) {
+  if (!bankId) {
+    frequencyJobState.clearJob()
+    return
+  }
+
+  try {
+    await frequencyJobState.restoreActiveJob(
+      { job_type: 'bank_frequent_translate', bank_id: bankId },
+      { onFinished: handleFrequencyJobFinished },
+    )
+  } catch {}
+}
 
 async function uploadFile(file) {
   frequencyJobState.clearJob()
@@ -66,13 +88,7 @@ async function uploadFile(file) {
         await frequencyJobState.createJob(
           { job_type: 'bank_frequent_translate', bank_id: props.bankId },
           {
-            onFinished: async (job) => {
-              if (job?.status === 'completed') {
-                toast.success('高频词后台翻译完成')
-              } else if (job?.status === 'failed') {
-                toast.error(job.last_error || '高频词后台翻译已自动执行 3 次仍失败')
-              }
-            },
+            onFinished: handleFrequencyJobFinished,
           },
         )
         result.value = {
@@ -111,4 +127,12 @@ function handleFileSelect(e) {
   const file = e.target.files[0]
   if (file) uploadFile(file)
 }
+
+watch(
+  () => props.bankId,
+  (bankId) => {
+    restoreFrequencyJob(bankId)
+  },
+  { immediate: true },
+)
 </script>

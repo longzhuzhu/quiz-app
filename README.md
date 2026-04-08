@@ -163,7 +163,7 @@ quiz-app/
 ├── backend/
 │   ├── app.py                  # Flask 应用工厂
 │   ├── config.py               # 配置管理
-│   ├── models.py               # 数据模型（8 个表）
+│   ├── models.py               # 数据模型（13 个表）
 │   ├── requirements.txt        # Python 依赖
 │   ├── routes/                 # API 蓝图
 │   │   ├── auth.py             #   认证（注册/登录）
