@@ -12,7 +12,6 @@ APP_PORT="${APP_PORT:-5003}"
 APP_HOST="${APP_HOST:-0.0.0.0}"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 WORKER_SERVICE_FILE="/etc/systemd/system/${WORKER_SERVICE_NAME}.service"
-WORKER_POLL_INTERVAL="${JOB_WORKER_POLL_INTERVAL:-5}"
 
 if [[ "${EUID}" -ne 0 ]]; then
   echo "请使用 sudo 执行此脚本，例如：sudo bash scripts/install-systemd-service.sh"
@@ -54,7 +53,6 @@ User=${SERVICE_USER}
 Group=${SERVICE_GROUP}
 WorkingDirectory=${ROOT_DIR}
 Environment=PYTHONUNBUFFERED=1
-Environment=JOB_WORKER_POLL_INTERVAL=${WORKER_POLL_INTERVAL}
 EnvironmentFile=-${ROOT_DIR}/.env
 ExecStart=${ROOT_DIR}/scripts/start-worker.sh
 Restart=always

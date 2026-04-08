@@ -10,11 +10,11 @@ log() {
 }
 
 ensure_python() {
-  if [[ -x "${PYTHON_BIN}" ]] && "${PYTHON_BIN}" -c 'import flask, dotenv, sqlalchemy' >/dev/null 2>&1; then
+  if [[ -x "${PYTHON_BIN}" ]] && "${PYTHON_BIN}" -c 'import flask, sqlalchemy' >/dev/null 2>&1; then
     return 0
   fi
 
-  if command -v python3 >/dev/null 2>&1 && python3 -c 'import flask, dotenv, sqlalchemy' >/dev/null 2>&1; then
+  if command -v python3 >/dev/null 2>&1 && python3 -c 'import flask, sqlalchemy' >/dev/null 2>&1; then
     PYTHON_BIN="python3"
     return 0
   fi
