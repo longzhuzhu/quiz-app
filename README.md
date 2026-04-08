@@ -90,18 +90,21 @@ npm run dev
 
 ## 生产部署
 
-构建前端静态文件：
+推荐把应用部署为：
+
+- `quiz-app.service`：Web 服务
+- `quiz-app-worker.service`：后台任务 worker
+- nginx / Cloudflare：反向代理到 `127.0.0.1:5003`
+
+正式部署文档见：
+
+- [`docs/deployment.md`](docs/deployment.md)
+
+如果只想快速手动验证生产环境，可执行：
 
 ```bash
-cd frontend
-npm run build
-```
-
-Flask 会自动托管 `frontend/dist/` 目录，直接访问 `http://localhost:5003` 即可。
-
-如需不用 systemd 手动运行生产环境，请分别启动 Web 服务和 worker：
-
-```bash
+cd frontend && npm run build
+cd ..
 bash scripts/start-prod.sh
 bash scripts/start-worker.sh
 ```
@@ -113,17 +116,34 @@ bash scripts/start-worker.sh
 - 任务进度会写入数据库，前端轮询的是任务状态而不是直接长循环调用批量翻译接口
 - 任务失败会自动重试，最多 3 次；达到上限后进入失败终态，可在页面上再次触发，仅继续处理剩余未完成数据
 
-## 开机自启动（systemd）
+## systemd 部署方式
 
-项目仓库已提供生产启动脚本 `scripts/start-prod.sh`、worker 启动脚本 `scripts/start-worker.sh` 和安装脚本 `scripts/install-systemd-service.sh`。
+项目支持两种 systemd 部署方式：
 
-推荐流程：
+### 1. 推荐：user systemd
+
+适合当前用户直接维护代码和服务进程的场景。特点：
+
+- 不要求 root 常驻运行应用进程
+- 更适合个人 VPS / 单用户主机
+- 配合 `loginctl enable-linger $USER` 可实现开机自动拉起
+
+管理命令示例：
 
 ```bash
-cp .env.example .env
-pip install -r backend/requirements.txt
-cd frontend && npm install && npm run build
-cd /path/to/quiz-app
+systemctl --user status quiz-app
+systemctl --user status quiz-app-worker
+systemctl --user restart quiz-app
+systemctl --user restart quiz-app-worker
+journalctl --user -u quiz-app -f
+journalctl --user -u quiz-app-worker -f
+```
+
+### 2. 可选：系统级 systemd
+
+项目仓库已提供安装脚本 `scripts/install-systemd-service.sh`，会把服务安装到 `/etc/systemd/system/`：
+
+```bash
 sudo bash scripts/install-systemd-service.sh
 ```
 
@@ -135,15 +155,15 @@ sudo bash scripts/install-systemd-service.sh
 - 默认监听 `0.0.0.0:5003`
 - 后端优先使用 `waitress` 启动，依赖已写入 `backend/requirements.txt`
 - 服务启动时会检查 `frontend/dist/`，缺失或过期时自动执行 `npm run build`
-- worker 会持续消费后台任务队列，页面刷新不会影响正在执行的异步翻译任务
-- worker 默认以 2 个并发槽位运行；可通过 `JOB_WORKER_CONCURRENCY` 调整，例如 `JOB_WORKER_CONCURRENCY=1 bash scripts/start-worker.sh`
-- 如需自定义端口或服务名，可在执行安装脚本时传入环境变量，例如：
+- worker 默认以 2 个并发槽位运行；可通过 `JOB_WORKER_CONCURRENCY` 调整
+
+如需自定义端口或服务名，可在执行安装脚本时传入环境变量，例如：
 
 ```bash
 sudo SERVICE_NAME=quiz-app APP_PORT=5003 bash scripts/install-systemd-service.sh
 ```
 
-常用管理命令：
+系统级服务管理命令：
 
 ```bash
 sudo systemctl status quiz-app
