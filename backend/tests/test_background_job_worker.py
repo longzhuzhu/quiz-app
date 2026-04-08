@@ -135,6 +135,7 @@ def test_recover_stale_jobs_requeues_running_job(app):
 
         job_service.recover_stale_jobs()
 
+    with app.app_context():
         job = BackgroundJob.query.one()
         assert job.status == 'queued'
         assert job.active_scope_key == 'professional_vocab'
@@ -160,12 +161,17 @@ def test_process_one_job_requeues_failed_job_until_max_attempts(app, monkeypatch
         assert job.attempt_count == 1
         assert job.last_error == 'ai timeout'
         assert job.active_scope_key == 'professional_vocab'
+        assert job.next_run_at is not None
+        assert job.next_run_at > job_service.utc_now()
         job.next_run_at = job_service.utc_now() - timedelta(seconds=1)
         db.session.commit()
 
     assert process_one_job(app, worker_id='test-worker') is True
     with app.app_context():
         job = db.session.get(BackgroundJob, seeded['job_id'])
+        assert job.attempt_count == 2
+        assert job.next_run_at is not None
+        assert job.next_run_at > job_service.utc_now()
         job.next_run_at = job_service.utc_now() - timedelta(seconds=1)
         db.session.commit()
 
