@@ -11,7 +11,7 @@ JOB_TYPE_PROFESSIONAL_VOCAB_TRANSLATE = 'professional_vocab_translate'
 JOB_TYPE_BANK_FREQUENT_TRANSLATE = 'bank_frequent_translate'
 ACTIVE_STATUSES = {'queued', 'running'}
 DEFAULT_JOB_LEASE_SECONDS = 60
-DEFAULT_REQUEUE_DELAY_SECONDS = 10
+DEFAULT_REQUEUE_DELAY_SECONDS = 15
 
 
 class JobServiceError(Exception):
@@ -185,8 +185,12 @@ def claim_next_job(worker_id, lease_seconds=DEFAULT_JOB_LEASE_SECONDS):
     return job
 
 
-def heartbeat_job(job, status_message=None, lease_seconds=DEFAULT_JOB_LEASE_SECONDS):
+def heartbeat_job(job, success_increment=0, skipped_increment=0, status_message=None, lease_seconds=DEFAULT_JOB_LEASE_SECONDS):
     now = utc_now()
+    job.success_count = (job.success_count or 0) + success_increment
+    job.skipped_count = (job.skipped_count or 0) + skipped_increment
+    job.progress_done = job.success_count + job.skipped_count
+    job.progress_total = max(job.progress_total or 0, job.progress_done)
     job.heartbeat_at = now
     job.lease_until = now + timedelta(seconds=lease_seconds)
     if status_message:
@@ -202,6 +206,7 @@ def complete_job(job, status_message='后台任务执行完成'):
     job.progress_total = max(job.progress_total or 0, job.progress_done)
     job.last_error = None
     job.status_message = status_message
+    job.heartbeat_at = now
     job.finished_at = now
     job.next_run_at = None
     job.lease_until = None
@@ -211,6 +216,9 @@ def complete_job(job, status_message='后台任务执行完成'):
 
 
 def requeue_job(job, error_message, delay_seconds=DEFAULT_REQUEUE_DELAY_SECONDS):
+    if (job.attempt_count or 0) >= (job.max_attempts or 0):
+        return fail_job(job, error_message)
+
     now = utc_now()
     job.status = 'queued'
     job.progress_done = job.success_count + job.skipped_count

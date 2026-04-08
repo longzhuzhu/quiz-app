@@ -1,4 +1,4 @@
-from models import BackgroundJob, BankWordFrequency, Vocabulary, db
+from models import Vocabulary, db
 from services.ai_service import batch_translate_terms, batch_translate_vocab
 from services.job_service import (
     JOB_TYPE_BANK_FREQUENT_TRANSLATE,
@@ -13,7 +13,12 @@ from services.job_service import (
 PROFESSIONAL_VOCAB_BATCH_SIZE = 10
 BANK_FREQUENT_BATCH_SIZE = 100
 
-translate_professional_vocab_batch = batch_translate_vocab
+
+def translate_professional_vocab_batch(batch):
+    if not batch:
+        return 0, 0
+    translated_count = batch_translate_vocab(batch)
+    return translated_count, 0
 
 
 def translate_bank_frequency_batch(rows):
@@ -41,15 +46,15 @@ def translate_bank_frequency_batch(rows):
     return translated, 0
 
 
-def get_job_handler(job_type):
-    if job_type == JOB_TYPE_PROFESSIONAL_VOCAB_TRANSLATE:
-        return handle_professional_vocab_translate
-    if job_type == JOB_TYPE_BANK_FREQUENT_TRANSLATE:
-        return handle_bank_frequent_translate
-    raise ValueError(f'不支持的任务类型: {job_type}')
+def run_job(job):
+    if job.job_type == JOB_TYPE_PROFESSIONAL_VOCAB_TRANSLATE:
+        return handle_professional_vocab_translate(job)
+    if job.job_type == JOB_TYPE_BANK_FREQUENT_TRANSLATE:
+        return handle_bank_frequent_translate(job)
+    raise ValueError(f'不支持的任务类型: {job.job_type}')
 
 
-def handle_professional_vocab_translate(job, worker_id=None):
+def handle_professional_vocab_translate(job):
     while True:
         batch = Vocabulary.query.filter(Vocabulary.is_system.is_(True)).order_by(Vocabulary.term.asc()).all()
         batch = [word for word in batch if vocabulary_needs_translation(word)][:PROFESSIONAL_VOCAB_BATCH_SIZE]
@@ -57,27 +62,15 @@ def handle_professional_vocab_translate(job, worker_id=None):
             _consume_remaining_as_skipped(job)
             return
 
-        heartbeat_job(
-            job,
-            status_message=(
-                f'worker {worker_id or "unknown"} 正在翻译专业词汇 '
-                f'({job.success_count + job.skipped_count}/{job.progress_total})'
-            ),
-        )
-        batch_ids = [word.id for word in batch]
-        translate_professional_vocab_batch(batch)
-        completed_now = _count_completed_professional_vocab(batch_ids)
-        if completed_now <= 0:
+        heartbeat_job(job, status_message='正在翻译专业词汇')
+        translated_count, skipped_count = translate_professional_vocab_batch(batch)
+        if translated_count <= 0 and skipped_count <= 0:
             raise RuntimeError('专业词汇批量翻译未产生进展')
-
-        job = db.session.get(BackgroundJob, job.id)
-        job.success_count += completed_now
-        job.progress_done = job.success_count + job.skipped_count
-        job.progress_total = max(job.progress_total or 0, job.progress_done)
-        db.session.commit()
+        heartbeat_job(job, success_increment=translated_count, skipped_increment=skipped_count)
+        job = db.session.get(type(job), job.id)
 
 
-def handle_bank_frequent_translate(job, worker_id=None):
+def handle_bank_frequent_translate(job):
     payload = deserialize_job_payload(job)
     bank_id = payload.get('bank_id')
     if bank_id is None:
@@ -92,49 +85,16 @@ def handle_bank_frequent_translate(job, worker_id=None):
             _consume_remaining_as_skipped(job)
             return
 
-        heartbeat_job(
-            job,
-            status_message=(
-                f'worker {worker_id or "unknown"} 正在翻译高频词 '
-                f'({job.success_count + job.skipped_count}/{job.progress_total})'
-            ),
-        )
-        batch_ids = [row.id for row in batch]
-        translate_bank_frequency_batch(batch)
-        completed_now = _count_completed_bank_frequency(batch_ids)
-        if completed_now <= 0:
+        heartbeat_job(job, status_message='正在翻译高频词')
+        translated_count, skipped_count = translate_bank_frequency_batch(batch)
+        if translated_count <= 0 and skipped_count <= 0:
             raise RuntimeError('高频词批量翻译未产生进展')
-
-        job = db.session.get(BackgroundJob, job.id)
-        job.success_count += completed_now
-        job.progress_done = job.success_count + job.skipped_count
-        job.progress_total = max(job.progress_total or 0, job.progress_done)
-        db.session.commit()
-
-
-def _count_completed_professional_vocab(batch_ids):
-    db.session.expire_all()
-    return sum(
-        1
-        for word in Vocabulary.query.filter(Vocabulary.id.in_(batch_ids)).all()
-        if not vocabulary_needs_translation(word)
-    )
-
-
-def _count_completed_bank_frequency(batch_ids):
-    db.session.expire_all()
-    return sum(
-        1
-        for row in BankWordFrequency.query.filter(BankWordFrequency.id.in_(batch_ids)).all()
-        if not text_missing(row.term_zh)
-    )
+        heartbeat_job(job, success_increment=translated_count, skipped_increment=skipped_count)
+        job = db.session.get(type(job), job.id)
 
 
 def _consume_remaining_as_skipped(job):
-    job = db.session.get(BackgroundJob, job.id)
+    job = db.session.get(type(job), job.id)
     remaining = max((job.progress_total or 0) - (job.success_count + job.skipped_count), 0)
     if remaining:
-        job.skipped_count += remaining
-        job.progress_done = job.success_count + job.skipped_count
-        job.progress_total = max(job.progress_total or 0, job.progress_done)
-        db.session.commit()
+        heartbeat_job(job, skipped_increment=remaining)

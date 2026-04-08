@@ -4,8 +4,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
-WORKER_ID="${JOB_WORKER_ID:-$(hostname)}"
-POLL_INTERVAL="${JOB_WORKER_POLL_INTERVAL:-5}"
 
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
@@ -29,7 +27,7 @@ main() {
   cd "${ROOT_DIR}"
   ensure_python
   export PYTHONUNBUFFERED=1
-  exec "${PYTHON_BIN}" "${ROOT_DIR}/backend/workers/job_worker.py" --worker-id "${WORKER_ID}" --poll-interval "${POLL_INTERVAL}" "$@"
+  exec "${PYTHON_BIN}" "${ROOT_DIR}/backend/workers/job_worker.py" "$@"
 }
 
 main "$@"
