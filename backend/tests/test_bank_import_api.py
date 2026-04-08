@@ -9,7 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
 from app import create_app
-from models import db, User, QuestionBank, Question
+from models import BackgroundJob, BankWordFrequency, db, User, QuestionBank, Question
 
 
 @pytest.fixture()
@@ -151,3 +151,72 @@ def test_import_skips_duplicate_questions_within_single_file(app, seeded_admin_b
             "Which control best protects confidentiality?",
             "Which control best protects integrity?",
         ]
+
+
+def test_import_invalidates_old_bank_frequency_job_before_creating_new_one(app, seeded_admin_bank, monkeypatch):
+    client = app.test_client()
+    bank_id = seeded_admin_bank["bank_id"]
+    scope_key = f"bank_frequent:{bank_id}"
+
+    parsed_questions = [
+        {
+            "content": "What is personal data?",
+            "options": [{"key": "A", "text": "Any data about an identified person"}],
+            "correct_answer": "A",
+            "question_type": "single",
+            "answer_missing": False,
+        }
+    ]
+    monkeypatch.setattr("routes.banks.parse_file", lambda file_storage, filename: parsed_questions)
+    monkeypatch.setattr(
+        "routes.banks.build_bank_word_frequencies",
+        lambda questions: [
+            {"term": "controller", "frequency": 4},
+            {"term": "processor", "frequency": 2},
+        ],
+    )
+
+    with app.app_context():
+        old_job = BackgroundJob(
+            job_type="bank_frequent_translate",
+            scope_key=scope_key,
+            active_scope_key=scope_key,
+            payload_json=f'{{"bank_id": {bank_id}}}',
+            status="running",
+            progress_total=99,
+            progress_done=40,
+            success_count=40,
+            skipped_count=0,
+            status_message="旧任务仍在执行",
+            created_by=1,
+        )
+        db.session.add(old_job)
+        db.session.add(BankWordFrequency(bank_id=bank_id, term="legacy", term_zh=None, frequency=9))
+        db.session.commit()
+        old_job_id = old_job.id
+
+    headers = {"Authorization": f"Bearer {seeded_admin_bank['token']}"}
+    import_res = client.post(
+        f"/api/banks/{bank_id}/import",
+        data={"file": (BytesIO(b"ignored"), "questions.docx")},
+        content_type="multipart/form-data",
+        headers=headers,
+    )
+    assert import_res.status_code == 200
+
+    create_job_res = client.post(
+        "/api/jobs",
+        json={"job_type": "bank_frequent_translate", "bank_id": bank_id},
+        headers=headers,
+    )
+
+    assert create_job_res.status_code == 201
+    payload = create_job_res.get_json()
+    assert payload["result"] == "created"
+    assert payload["job"]["id"] != old_job_id
+    assert payload["job"]["progress_total"] == 2
+
+    with app.app_context():
+        old_job = db.session.get(BackgroundJob, old_job_id)
+        assert old_job.active_scope_key is None
+        assert old_job.status != "running"

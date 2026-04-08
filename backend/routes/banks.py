@@ -18,6 +18,7 @@ from models import (
 )
 from services.import_service import parse_file, build_bank_word_frequencies
 from services.ai_service import batch_translate_terms
+from services.job_service import JOB_TYPE_BANK_FREQUENT_TRANSLATE, build_scope_key, invalidate_active_scope
 
 banks_bp = Blueprint('banks', __name__)
 
@@ -253,6 +254,10 @@ def import_questions(bank_id):
 
     bank.question_count = len(full_bank_questions)
     bank.source_filename = file.filename
+    invalidate_active_scope(
+        build_scope_key(JOB_TYPE_BANK_FREQUENT_TRANSLATE, {'bank_id': bank.id}),
+        '题库已重新导入，旧高频词翻译任务已失效',
+    )
     db.session.commit()
 
     frequency_count = sum(1 for item in frequency_items if item['term'] not in excluded_terms)
