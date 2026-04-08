@@ -144,6 +144,25 @@ def create_or_reuse_job(job_type, payload, created_by):
     return 'created', job, '后台任务已创建'
 
 
+def invalidate_active_scope(scope_key, status_message, last_error=None, now=None):
+    now = now or utc_now()
+    job = BackgroundJob.query.filter_by(active_scope_key=scope_key).order_by(BackgroundJob.id.desc()).first()
+    if not job:
+        return None
+
+    job.status = 'failed'
+    job.progress_done = (job.success_count or 0) + (job.skipped_count or 0)
+    job.progress_total = max(job.progress_total or 0, job.progress_done)
+    job.last_error = last_error or status_message
+    job.status_message = status_message
+    job.finished_at = now
+    job.next_run_at = None
+    job.lease_until = None
+    job.heartbeat_at = now
+    job.active_scope_key = None
+    return job
+
+
 def recover_stale_jobs(now=None):
     now = now or utc_now()
     recovered = 0
@@ -213,64 +232,80 @@ def try_claim_job_by_id(job_id, worker_id, lease_seconds=DEFAULT_JOB_LEASE_SECON
 
 def heartbeat_job(job, success_increment=0, skipped_increment=0, status_message=None, lease_seconds=DEFAULT_JOB_LEASE_SECONDS):
     now = utc_now()
-    job.success_count = (job.success_count or 0) + success_increment
-    job.skipped_count = (job.skipped_count or 0) + skipped_increment
-    job.progress_done = job.success_count + job.skipped_count
-    job.progress_total = max(job.progress_total or 0, job.progress_done)
-    job.heartbeat_at = now
-    job.lease_until = now + timedelta(seconds=lease_seconds)
+    current = db.session.get(BackgroundJob, job.id)
+    if current is None or current.status != 'running':
+        return current
+
+    current.success_count = (current.success_count or 0) + success_increment
+    current.skipped_count = (current.skipped_count or 0) + skipped_increment
+    current.progress_done = current.success_count + current.skipped_count
+    current.progress_total = max(current.progress_total or 0, current.progress_done)
+    current.heartbeat_at = now
+    current.lease_until = now + timedelta(seconds=lease_seconds)
     if status_message:
-        job.status_message = status_message
+        current.status_message = status_message
     db.session.commit()
-    return job
+    return current
 
 
 def complete_job(job, status_message='任务完成'):
     now = utc_now()
-    job.status = 'completed'
-    job.progress_done = job.success_count + job.skipped_count
-    job.progress_total = max(job.progress_total or 0, job.progress_done)
-    job.last_error = None
-    job.status_message = status_message
-    job.heartbeat_at = now
-    job.finished_at = now
-    job.next_run_at = None
-    job.lease_until = None
-    job.active_scope_key = None
+    current = db.session.get(BackgroundJob, job.id)
+    if current is None or current.status != 'running':
+        return current
+
+    current.status = 'completed'
+    current.progress_done = (current.success_count or 0) + (current.skipped_count or 0)
+    current.progress_total = max(current.progress_total or 0, current.progress_done)
+    current.last_error = None
+    current.status_message = status_message
+    current.heartbeat_at = now
+    current.finished_at = now
+    current.next_run_at = None
+    current.lease_until = None
+    current.active_scope_key = None
     db.session.commit()
-    return job
+    return current
 
 
 def requeue_job(job, error_message, delay_seconds=DEFAULT_REQUEUE_DELAY_SECONDS):
-    if (job.attempt_count or 0) >= (job.max_attempts or 0):
-        return fail_job(job, error_message)
+    current = db.session.get(BackgroundJob, job.id)
+    if current is None or current.status != 'running':
+        return current
+
+    if (current.attempt_count or 0) >= (current.max_attempts or 0):
+        return fail_job(current, error_message)
 
     now = utc_now()
-    job.status = 'queued'
-    job.progress_done = job.success_count + job.skipped_count
-    job.progress_total = max(job.progress_total or 0, job.progress_done)
-    job.last_error = str(error_message)
-    job.status_message = f'第 {job.attempt_count}/{job.max_attempts} 次执行失败，15 秒后自动重试'
-    job.next_run_at = now + timedelta(seconds=delay_seconds)
-    job.lease_until = None
-    job.heartbeat_at = None
+    current.status = 'queued'
+    current.progress_done = (current.success_count or 0) + (current.skipped_count or 0)
+    current.progress_total = max(current.progress_total or 0, current.progress_done)
+    current.last_error = str(error_message)
+    current.status_message = f'第 {current.attempt_count}/{current.max_attempts} 次执行失败，15 秒后自动重试'
+    current.next_run_at = now + timedelta(seconds=delay_seconds)
+    current.lease_until = None
+    current.heartbeat_at = None
     db.session.commit()
-    return job
+    return current
 
 
 def fail_job(job, error_message):
     now = utc_now()
-    job.status = 'failed'
-    job.progress_done = job.success_count + job.skipped_count
-    job.progress_total = max(job.progress_total or 0, job.progress_done)
-    job.last_error = str(error_message)
-    job.status_message = f'任务已自动执行 {job.max_attempts} 次仍失败'
-    job.finished_at = now
-    job.next_run_at = None
-    job.lease_until = None
-    job.active_scope_key = None
+    current = db.session.get(BackgroundJob, job.id)
+    if current is None or current.status not in {'queued', 'running'}:
+        return current
+
+    current.status = 'failed'
+    current.progress_done = (current.success_count or 0) + (current.skipped_count or 0)
+    current.progress_total = max(current.progress_total or 0, current.progress_done)
+    current.last_error = str(error_message)
+    current.status_message = f'任务已自动执行 {current.max_attempts} 次仍失败'
+    current.finished_at = now
+    current.next_run_at = None
+    current.lease_until = None
+    current.active_scope_key = None
     db.session.commit()
-    return job
+    return current
 
 
 def should_retry(job):
