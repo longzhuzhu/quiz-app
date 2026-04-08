@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from sqlalchemy.exc import IntegrityError
 
 from models import BackgroundJob, BankWordExclusion, BankWordFrequency, QuestionBank, Vocabulary, db
+from services.import_service import TOP_FREQUENT_TERMS_LIMIT
 
 JOB_TYPE_PROFESSIONAL_VOCAB_TRANSLATE = 'professional_vocab_translate'
 JOB_TYPE_BANK_FREQUENT_TRANSLATE = 'bank_frequent_translate'
@@ -41,6 +42,20 @@ def build_scope_key(job_type, payload):
     raise ValueError('不支持的任务类型')
 
 
+def list_bank_frequent_terms(bank_id):
+    excluded_terms = {
+        row.term
+        for row in BankWordExclusion.query.filter_by(bank_id=bank_id).all()
+    }
+    frequent_query = BankWordFrequency.query.filter_by(bank_id=bank_id)
+    if excluded_terms:
+        frequent_query = frequent_query.filter(~BankWordFrequency.term.in_(excluded_terms))
+    return frequent_query.order_by(
+        BankWordFrequency.frequency.desc(),
+        BankWordFrequency.term.asc(),
+    ).limit(TOP_FREQUENT_TERMS_LIMIT).all()
+
+
 def count_pending_items(job_type, payload):
     if job_type == JOB_TYPE_PROFESSIONAL_VOCAB_TRANSLATE:
         return sum(
@@ -54,15 +69,7 @@ def count_pending_items(job_type, payload):
     if not bank:
         raise JobServiceError('题库不存在', status_code=404)
 
-    excluded_terms = {
-        row.term
-        for row in BankWordExclusion.query.filter_by(bank_id=bank_id).all()
-    }
-    frequent_query = BankWordFrequency.query.filter_by(bank_id=bank_id)
-    if excluded_terms:
-        frequent_query = frequent_query.filter(~BankWordFrequency.term.in_(excluded_terms))
-
-    items = frequent_query.all()
+    items = list_bank_frequent_terms(bank_id)
     return sum(1 for item in items if text_missing(item.term_zh))
 
 
@@ -116,10 +123,20 @@ def create_or_reuse_job(job_type, payload, created_by):
     db.session.add(job)
     try:
         db.session.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         db.session.rollback()
+        if not _is_active_scope_unique_conflict(exc):
+            raise
         existing = BackgroundJob.query.filter_by(active_scope_key=scope_key).order_by(BackgroundJob.id.desc()).first()
         if existing:
             return 'existing', existing, '已有后台任务正在执行'
         raise
     return 'created', job, '后台任务已创建'
+
+
+def _is_active_scope_unique_conflict(error):
+    raw_message = str(getattr(error, 'orig', error))
+    return (
+        'background_jobs.active_scope_key' in raw_message
+        or 'uq_background_jobs_active_scope_key' in raw_message
+    )

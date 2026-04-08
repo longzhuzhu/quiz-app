@@ -32,10 +32,16 @@ def _require_admin():
 def _parse_bank_id(value):
     if isinstance(value, bool) or value is None:
         return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
         return None
+    if isinstance(value, str):
+        normalized = value.strip()
+        if not normalized or not normalized.isdigit():
+            return None
+        return int(normalized)
+    return None
 
 
 def _build_payload(job_type, source):

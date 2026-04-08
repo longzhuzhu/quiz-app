@@ -246,6 +246,21 @@ def test_post_jobs_rejects_non_integer_bank_id(app):
     assert response.get_json() == {"error": "bank_id 必须为整数"}
 
 
+@pytest.mark.parametrize("invalid_bank_id", [1.2, 1.0, "1.2", "1.0"])
+def test_post_jobs_rejects_float_bank_id(app, invalid_bank_id):
+    seeded = seed_bank_frequency(app)
+    client = app.test_client()
+
+    response = client.post(
+        "/api/jobs",
+        json={"job_type": "bank_frequent_translate", "bank_id": invalid_bank_id},
+        headers=auth_headers(seeded["token"]),
+    )
+
+    assert response.status_code == 400
+    assert response.get_json() == {"error": "bank_id 必须为整数"}
+
+
 def test_post_jobs_bank_pending_ignores_excluded_terms(app):
     seeded = seed_bank_frequency(app)
     client = app.test_client()
@@ -308,6 +323,41 @@ def test_get_frequent_summary_matches_mastered_filter_scope(app):
     assert payload["summary"]["untranslated_terms"] == 1
     assert len(payload["items"]) == 1
     assert payload["items"][0]["term"] == "privacy"
+
+
+def test_job_progress_total_matches_frequent_summary_when_over_top_limit(app, monkeypatch):
+    seeded = seed_bank_frequency(app)
+    client = app.test_client()
+    test_limit = 2
+
+    with app.app_context():
+        BankWordFrequency.query.filter_by(bank_id=seeded["bank_id"], term="governance").update(
+            {"term_zh": None},
+            synchronize_session=False,
+        )
+        db.session.commit()
+
+    monkeypatch.setattr("services.job_service.TOP_FREQUENT_TERMS_LIMIT", test_limit)
+    monkeypatch.setattr("routes.vocab.TOP_FREQUENT_TERMS_LIMIT", test_limit)
+
+    create_res = client.post(
+        "/api/jobs",
+        json={"job_type": "bank_frequent_translate", "bank_id": seeded["bank_id"]},
+        headers=auth_headers(seeded["token"]),
+    )
+    assert create_res.status_code == 201
+    job_total = create_res.get_json()["job"]["progress_total"]
+
+    summary_res = client.get(
+        f"/api/vocab/frequent?bank_id={seeded['bank_id']}",
+        headers=auth_headers(seeded["token"]),
+    )
+    assert summary_res.status_code == 200
+    summary = summary_res.get_json()["summary"]
+
+    assert summary["total_terms"] == test_limit
+    assert summary["untranslated_terms"] == 2
+    assert job_total == summary["untranslated_terms"]
 
 
 def test_create_or_reuse_job_falls_back_to_existing_on_unique_conflict(app, monkeypatch):
