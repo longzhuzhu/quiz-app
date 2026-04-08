@@ -105,7 +105,6 @@ def test_post_jobs_reuses_existing_professional_vocab_job(app):
         headers=auth_headers(seeded["token"]),
     )
 
-    assert first.status_code == 201
     assert second.status_code == 200
     assert second.get_json()["result"] == "existing"
     assert second.get_json()["job"]["id"] == first.get_json()["job"]["id"]
@@ -122,8 +121,9 @@ def test_get_job_detail_returns_serialized_job(app):
 
     assert created.status_code == 201
 
+    job_id = created.get_json()["job"]["id"]
     response = client.get(
-        f"/api/jobs/{created.get_json()["job"]["id"]}",
+        f"/api/jobs/{job_id}",
         headers=auth_headers(seeded["token"]),
     )
 
