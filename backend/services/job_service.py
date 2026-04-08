@@ -156,7 +156,7 @@ def recover_stale_jobs(now=None):
         job.status = 'queued'
         job.lease_until = None
         job.heartbeat_at = None
-        job.status_message = '检测到超时 worker，任务已重新排队'
+        job.status_message = '检测到 worker 中断，任务已重新排队'
         recovered += 1
     if recovered:
         db.session.commit()
@@ -180,7 +180,7 @@ def claim_next_job(worker_id, lease_seconds=DEFAULT_JOB_LEASE_SECONDS):
     job.heartbeat_at = now
     job.lease_until = now + timedelta(seconds=lease_seconds)
     job.next_run_at = None
-    job.status_message = f'worker {worker_id} 执行中'
+    job.status_message = f'worker {worker_id} 已接手任务'
     db.session.commit()
     return job
 
@@ -199,7 +199,7 @@ def heartbeat_job(job, success_increment=0, skipped_increment=0, status_message=
     return job
 
 
-def complete_job(job, status_message='后台任务执行完成'):
+def complete_job(job, status_message='任务完成'):
     now = utc_now()
     job.status = 'completed'
     job.progress_done = job.success_count + job.skipped_count
@@ -224,7 +224,7 @@ def requeue_job(job, error_message, delay_seconds=DEFAULT_REQUEUE_DELAY_SECONDS)
     job.progress_done = job.success_count + job.skipped_count
     job.progress_total = max(job.progress_total or 0, job.progress_done)
     job.last_error = str(error_message)
-    job.status_message = f'执行失败，准备第 {job.attempt_count + 1} 次重试'
+    job.status_message = f'第 {job.attempt_count}/{job.max_attempts} 次执行失败，15 秒后自动重试'
     job.next_run_at = now + timedelta(seconds=delay_seconds)
     job.lease_until = None
     job.heartbeat_at = None
@@ -238,7 +238,7 @@ def fail_job(job, error_message):
     job.progress_done = job.success_count + job.skipped_count
     job.progress_total = max(job.progress_total or 0, job.progress_done)
     job.last_error = str(error_message)
-    job.status_message = '执行失败，已达到最大重试次数'
+    job.status_message = f'任务已自动执行 {job.max_attempts} 次仍失败'
     job.finished_at = now
     job.next_run_at = None
     job.lease_until = None
