@@ -53,9 +53,7 @@
         v-if="professionalJob && ['queued', 'running', 'failed'].includes(professionalJob.status)"
         class="mb-4 rounded-card bg-teal-50 dark:bg-teal-900/20 px-4 py-3 text-sm text-teal-700 dark:text-teal-300"
       >
-        <div class="font-medium">后台异步翻译，刷新页面不会中断</div>
-        <div class="mt-1">{{ getJobStatusMessage(professionalJob) }}</div>
-        <div class="mt-1">已处理 {{ professionalJob.progress_done }} / {{ professionalJob.progress_total }}，第 {{ professionalJob.attempt_count || 0 }} / {{ professionalJob.max_attempts }} 次</div>
+        {{ formatJobBannerMessage(professionalJob) }}
       </div>
 
       <!-- 搜索框 -->
@@ -352,9 +350,7 @@
           v-if="frequentJob && ['queued', 'running', 'failed'].includes(frequentJob.status)"
           class="mb-4 rounded-card bg-amber-50 dark:bg-amber-900/20 px-4 py-3 text-sm text-amber-700 dark:text-amber-300"
         >
-          <div class="font-medium">后台异步翻译，刷新页面不会中断</div>
-          <div class="mt-1">{{ getJobStatusMessage(frequentJob) }}</div>
-          <div class="mt-1">已处理 {{ frequentJob.progress_done }} / {{ frequentJob.progress_total }}，第 {{ frequentJob.attempt_count || 0 }} / {{ frequentJob.max_attempts }} 次</div>
+          {{ formatJobBannerMessage(frequentJob) }}
         </div>
 
         <div v-if="frequentWords.length === 0" class="py-12 text-center text-gray-400 dark:text-gray-500">当前题库暂无高频词，请先重新导入题库生成词频</div>
@@ -470,6 +466,7 @@ import { useBankStore } from '../stores/bank'
 import client from '../api/client'
 import { useToast } from '../composables/useToast'
 import { useBackgroundJob } from '../composables/useBackgroundJob'
+import { formatJobBannerMessage, getFailedJobMessage } from '../utils/jobStatus'
 import BaseButton from '../components/BaseButton.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 
@@ -542,20 +539,6 @@ function wordNeedsTranslation(word) {
   if (!word?.term_zh?.trim()) return true
   if (word?.definition?.trim() && !word?.definition_zh?.trim()) return true
   return false
-}
-
-function getFailedJobMessage(job) {
-  const baseMessage = job?.status_message?.trim() || '任务已自动执行 3 次仍失败'
-  if (baseMessage.includes('可重新点击继续翻译剩余未翻译内容')) {
-    return baseMessage
-  }
-  return `${baseMessage}，可重新点击继续翻译剩余未翻译内容`
-}
-
-function getJobStatusMessage(job) {
-  if (!job) return '任务正在后台执行，可离开页面后稍后回来查看'
-  if (job.status === 'failed') return getFailedJobMessage(job)
-  return job.status_message || '任务正在后台执行，可离开页面后稍后回来查看'
 }
 
 function getFirstLetter(term) {
