@@ -220,3 +220,82 @@ def test_process_one_job_completes_bank_frequency_job(app, monkeypatch):
         assert len(rows) == 2
         for row in rows:
             assert row.term_zh == f"中文-{row.term}"
+
+
+def test_translate_professional_vocab_batch_partial_translation_returns_no_completed_items(app, monkeypatch):
+    with app.app_context():
+        words = Vocabulary.query.filter(Vocabulary.is_system.is_(True)).order_by(Vocabulary.term.asc()).all()
+        if not words:
+            seed_professional_job(app)
+            words = Vocabulary.query.filter(Vocabulary.is_system.is_(True)).order_by(Vocabulary.term.asc()).all()
+
+        def fake_batch_translate_vocab(batch):
+            for word in batch:
+                word.term_zh = f"中文-{word.term}"
+            db.session.commit()
+            return len(batch)
+
+        monkeypatch.setattr('services.job_handlers.batch_translate_vocab', fake_batch_translate_vocab)
+
+        from services.job_handlers import translate_professional_vocab_batch
+
+        success_count, skipped_count = translate_professional_vocab_batch(words)
+
+        assert success_count == 0
+        assert skipped_count == 0
+        for word in Vocabulary.query.filter(Vocabulary.is_system.is_(True)).order_by(Vocabulary.term.asc()).all():
+            assert word.term_zh == f"中文-{word.term}"
+            assert word.definition_zh is None
+            assert job_service.vocabulary_needs_translation(word) is True
+
+
+def test_process_one_job_partial_professional_translation_requeues_on_no_progress(app, monkeypatch):
+    seeded = seed_professional_job(app)
+
+    def fake_partial_translate(batch):
+        for word in batch:
+            word.term_zh = f"中文-{word.term}"
+        db.session.commit()
+        return 0, 0
+
+    from workers.job_worker import process_one_job
+
+    monkeypatch.setattr(
+        'services.job_handlers.translate_professional_vocab_batch',
+        fake_partial_translate,
+    )
+
+    assert process_one_job(app, worker_id='test-worker') is True
+
+    with app.app_context():
+        job = db.session.get(BackgroundJob, seeded['job_id'])
+        assert job.status == 'queued'
+        assert job.success_count == 0
+        assert job.progress_done == 0
+        assert job.last_error == '专业词汇批量翻译未产生进展'
+        assert job.active_scope_key == 'professional_vocab'
+        words = Vocabulary.query.filter(Vocabulary.is_system.is_(True)).order_by(Vocabulary.term.asc()).all()
+        assert len(words) == 2
+        for word in words:
+            assert word.term_zh == f"中文-{word.term}"
+            assert word.definition_zh is None
+            assert job_service.vocabulary_needs_translation(word) is True
+
+
+def test_try_claim_job_is_atomic_for_same_job(app):
+    seeded = seed_professional_job(app)
+
+    with app.app_context():
+        claimed_once = job_service.try_claim_job_by_id(seeded['job_id'], worker_id='worker-a')
+        claimed_twice = job_service.try_claim_job_by_id(seeded['job_id'], worker_id='worker-b')
+
+        assert claimed_once is not None
+        assert claimed_once.id == seeded['job_id']
+        assert claimed_once.status == 'running'
+        assert claimed_once.attempt_count == 1
+        assert claimed_twice is None
+
+        job = db.session.get(BackgroundJob, seeded['job_id'])
+        assert job.status == 'running'
+        assert job.attempt_count == 1
+        assert job.status_message == 'worker worker-a 已接手任务'
