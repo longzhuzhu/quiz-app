@@ -21,9 +21,9 @@
       v-if="frequencyJob && ['queued', 'running', 'failed'].includes(frequencyJob.status)"
       class="mt-4 text-sm text-primary-600 dark:text-primary-400"
     >
-      后台异步翻译中：{{ frequencyJob.progress_done }} / {{ frequencyJob.progress_total }}
+      {{ frequencyJob.status === 'failed' ? '后台异步翻译失败' : '后台异步翻译中' }}：{{ frequencyJob.progress_done }} / {{ frequencyJob.progress_total }}
       <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-        {{ frequencyJob.status_message || '任务正在后台执行，可离开页面后稍后回来查看' }}
+        {{ frequencyJob.status_message || (frequencyJob.status === 'failed' ? '任务执行失败，可稍后重试，仅会继续处理剩余未完成数据' : '任务正在后台执行，可离开页面后稍后回来查看') }}
       </div>
     </div>
     <div v-if="result" class="mt-4 text-sm"
@@ -51,6 +51,7 @@ const uploading = ref(false)
 const result = ref(null)
 
 async function uploadFile(file) {
+  frequencyJobState.clearJob()
   uploading.value = true
   result.value = null
   const formData = new FormData()
@@ -59,9 +60,6 @@ async function uploadFile(file) {
     const res = await client.post(`/banks/${props.bankId}/import`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
-
-    result.value = { message: res.data.message || '上传成功' }
-    emit('imported', res.data)
 
     if (res.data.frequency_count > 0) {
       try {
@@ -80,13 +78,21 @@ async function uploadFile(file) {
         result.value = {
           message: '题目导入成功，高频词翻译已转入后台执行，刷新页面不会中断。',
         }
+        toast.success(result.value.message)
+        emit('imported', { ...res.data, frequency_job_status: 'created' })
       } catch (jobError) {
         result.value = {
           error: '题目导入成功，但创建后台高频词翻译任务失败，请稍后重试。',
         }
-        toast.error(jobError.response?.data?.error || '创建高频词后台任务失败')
+        toast.error(result.value.error)
+        emit('imported', { ...res.data, frequency_job_status: 'creation_failed', frequency_job_error: jobError.response?.data?.error || '创建高频词后台任务失败' })
       }
+      return
     }
+
+    result.value = { message: res.data.message || '上传成功' }
+    toast.success(result.value.message)
+    emit('imported', { ...res.data, frequency_job_status: 'skipped' })
   } catch (e) {
     result.value = { error: e.response?.data?.error || '上传失败' }
     toast.error(result.value.error)
