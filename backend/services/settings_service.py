@@ -8,10 +8,19 @@ from models import SystemSetting
 
 AI_API_KEY_SETTING = 'ai_api_key'
 ENCRYPTED_VALUE_PREFIX = 'enc:'
+SCENE_MODEL_SETTING_KEYS = {
+    'translate': 'ai_translate_model',
+    'explain': 'ai_explain_model',
+}
 
 
-def get_effective_ai_settings(*, base_url=None, api_key=None, model=None):
+def get_effective_ai_settings(*, base_url=None, api_key=None, model=None, scene='default'):
     config = current_app.config
+    default_model = _resolve_value(
+        override=model,
+        stored=SystemSetting.get('ai_model', ''),
+        fallback=config.get('AI_MODEL', 'gpt-4o-mini'),
+    )
     return {
         'base_url': _resolve_value(
             override=base_url,
@@ -19,10 +28,10 @@ def get_effective_ai_settings(*, base_url=None, api_key=None, model=None):
             fallback=config.get('AI_API_BASE_URL', 'https://api.openai.com'),
         ),
         'api_key': _resolve_api_key(api_key),
-        'model': _resolve_value(
-            override=model,
-            stored=SystemSetting.get('ai_model', ''),
-            fallback=config.get('AI_MODEL', 'gpt-4o-mini'),
+        'model': _resolve_scene_model(
+            scene=scene,
+            explicit_model=model,
+            default_model=default_model,
         ),
     }
 
@@ -64,6 +73,20 @@ def _resolve_value(*, override, stored, fallback):
     if stored:
         return stored
     return fallback
+
+
+def _resolve_scene_model(*, scene, explicit_model, default_model):
+    explicit = (explicit_model or '').strip()
+    if explicit:
+        return explicit
+
+    scene_key = SCENE_MODEL_SETTING_KEYS.get(scene)
+    if scene_key:
+        scene_model = SystemSetting.get(scene_key, '').strip()
+        if scene_model:
+            return scene_model
+
+    return default_model
 
 
 def _encrypt_secret(value):
