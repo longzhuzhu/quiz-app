@@ -166,6 +166,7 @@ async function submitResetPassword() {
       new_password: form.value.new_password,
     })
     toast.success('密码已重置')
+    submitting.value = false
     closeResetModal()
   } catch (e) {
     toast.error(e.response?.data?.error || '重置密码失败')
