@@ -57,6 +57,12 @@
           @click="showMore = false"
           class="block rounded-lg px-4 py-3 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700"
         >系统设置</router-link>
+        <router-link
+          v-if="authStore.isAdmin"
+          to="/admin/users"
+          @click="showMore = false"
+          class="block rounded-lg px-4 py-3 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700"
+        >用户管理</router-link>
         <button
           @click="darkMode.toggle(); showMore = false"
           class="block w-full rounded-lg px-4 py-3 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700"

@@ -67,6 +67,15 @@
                     ]"
                   >系统设置</router-link>
                 </MenuItem>
+                <MenuItem v-slot="{ active }">
+                  <router-link
+                    to="/admin/users"
+                    :class="[
+                      'block w-full text-left px-4 py-2 text-sm',
+                      active ? 'bg-gray-100 dark:bg-slate-700 text-gray-900 dark:text-white' : 'text-gray-700 dark:text-gray-300'
+                    ]"
+                  >用户管理</router-link>
+                </MenuItem>
               </MenuItems>
             </transition>
           </Menu>

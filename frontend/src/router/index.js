@@ -13,6 +13,7 @@ const routes = [
   { path: '/admin/banks', name: 'AdminBanks', component: () => import('../views/AdminBanksView.vue'), meta: { auth: true, admin: true } },
   { path: '/admin/banks/:bankId', name: 'AdminQuestions', component: () => import('../views/AdminQuestionsView.vue'), meta: { auth: true, admin: true } },
   { path: '/admin/settings', name: 'AdminSettings', component: () => import('../views/AdminSettingsView.vue'), meta: { auth: true, admin: true } },
+  { path: '/admin/users', name: 'AdminUsers', component: () => import('../views/AdminUsersView.vue'), meta: { auth: true, admin: true } },
 ]
 
 const router = createRouter({
