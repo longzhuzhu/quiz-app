@@ -30,6 +30,31 @@ def login_user(username, password):
     return token, user
 
 
+def validate_new_password(new_password):
+    if not isinstance(new_password, str):
+        raise ValueError('新密码必须为字符串')
+    if new_password.strip() == '':
+        raise ValueError('新密码不能为空')
+    if len(new_password) < 6:
+        raise ValueError('新密码至少6位')
+
+
+def set_user_password(user, new_password):
+    validate_new_password(new_password)
+    user.password_hash = generate_password_hash(new_password, method='pbkdf2:sha256')
+    return user
+
+
+def change_password(user, current_password, new_password):
+    if not isinstance(current_password, str) or current_password == '':
+        raise ValueError('当前密码错误')
+    if not check_password_hash(user.password_hash, current_password):
+        raise ValueError('当前密码错误')
+    set_user_password(user, new_password)
+    db.session.commit()
+    return user
+
+
 def user_to_dict(user):
     return {
         'id': user.id,

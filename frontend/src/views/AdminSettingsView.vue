@@ -50,7 +50,19 @@
           <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">模型</label>
           <input v-model="form.ai_model" type="text" placeholder="gpt-4o-mini"
             class="mt-1 w-full rounded-card border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-gray-900 dark:text-white focus:border-primary-500 focus:ring-1 focus:ring-primary-500 focus:outline-none" />
-          <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">使用的模型名称</p>
+          <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">系统统一默认模型；当未配置翻译模型或解析模型时，默认使用该模型</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">翻译模型</label>
+          <input v-model="form.ai_translate_model" type="text" placeholder="gpt-5-nano"
+            class="mt-1 w-full rounded-card border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-gray-900 dark:text-white focus:border-primary-500 focus:ring-1 focus:ring-primary-500 focus:outline-none" />
+          <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">用于题目翻译、词汇翻译等场景；留空时默认使用“默认模型”</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">AI 解析模型</label>
+          <input v-model="form.ai_explain_model" type="text" placeholder="gpt-5.4"
+            class="mt-1 w-full rounded-card border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-gray-900 dark:text-white focus:border-primary-500 focus:ring-1 focus:ring-primary-500 focus:outline-none" />
+          <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">用于题目 AI 解析场景；留空时默认使用“默认模型”</p>
         </div>
         <div class="flex gap-3 pt-2">
           <BaseButton @click="save" :loading="saving" :disabled="saving">
@@ -84,6 +96,8 @@ const form = ref({
   ai_api_base_url: '',
   ai_api_key: '',
   ai_model: '',
+  ai_translate_model: '',
+  ai_explain_model: '',
 })
 
 onMounted(async () => {
@@ -93,6 +107,8 @@ onMounted(async () => {
       ai_api_base_url: res.data.ai_api_base_url || '',
       ai_api_key: '',
       ai_model: res.data.ai_model || '',
+      ai_translate_model: res.data.ai_translate_model || '',
+      ai_explain_model: res.data.ai_explain_model || '',
     }
     storedKeyMask.value = res.data.ai_api_key || ''
     hasStoredKey.value = !!res.data.ai_api_key_configured
