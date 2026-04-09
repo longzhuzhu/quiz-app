@@ -114,6 +114,7 @@
           :hide-progress="true"
           :initial-answer="currentInitialAnswer"
           :initial-result="currentInitialResult"
+          :answer-count="currentQuestion?.user_answer_count ?? 0"
           :exam-mode="isExamMode"
           @submit="handleSubmit"
           @next="quizStore.nextQuestion()"
@@ -251,6 +252,10 @@ async function handleSubmit(answer, callback) {
     const hasNext = submitIndex < quizStore.questions.length - 1
 
     const res = await quizStore.submitAnswer(submitQuestionId, answer)
+
+    if (currentQuestion.value && typeof res.user_answer_count === 'number') {
+      currentQuestion.value.user_answer_count = res.user_answer_count
+    }
 
     questionAnswerMap[submitQuestionId] = answer
 
