@@ -3,17 +3,17 @@
     <template v-if="question">
     <!-- 题目信息 -->
     <div class="mb-4 flex items-center justify-between gap-2">
-      <div class="flex min-w-0 items-center gap-2">
-        <span class="text-sm text-gray-500 dark:text-gray-400">
+      <div class="min-w-0">
+        <span class="text-sm text-gray-500 dark:text-gray-400 block truncate">
           第 {{ currentIndex + 1 }}{{ !hideProgress ? ` / ${total}` : '' }} 题
-        </span>
-        <span class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-300">
-          已答 {{ answerCount }} 次
         </span>
       </div>
       <div class="flex items-center gap-2">
         <span v-if="question.question_type === 'multiple'" class="rounded-full bg-amber-100 dark:bg-amber-900/30 px-2.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400">多选</span>
         <span v-else-if="question.question_type === 'truefalse'" class="rounded-full bg-sky-100 dark:bg-sky-900/30 px-2.5 py-0.5 text-xs font-medium text-sky-700 dark:text-sky-400">判断</span>
+        <span class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+          已答 {{ answerCount }} 次
+        </span>
       </div>
     </div>
 
