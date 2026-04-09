@@ -91,8 +91,10 @@ def create_app():
     from routes.jobs import jobs_bp
     from routes.settings import settings_bp
     from routes.vocab import vocab_bp
+    from routes.account import account_bp
 
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
+    app.register_blueprint(account_bp, url_prefix='/api/account')
     app.register_blueprint(banks_bp, url_prefix='/api/banks')
     app.register_blueprint(questions_bp, url_prefix='/api/questions')
     app.register_blueprint(quiz_bp, url_prefix='/api/quiz')
