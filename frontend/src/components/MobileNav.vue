@@ -41,6 +41,11 @@
         class="absolute bottom-full left-0 right-0 mb-0 rounded-t-2xl bg-white dark:bg-slate-800 shadow-lg border-t border-gray-200 dark:border-slate-700 p-4 space-y-2"
       >
         <router-link
+          to="/account"
+          @click="showMore = false"
+          class="block rounded-lg px-4 py-3 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700"
+        >账户设置</router-link>
+        <router-link
           v-if="authStore.isAdmin"
           to="/admin/banks"
           @click="showMore = false"

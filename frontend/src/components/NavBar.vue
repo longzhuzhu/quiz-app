@@ -94,6 +94,15 @@
           >
             <MenuItems class="absolute right-0 mt-2 w-36 rounded-card bg-white dark:bg-slate-800 shadow-lg ring-1 ring-black/5 focus:outline-none overflow-hidden">
               <MenuItem v-slot="{ active }">
+                <router-link
+                  to="/account"
+                  :class="[
+                    'block w-full text-left px-4 py-2 text-sm',
+                    active ? 'bg-gray-100 dark:bg-slate-700 text-gray-900 dark:text-white' : 'text-gray-700 dark:text-gray-300'
+                  ]"
+                >账户设置</router-link>
+              </MenuItem>
+              <MenuItem v-slot="{ active }">
                 <button
                   @click="handleLogout"
                   :class="[
