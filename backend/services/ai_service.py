@@ -6,13 +6,13 @@ from models import db, Question
 from services.settings_service import get_effective_ai_settings
 
 
-def _get_ai_config():
+def _get_ai_config(scene='default'):
     """从数据库读取 AI 配置，回退到环境变量/默认值"""
-    return get_effective_ai_settings()
+    return get_effective_ai_settings(scene=scene)
 
 
-def call_ai_api(messages):
-    ai = _get_ai_config()
+def call_ai_api(messages, scene='default'):
+    ai = _get_ai_config(scene=scene)
     if not ai['api_key']:
         raise ValueError('AI API Key 未配置，请在管理后台设置')
 
@@ -63,7 +63,7 @@ def translate_question(question):
         },
     ]
 
-    result_text = call_ai_api(messages)
+    result_text = call_ai_api(messages, scene='translate')
     result_text = result_text.strip()
     if result_text.startswith('```'):
         result_text = result_text.split('\n', 1)[1]
@@ -101,7 +101,7 @@ def translate_term(term):
         },
     ]
 
-    result_text = call_ai_api(messages)
+    result_text = call_ai_api(messages, scene='translate')
     result_text = result_text.strip()
     if result_text.startswith('```'):
         result_text = result_text.split('\n', 1)[1]
@@ -158,7 +158,7 @@ def batch_translate_terms(terms_data):
         },
     ]
 
-    result_text = call_ai_api(messages)
+    result_text = call_ai_api(messages, scene='translate')
     result_text = result_text.strip()
     if result_text.startswith('```'):
         result_text = result_text.split('\n', 1)[1]
@@ -187,7 +187,7 @@ def explain_question(question):
         },
     ]
 
-    result_text = call_ai_api(messages)
+    result_text = call_ai_api(messages, scene='explain')
     result_text = result_text.strip()
     if result_text.startswith('```'):
         result_text = result_text.split('\n', 1)[1]
