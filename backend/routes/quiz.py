@@ -21,6 +21,24 @@ def _get_user_question_counts(user_id, question_ids):
     return {item.question_id: item.answer_count for item in stats}
 
 
+def _upsert_user_question_stat(user_id, question_id):
+    now = datetime.now(timezone.utc)
+    stat = UserQuestionStat.query.filter_by(user_id=user_id, question_id=question_id).first()
+    if stat:
+        stat.answer_count += 1
+        stat.last_answered_at = now
+    else:
+        stat = UserQuestionStat(
+            user_id=user_id,
+            question_id=question_id,
+            answer_count=1,
+            first_answered_at=now,
+            last_answered_at=now,
+        )
+        db.session.add(stat)
+    return stat.answer_count
+
+
 @quiz_bp.route('/start', methods=['POST'])
 @jwt_required()
 def start_quiz():
@@ -106,6 +124,10 @@ def submit_answer():
     question = Question.query.get_or_404(question_id)
     is_correct = user_answer.strip().upper() == question.correct_answer.strip().upper()
 
+    counted_as_new_attempt = False
+    stat = UserQuestionStat.query.filter_by(user_id=user_id, question_id=question_id).first()
+    user_answer_count = stat.answer_count if stat else 0
+
     if existing:
         old_is_correct = existing.is_correct
         existing.user_answer = user_answer
@@ -130,6 +152,9 @@ def submit_answer():
         if is_correct:
             session.correct_count += 1
 
+        user_answer_count = _upsert_user_question_stat(user_id, question_id)
+        counted_as_new_attempt = True
+
     if not is_correct:
         # Auto-collect wrong answer（保持现有错题累积行为）
         wrong = WrongAnswer.query.filter_by(
@@ -147,13 +172,19 @@ def submit_answer():
 
     # 模拟考试模式不返回正确答案和解析
     if session.mode == 'exam':
-        return jsonify({'submitted': True})
+        return jsonify({
+            'submitted': True,
+            'user_answer_count': user_answer_count,
+            'counted_as_new_attempt': counted_as_new_attempt,
+        })
 
     return jsonify({
         'is_correct': is_correct,
         'correct_answer': question.correct_answer,
         'explanation': question.explanation,
         'explanation_zh': question.explanation_zh,
+        'user_answer_count': user_answer_count,
+        'counted_as_new_attempt': counted_as_new_attempt,
     })
 
 
@@ -256,6 +287,7 @@ def session_detail(session_id):
     questions_out = []
     if not session.is_completed and session.question_ids:
         q_ids = json.loads(session.question_ids)
+        counts = _get_user_question_counts(user_id, q_ids)
         answered_ids = {a.question_id for a in answers}
         all_questions = Question.query.filter(Question.id.in_(q_ids)).all()
         q_map = {q.id: q for q in all_questions}
@@ -271,6 +303,7 @@ def session_detail(session_id):
                     'explanation': q.explanation,
                     'explanation_zh': q.explanation_zh,
                     'answered': qid in answered_ids,
+                    'user_answer_count': counts.get(q.id, 0),
                 })
 
     result = {
