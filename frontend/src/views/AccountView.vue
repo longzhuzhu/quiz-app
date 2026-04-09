@@ -78,6 +78,7 @@ import { computed, onMounted, ref } from 'vue'
 import client from '../api/client'
 import BaseButton from '../components/BaseButton.vue'
 import { useToast } from '../composables/useToast'
+import { validateNewPasswordWithConfirmation } from '../utils/passwordValidation'
 
 const toast = useToast()
 const loadingAccount = ref(true)
@@ -118,16 +119,7 @@ function validateForm() {
   if (!form.value.current_password) {
     return '当前密码不能为空'
   }
-  if (!form.value.new_password) {
-    return '新密码不能为空'
-  }
-  if (form.value.new_password.length < 6) {
-    return '新密码至少 6 位'
-  }
-  if (form.value.new_password !== form.value.confirm_password) {
-    return '两次输入的密码不一致'
-  }
-  return ''
+  return validateNewPasswordWithConfirmation(form.value.new_password, form.value.confirm_password)
 }
 
 async function handleChangePassword() {
