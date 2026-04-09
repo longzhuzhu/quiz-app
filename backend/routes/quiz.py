@@ -303,9 +303,9 @@ def session_detail(session_id):
             'question_type': q.question_type,
             'options': json.loads(q.options),
             'user_answer': a.user_answer,
-            'is_correct': a.is_correct,
         }
         if not is_exam:
+            answer_data['is_correct'] = a.is_correct
             answer_data['correct_answer'] = q.correct_answer
             answer_data['explanation'] = q.explanation
             answer_data['explanation_zh'] = q.explanation_zh

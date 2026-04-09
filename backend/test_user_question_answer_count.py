@@ -355,6 +355,7 @@ def test_exam_mode_session_detail_hides_explanations_and_correct_answers():
         answer = data['answers'][0]
         assert answer['question_id'] == q1_id
         assert 'user_answer' in answer
+        assert 'is_correct' not in answer
         assert 'correct_answer' not in answer
         assert 'explanation' not in answer
         assert 'explanation_zh' not in answer
