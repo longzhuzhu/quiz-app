@@ -222,3 +222,82 @@ def test_wrong_practice_and_session_resume_include_user_answer_count():
     finally:
         os.close(db_fd)
         os.unlink(db_path)
+
+
+def test_wrong_practice_question_order_matches_session_and_resume():
+    app, db_fd, db_path = create_test_app()
+    try:
+        user_id, bank_id, q1_id, q2_id = seed_user_bank_questions(app)
+        client = app.test_client()
+        headers = auth_headers(app, user_id)
+
+        session_data = start_quiz(client, headers, bank_id)
+        session_id = session_data['session']['id']
+
+        first_wrong = client.post(
+            '/api/quiz/answer',
+            json={'session_id': session_id, 'question_id': q2_id, 'user_answer': 'A'},
+            headers=headers,
+        )
+        assert first_wrong.status_code == 200
+
+        second_wrong = client.post(
+            '/api/quiz/answer',
+            json={'session_id': session_id, 'question_id': q1_id, 'user_answer': 'B'},
+            headers=headers,
+        )
+        assert second_wrong.status_code == 200
+
+        wrong_practice = client.post(
+            '/api/wrong/practice',
+            json={'bank_id': bank_id},
+            headers=headers,
+        )
+        assert wrong_practice.status_code == 200
+        wrong_data = wrong_practice.get_json()
+        practice_ids = [item['id'] for item in wrong_data['questions']]
+
+        with app.app_context():
+            wrong_session = QuizSession.query.get(wrong_data['session']['id'])
+            stored_ids = json.loads(wrong_session.question_ids)
+        assert practice_ids == stored_ids
+
+        resumed = client.get(
+            f"/api/quiz/session/{wrong_data['session']['id']}",
+            headers=headers,
+        )
+        assert resumed.status_code == 200
+        resumed_data = resumed.get_json()
+        resume_ids = [item['id'] for item in resumed_data['questions']]
+        assert resume_ids == stored_ids
+    finally:
+        os.close(db_fd)
+        os.unlink(db_path)
+
+
+def test_exam_mode_submit_returns_counts_without_answers():
+    app, db_fd, db_path = create_test_app()
+    try:
+        user_id, bank_id, q1_id, _ = seed_user_bank_questions(app)
+        client = app.test_client()
+        headers = auth_headers(app, user_id)
+
+        exam_session = start_quiz(client, headers, bank_id, mode='exam')
+        exam_session_id = exam_session['session']['id']
+
+        submit = client.post(
+            '/api/quiz/answer',
+            json={'session_id': exam_session_id, 'question_id': q1_id, 'user_answer': 'A'},
+            headers=headers,
+        )
+        assert submit.status_code == 200
+        data = submit.get_json()
+        assert data['submitted'] is True
+        assert data['user_answer_count'] == 1
+        assert data['counted_as_new_attempt'] is True
+        assert 'correct_answer' not in data
+        assert 'explanation' not in data
+        assert 'explanation_zh' not in data
+    finally:
+        os.close(db_fd)
+        os.unlink(db_path)

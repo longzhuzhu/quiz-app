@@ -71,22 +71,24 @@ def practice_wrong():
 
     question_ids = [w.question_id for w in wrongs]
     questions = Question.query.filter(Question.id.in_(question_ids)).all()
+    question_map = {q.id: q for q in questions}
+    ordered_questions = [question_map[qid] for qid in question_ids if qid in question_map]
     counts = _get_user_question_counts(user_id, question_ids)
 
     # Use the first question's bank_id for the session
-    first_bank_id = bank_id or questions[0].bank_id
+    first_bank_id = bank_id or ordered_questions[0].bank_id
     session = QuizSession(
         user_id=user_id,
         bank_id=first_bank_id,
         mode='wrong_practice',
-        total_questions=len(questions),
+        total_questions=len(ordered_questions),
         question_ids=json.dumps(question_ids),
     )
     db.session.add(session)
     db.session.commit()
 
     questions_out = []
-    for q in questions:
+    for q in ordered_questions:
         questions_out.append({
             'id': q.id,
             'question_type': q.question_type,
