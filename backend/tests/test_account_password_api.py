@@ -80,6 +80,20 @@ def test_put_account_password_returns_400_when_current_password_is_wrong(app):
     assert res.get_json()["error"] == "当前密码错误"
 
 
+def test_put_account_password_returns_400_when_current_password_is_null(app):
+    _, token = seed_user_and_token(app)
+    client = app.test_client()
+
+    res = client.put(
+        "/api/account/password",
+        json={"current_password": None, "new_password": "new-password"},
+        headers=auth_headers(token),
+    )
+
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "当前密码错误"
+
+
 def test_put_account_password_success_and_new_password_can_login(app):
     _, token = seed_user_and_token(app)
     client = app.test_client()
