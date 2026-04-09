@@ -14,6 +14,12 @@
 
     <div class="rounded-card-lg bg-white dark:bg-slate-800 shadow-card p-6">
       <div v-if="loading" class="py-8 text-sm text-gray-500 dark:text-gray-400">加载中...</div>
+      <div v-else-if="loadError" class="py-8">
+        <div class="rounded-card border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900/40 dark:bg-rose-900/20 dark:text-rose-300">
+          <p>{{ loadError }}</p>
+          <BaseButton class="mt-3" size="sm" variant="secondary" @click="fetchUsers">重试</BaseButton>
+        </div>
+      </div>
       <div v-else-if="users.length === 0" class="py-8 text-sm text-gray-500 dark:text-gray-400">暂无用户</div>
       <div v-else class="overflow-x-auto">
         <table class="min-w-full text-sm">
@@ -44,7 +50,7 @@
                 </span>
               </td>
               <td class="py-3 text-right">
-                <BaseButton size="sm" variant="secondary" @click="openResetModal(user)">
+                <BaseButton size="sm" variant="secondary" :disabled="submitting" @click="openResetModal(user)">
                   重置密码
                 </BaseButton>
               </td>
@@ -80,7 +86,7 @@
         <p v-if="validationError" class="text-sm text-rose-600 dark:text-rose-400">{{ validationError }}</p>
       </div>
       <template #actions>
-        <BaseButton variant="secondary" @click="closeResetModal">取消</BaseButton>
+        <BaseButton variant="secondary" :disabled="submitting" @click="closeResetModal">取消</BaseButton>
         <BaseButton :loading="submitting" :disabled="submitting" @click="submitResetPassword">
           {{ submitting ? '重置中...' : '确认重置' }}
         </BaseButton>
@@ -96,10 +102,12 @@ import client from '../api/client'
 import BaseButton from '../components/BaseButton.vue'
 import BaseModal from '../components/BaseModal.vue'
 import { useToast } from '../composables/useToast'
+import { validateNewPasswordWithConfirmation } from '../utils/passwordValidation'
 
 const toast = useToast()
 const users = ref([])
 const loading = ref(true)
+const loadError = ref('')
 const submitting = ref(false)
 const showResetModal = ref(false)
 const selectedUser = ref(null)
@@ -111,11 +119,14 @@ const form = ref({
 
 async function fetchUsers() {
   loading.value = true
+  loadError.value = ''
   try {
     const res = await client.get('/admin/users')
     users.value = res.data || []
   } catch (e) {
-    toast.error(e.response?.data?.error || '加载用户失败')
+    loadError.value = e.response?.data?.error || '加载用户失败，请稍后重试'
+    users.value = []
+    toast.error(loadError.value)
   } finally {
     loading.value = false
   }
@@ -128,22 +139,21 @@ function resetForm() {
 }
 
 function openResetModal(user) {
+  if (submitting.value) return
   selectedUser.value = user
   resetForm()
   showResetModal.value = true
 }
 
 function closeResetModal() {
+  if (submitting.value) return
   showResetModal.value = false
   selectedUser.value = null
   resetForm()
 }
 
 function validateResetForm() {
-  if (!form.value.new_password) return '新密码不能为空'
-  if (form.value.new_password.length < 6) return '新密码至少 6 位'
-  if (form.value.new_password !== form.value.confirm_password) return '两次输入的密码不一致'
-  return ''
+  return validateNewPasswordWithConfirmation(form.value.new_password, form.value.confirm_password)
 }
 
 async function submitResetPassword() {
