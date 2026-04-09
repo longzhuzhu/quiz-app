@@ -31,7 +31,9 @@ def login_user(username, password):
 
 
 def validate_new_password(new_password):
-    if new_password is None or str(new_password).strip() == '':
+    if not isinstance(new_password, str):
+        raise ValueError('新密码必须为字符串')
+    if new_password.strip() == '':
         raise ValueError('新密码不能为空')
     if len(new_password) < 6:
         raise ValueError('新密码至少6位')

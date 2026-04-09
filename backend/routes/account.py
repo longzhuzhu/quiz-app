@@ -32,6 +32,8 @@ def update_password():
         return jsonify({'error': '用户不存在或登录已失效'}), 401
 
     data = request.get_json() or {}
+    if not isinstance(data, dict):
+        return jsonify({'error': '请求体必须为 JSON 对象'}), 400
     try:
         change_password(
             user=user,
