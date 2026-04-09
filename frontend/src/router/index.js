@@ -9,6 +9,7 @@ const routes = [
   { path: '/wrong', name: 'WrongAnswers', component: () => import('../views/WrongAnswersView.vue'), meta: { auth: true } },
   { path: '/history', name: 'History', component: () => import('../views/HistoryView.vue'), meta: { auth: true } },
   { path: '/vocabulary', name: 'Vocabulary', component: () => import('../views/VocabularyView.vue'), meta: { auth: true } },
+  { path: '/account', name: 'Account', component: () => import('../views/AccountView.vue'), meta: { auth: true } },
   { path: '/admin/banks', name: 'AdminBanks', component: () => import('../views/AdminBanksView.vue'), meta: { auth: true, admin: true } },
   { path: '/admin/banks/:bankId', name: 'AdminQuestions', component: () => import('../views/AdminQuestionsView.vue'), meta: { auth: true, admin: true } },
   { path: '/admin/settings', name: 'AdminSettings', component: () => import('../views/AdminSettingsView.vue'), meta: { auth: true, admin: true } },
