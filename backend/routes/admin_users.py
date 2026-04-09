@@ -24,7 +24,7 @@ def _require_admin():
     return user, None
 
 
-@admin_users_bp.route('/users', methods=['GET'])
+@admin_users_bp.route('', methods=['GET'])
 @jwt_required()
 def list_users():
     _user, error = _require_admin()
@@ -35,7 +35,7 @@ def list_users():
     return jsonify({'users': [user_to_dict(user) for user in users]})
 
 
-@admin_users_bp.route('/users/<int:user_id>/password', methods=['PUT'])
+@admin_users_bp.route('/<int:user_id>/password', methods=['PUT'])
 @jwt_required()
 def reset_user_password(user_id):
     _user, error = _require_admin()
