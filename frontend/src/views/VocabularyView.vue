@@ -32,13 +32,8 @@
       <div class="mb-4 flex items-center justify-between gap-2 flex-wrap">
         <h2 class="text-lg font-semibold text-gray-800 dark:text-white">专业词汇</h2>
         <div class="flex items-center gap-2">
-          <BaseButton
-            v-if="isAdmin && professionalUntranslatedCount > 0"
-            @click="batchTranslate"
-            :disabled="professionalJob && ['queued', 'running'].includes(professionalJob.status)"
-            size="sm"
-          >
-            {{ professionalJob && ['queued', 'running'].includes(professionalJob.status) ? '后台执行中...' : `批量翻译（${professionalUntranslatedCount}）` }}
+          <BaseButton v-if="isAdmin && professionalUntranslatedCount > 0" @click="batchTranslate" :disabled="translating" size="sm">
+            {{ translating ? '翻译中...' : `批量翻译（${professionalUntranslatedCount}）` }}
           </BaseButton>
           <BaseButton v-if="isAdmin" @click="importIAPP" :disabled="importing" variant="secondary" size="sm">
             {{ importing ? '导入中...' : '从 IAPP 导入' }}
@@ -49,11 +44,9 @@
         </div>
       </div>
 
-      <div
-        v-if="professionalJob && ['queued', 'running', 'failed'].includes(professionalJob.status)"
-        class="mb-4 rounded-card bg-teal-50 dark:bg-teal-900/20 px-4 py-3 text-sm text-teal-700 dark:text-teal-300"
-      >
-        {{ formatJobBannerMessage(professionalJob) }}
+      <!-- 翻译进度 -->
+      <div v-if="translating" class="mb-4 rounded-card bg-teal-50 dark:bg-teal-900/20 px-4 py-3 text-sm text-teal-700 dark:text-teal-300">
+        正在批量翻译，每次 10 个... 剩余 {{ translateRemaining }} 个未翻译
       </div>
 
       <!-- 搜索框 -->
@@ -293,13 +286,30 @@
           <h2 class="text-lg font-semibold text-gray-800 dark:text-white">高频词汇</h2>
           <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">按题库查看导入题目中的高频英文词及中文翻译</p>
         </div>
-        <select
-          v-model="selectedBankId"
-          class="min-w-[220px] rounded-card border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-4 py-2 text-sm text-gray-900 dark:text-gray-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
-        >
-          <option :value="null" disabled>请选择题库</option>
-          <option v-for="bank in banks" :key="bank.id" :value="bank.id">{{ bank.name }}</option>
-        </select>
+        <div class="flex items-center gap-2 flex-wrap">
+          <BaseButton
+            v-if="isAdmin && selectedBankId && frequentUntranslatedCount > 0"
+            size="sm"
+            :disabled="translatingFrequent || loadingFrequent"
+            @click="batchTranslateFrequent"
+          >
+            {{ translatingFrequent ? '翻译中...' : `批量翻译（${frequentUntranslatedCount}）` }}
+          </BaseButton>
+          <select
+            v-model="selectedBankId"
+            class="min-w-[220px] rounded-card border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-4 py-2 text-sm text-gray-900 dark:text-gray-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+          >
+            <option :value="null" disabled>请选择题库</option>
+            <option v-for="bank in banks" :key="bank.id" :value="bank.id">{{ bank.name }}</option>
+          </select>
+        </div>
+      </div>
+
+      <div
+        v-if="translatingFrequent"
+        class="mb-4 rounded-card bg-amber-50 dark:bg-amber-900/20 px-4 py-3 text-sm text-amber-700 dark:text-amber-300"
+      >
+        正在批量翻译高频词汇，每次 100 个... 剩余 {{ frequentTranslateRemaining }} 个未翻译
       </div>
 
       <div v-if="banks.length === 0" class="py-12 text-center text-gray-400 dark:text-gray-500">暂无题库，请先导入题库</div>
@@ -315,6 +325,9 @@
             <div class="text-right">
               <div class="text-sm text-gray-500 dark:text-gray-400">高频词条</div>
               <div class="mt-1 text-2xl font-bold text-amber-600 dark:text-amber-400">{{ frequentTotal }}</div>
+              <div v-if="frequentUntranslatedCount > 0" class="mt-1 text-xs text-amber-600 dark:text-amber-300">
+                仍有 {{ frequentUntranslatedCount }} 个词条待翻译
+              </div>
               <div class="mt-1 text-xs text-gray-400 dark:text-gray-500">仅展示前 {{ frequentTopLimit }} 个高频词</div>
             </div>
           </div>
@@ -332,25 +345,6 @@
           >
             {{ option.label }}
           </button>
-        </div>
-
-        <div class="mb-4 flex items-center justify-between gap-2 flex-wrap">
-          <div class="text-sm text-gray-500 dark:text-gray-400">未翻译词条：{{ frequentUntranslatedCount }}</div>
-          <BaseButton
-            v-if="isAdmin && selectedBankId && frequentUntranslatedCount > 0"
-            size="sm"
-            :disabled="frequentJob && ['queued', 'running'].includes(frequentJob.status)"
-            @click="batchTranslateFrequent"
-          >
-            {{ frequentJob && ['queued', 'running'].includes(frequentJob.status) ? '后台执行中...' : `批量翻译（${frequentUntranslatedCount}）` }}
-          </BaseButton>
-        </div>
-
-        <div
-          v-if="frequentJob && ['queued', 'running', 'failed'].includes(frequentJob.status)"
-          class="mb-4 rounded-card bg-amber-50 dark:bg-amber-900/20 px-4 py-3 text-sm text-amber-700 dark:text-amber-300"
-        >
-          {{ formatJobBannerMessage(frequentJob) }}
         </div>
 
         <div v-if="frequentWords.length === 0" class="py-12 text-center text-gray-400 dark:text-gray-500">当前题库暂无高频词，请先重新导入题库生成词频</div>
@@ -465,8 +459,6 @@ import { useAuthStore } from '../stores/auth'
 import { useBankStore } from '../stores/bank'
 import client from '../api/client'
 import { useToast } from '../composables/useToast'
-import { useBackgroundJob } from '../composables/useBackgroundJob'
-import { formatJobBannerMessage, getFailedJobMessage } from '../utils/jobStatus'
 import BaseButton from '../components/BaseButton.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 
@@ -476,11 +468,6 @@ const authStore = useAuthStore()
 const bankStore = useBankStore()
 const isAdmin = authStore.isAdmin
 const toast = useToast()
-
-const professionalJobState = useBackgroundJob()
-const professionalJob = professionalJobState.job
-const frequentJobState = useBackgroundJob()
-const frequentJob = frequentJobState.job
 
 const activeTab = ref('professional')
 const stats = ref({})
@@ -493,7 +480,6 @@ const frequentMasteredFilter = ref('all')
 const banks = ref([])
 const selectedBankId = ref(null)
 const frequentWords = ref([])
-const frequentUntranslatedCount = ref(0)
 const loadingPro = ref(false)
 const loadingPersonal = ref(false)
 const loadingFrequent = ref(false)
@@ -502,8 +488,13 @@ const frequentPage = ref(1)
 const frequentPerPage = ref(20)
 const frequentTotalPages = ref(1)
 const frequentTopLimit = ref(5000)
+const frequentUntranslatedCount = ref(0)
 const showAddForm = ref(false)
 const importing = ref(false)
+const translating = ref(false)
+const translateRemaining = ref(0)
+const translatingFrequent = ref(false)
+const frequentTranslateRemaining = ref(0)
 const searchQuery = ref('')
 const expandedIds = reactive(new Set())
 const newWord = reactive({ term: '', term_zh: '', definition: '', definition_zh: '' })
@@ -512,8 +503,6 @@ const personalActiveLetter = ref('')
 const showBackTop = ref(false)
 const proListRef = ref(null)
 const personalListRef = ref(null)
-let frequentListRequestVersion = 0
-let frequentSummaryRequestVersion = 0
 
 // 删除确认状态
 const deleteConfirm = reactive({ open: false, id: null, type: '', term: '', bankId: null })
@@ -535,12 +524,6 @@ function setLetterRef(tab, letter, el) {
 }
 
 // 获取首字母
-function wordNeedsTranslation(word) {
-  if (!word?.term_zh?.trim()) return true
-  if (word?.definition?.trim() && !word?.definition_zh?.trim()) return true
-  return false
-}
-
 function getFirstLetter(term) {
   if (!term) return '#'
   const ch = term.charAt(0).toUpperCase()
@@ -614,6 +597,16 @@ function resetForm() {
 
 function scrollToTop() {
   window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+function wordNeedsTranslation(word) {
+  if (!word.term_zh?.trim()) {
+    return true
+  }
+  if (word.definition?.trim() && !word.definition_zh?.trim()) {
+    return true
+  }
+  return false
 }
 
 // 监听滚动，更新当前字母高亮和回到顶部按钮
@@ -690,96 +683,36 @@ async function fetchFrequent() {
     return
   }
 
-  const bankId = selectedBankId.value
-  const page = frequentPage.value
-  const masteredFilter = frequentMasteredFilter.value
-  const requestVersion = ++frequentListRequestVersion
   loadingFrequent.value = true
   try {
     const res = await client.get('/vocab/frequent', {
       params: {
-        bank_id: bankId,
-        page,
+        bank_id: selectedBankId.value,
+        page: frequentPage.value,
         per_page: frequentPerPage.value,
-        ...buildMasteredFilterParams(masteredFilter),
+        ...buildMasteredFilterParams(frequentMasteredFilter.value),
       },
     })
-
-    if (
-      requestVersion !== frequentListRequestVersion ||
-      bankId !== selectedBankId.value ||
-      page !== frequentPage.value ||
-      masteredFilter !== frequentMasteredFilter.value
-    ) {
-      return
-    }
-
     const nextItems = res.data.items || []
     const nextTotal = res.data.summary?.total_terms || 0
     const nextTotalPages = res.data.pagination?.total_pages || 1
-    if (nextItems.length === 0 && page > 1 && nextTotalPages < page) {
+    if (nextItems.length === 0 && frequentPage.value > 1 && nextTotalPages < frequentPage.value) {
       frequentPage.value = nextTotalPages
       return
     }
     frequentWords.value = nextItems
     frequentTotal.value = nextTotal
     frequentTopLimit.value = res.data.summary?.top_terms_limit || 5000
+    frequentUntranslatedCount.value = res.data.summary?.untranslated_terms || 0
     frequentTotalPages.value = nextTotalPages
   } catch (e) {
-    if (
-      requestVersion !== frequentListRequestVersion ||
-      bankId !== selectedBankId.value ||
-      page !== frequentPage.value ||
-      masteredFilter !== frequentMasteredFilter.value
-    ) {
-      return
-    }
-
     frequentWords.value = []
     frequentTotal.value = 0
     frequentTotalPages.value = 1
+    frequentUntranslatedCount.value = 0
     toast.error(e.response?.data?.error || '加载高频词失败')
   } finally {
-    if (
-      requestVersion === frequentListRequestVersion &&
-      bankId === selectedBankId.value &&
-      page === frequentPage.value &&
-      masteredFilter === frequentMasteredFilter.value
-    ) {
-      loadingFrequent.value = false
-    }
-  }
-}
-
-async function refreshFrequentTranslationCount(bankId = selectedBankId.value) {
-  if (!bankId) {
-    frequentUntranslatedCount.value = 0
-    return 0
-  }
-
-  const requestVersion = ++frequentSummaryRequestVersion
-  try {
-    const res = await client.get('/vocab/frequent', {
-      params: {
-        bank_id: bankId,
-        page: 1,
-        per_page: 1,
-      },
-    })
-
-    if (requestVersion !== frequentSummaryRequestVersion || bankId !== selectedBankId.value) {
-      return null
-    }
-
-    frequentUntranslatedCount.value = res.data.summary?.untranslated_terms || 0
-    return frequentUntranslatedCount.value
-  } catch {
-    if (requestVersion !== frequentSummaryRequestVersion || bankId !== selectedBankId.value) {
-      return null
-    }
-
-    frequentUntranslatedCount.value = 0
-    return 0
+    loadingFrequent.value = false
   }
 }
 
@@ -839,7 +772,7 @@ async function addWord(type) {
     if (type === 'professional') {
       professionalWords.value.unshift(res.data)
       professionalWords.value.sort((a, b) => a.term.localeCompare(b.term))
-      professionalUntranslatedCount.value += wordNeedsTranslation(res.data) ? 1 : 0
+      professionalUntranslatedCount.value += res.data.term_zh ? 0 : 1
     } else {
       personalWords.value.unshift(res.data)
     }
@@ -872,14 +805,14 @@ async function doDeleteWord() {
           term,
         },
       })
-      await Promise.all([fetchFrequent(), refreshFrequentTranslationCount(bankId)])
+      await fetchFrequent()
     } else {
       const url = type === 'professional' ? `/vocab/professional/${id}` : `/vocab/personal/${id}`
       await client.delete(url)
       if (type === 'professional') {
         const removedWord = professionalWords.value.find(w => w.id === id)
         professionalWords.value = professionalWords.value.filter(w => w.id !== id)
-        if (removedWord && wordNeedsTranslation(removedWord)) {
+        if (removedWord && !removedWord.term_zh) {
           professionalUntranslatedCount.value = Math.max(professionalUntranslatedCount.value - 1, 0)
         }
       } else {
@@ -927,111 +860,45 @@ async function doImportIAPP() {
 }
 
 async function batchTranslate() {
+  translating.value = true
+  translateRemaining.value = professionalUntranslatedCount.value
   try {
-    const result = await professionalJobState.createJob(
-      { job_type: 'professional_vocab_translate' },
-      {
-        onFinished: async (job) => {
-          await fetchProfessional()
-          await refreshProfessionalTranslationCount()
-          if (job?.status === 'completed') {
-            toast.success('任务完成，已自动刷新未翻译数量')
-          } else if (job?.status === 'failed') {
-            toast.error(getFailedJobMessage(job))
-          }
-        },
-      },
-    )
-
-    if (!result) return
-
-    if (result.result === 'no_work') {
-      toast.success(result.message)
-      await fetchProfessional()
-      await refreshProfessionalTranslationCount()
-      return
+    while (true) {
+      const res = await client.post('/vocab/professional/batch-translate')
+      translateRemaining.value = res.data.remaining
+      if (res.data.remaining <= 0) break
     }
-    if (result.result === 'created') {
-      toast.success('后台异步翻译已启动，刷新页面不会中断')
-    } else if (result.result === 'existing') {
-      toast.success(result.message || '已复用现有后台任务，刷新页面不会中断')
-    }
+    toast.success('批量翻译完成')
+    await fetchProfessional()
+    await refreshProfessionalTranslationCount()
   } catch (e) {
-    toast.error(e.response?.data?.error || '创建后台翻译任务失败')
+    toast.error(e.response?.data?.error || '翻译出错，已保存已完成部分')
+    await fetchProfessional()
+    await refreshProfessionalTranslationCount()
+  } finally {
+    translating.value = false
   }
-}
-
-async function restoreProfessionalJob() {
-  try {
-    await professionalJobState.restoreActiveJob(
-      { job_type: 'professional_vocab_translate' },
-      {
-        onFinished: async (job) => {
-          await fetchProfessional()
-          await refreshProfessionalTranslationCount()
-          if (job?.status === 'failed') {
-            toast.error(getFailedJobMessage(job))
-          }
-        },
-      },
-    )
-  } catch {}
 }
 
 async function batchTranslateFrequent() {
   if (!selectedBankId.value) return
 
+  translatingFrequent.value = true
+  frequentTranslateRemaining.value = frequentUntranslatedCount.value
   try {
-    const result = await frequentJobState.createJob(
-      { job_type: 'bank_frequent_translate', bank_id: selectedBankId.value },
-      {
-        onFinished: async (job) => {
-          await Promise.all([fetchFrequent(), refreshFrequentTranslationCount()])
-          if (job?.status === 'completed') {
-            toast.success('任务完成，已自动刷新未翻译数量')
-          } else if (job?.status === 'failed') {
-            toast.error(getFailedJobMessage(job))
-          }
-        },
-      },
-    )
-
-    if (!result) return
-
-    if (result.result === 'no_work') {
-      toast.success(result.message)
-      await Promise.all([fetchFrequent(), refreshFrequentTranslationCount()])
-      return
+    while (true) {
+      const res = await client.post(`/banks/${selectedBankId.value}/translate-frequencies`)
+      frequentTranslateRemaining.value = res.data.remaining
+      if (res.data.remaining <= 0) break
     }
-    if (result.result === 'created') {
-      toast.success('高频词后台翻译已启动，刷新页面不会中断')
-    } else if (result.result === 'existing') {
-      toast.success(result.message || '已复用现有后台任务，刷新页面不会中断')
-    }
+    toast.success('高频词汇翻译完成')
+    await fetchFrequent()
   } catch (e) {
-    toast.error(e.response?.data?.error || '创建高频词后台任务失败')
+    toast.error(e.response?.data?.error || '高频词汇翻译出错，已保存已完成部分')
+    await fetchFrequent()
+  } finally {
+    translatingFrequent.value = false
   }
-}
-
-async function restoreFrequentJob() {
-  if (!selectedBankId.value) {
-    frequentJobState.clearJob()
-    return
-  }
-
-  try {
-    await frequentJobState.restoreActiveJob(
-      { job_type: 'bank_frequent_translate', bank_id: selectedBankId.value },
-      {
-        onFinished: async (job) => {
-          await Promise.all([fetchFrequent(), refreshFrequentTranslationCount()])
-          if (job?.status === 'failed') {
-            toast.error(getFailedJobMessage(job))
-          }
-        },
-      },
-    )
-  } catch {}
 }
 
 watch(activeTab, () => {
@@ -1041,24 +908,12 @@ watch(activeTab, () => {
 watch(professionalMasteredFilter, fetchProfessional)
 watch(personalMasteredFilter, fetchPersonal)
 
-watch(selectedBankId, async () => {
-  if (!selectedBankId.value) {
-    frequentJobState.clearJob()
-    await fetchFrequent()
-    await refreshFrequentTranslationCount()
-    return
-  }
-
-  const restorePromise = restoreFrequentJob()
-  const countPromise = refreshFrequentTranslationCount()
-
+watch(selectedBankId, () => {
   if (frequentPage.value !== 1) {
     frequentPage.value = 1
-    await Promise.all([restorePromise, countPromise])
     return
   }
-
-  await Promise.all([fetchFrequent(), restorePromise, countPromise])
+  fetchFrequent()
 })
 
 watch(frequentMasteredFilter, () => {
@@ -1073,11 +928,10 @@ watch(frequentPage, fetchFrequent)
 
 onMounted(async () => {
   await fetchBanks()
-  await fetchStats()
-  await fetchProfessional()
-  await refreshProfessionalTranslationCount()
-  await fetchPersonal()
-  await restoreProfessionalJob()
+  fetchStats()
+  fetchProfessional()
+  refreshProfessionalTranslationCount()
+  fetchPersonal()
   window.addEventListener('scroll', onScroll, { passive: true })
 })
 
