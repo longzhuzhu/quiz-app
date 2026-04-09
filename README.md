@@ -55,7 +55,7 @@ AI_MODEL=gpt-4o-mini
 > AI 相关配置为可选项。不配置时，翻译和解析功能不可用，其他功能正常使用。
 > AI 配置也可在启动后通过管理后台页面修改，无需重启服务。
 
-### 3. 启动后端
+### 3. 启动后端 API
 
 ```bash
 pip install -r backend/requirements.txt
@@ -64,7 +64,15 @@ python run.py
 
 后端默认运行在 `http://localhost:5003`，首次启动会自动创建数据库。
 
-### 4. 启动前端
+### 4. 启动后台任务 worker
+
+```bash
+bash scripts/start-worker.sh
+```
+
+后台 worker 负责执行批量翻译、导入后自动创建的高频词翻译等异步任务。任务状态会持久化到数据库，**刷新页面或关闭浏览器不会中断任务**；失败任务会自动重试，最多 3 次后进入失败终态。默认以 2 个并发槽位消费任务，不同任务作用域可并行执行。
+
+### 5. 启动前端
 
 ```bash
 cd frontend
@@ -74,7 +82,7 @@ npm run dev
 
 前端开发服务器会自动代理 `/api` 请求到后端。
 
-### 5. 访问应用
+### 6. 访问应用
 
 打开浏览器访问前端开发服务器地址（默认 `http://localhost:5173`）。
 
@@ -82,48 +90,89 @@ npm run dev
 
 ## 生产部署
 
-构建前端静态文件：
+推荐把应用部署为：
+
+- `quiz-app.service`：Web 服务
+- `quiz-app-worker.service`：后台任务 worker
+- nginx / Cloudflare：反向代理到 `127.0.0.1:5003`
+
+正式部署文档见：
+
+- [`docs/deployment.md`](docs/deployment.md)
+
+如果只想快速手动验证生产环境，可执行：
 
 ```bash
-cd frontend
-npm run build
+cd frontend && npm run build
+cd ..
+bash scripts/start-prod.sh
+bash scripts/start-worker.sh
 ```
 
-Flask 会自动托管 `frontend/dist/` 目录，直接访问 `http://localhost:5003` 即可。
+## 后台任务说明
 
-## 开机自启动（systemd）
+- 当前后台任务由 `backend/workers/job_worker.py` 消费，启动方式：`bash scripts/start-worker.sh`
+- 典型场景包括：专业词汇批量翻译、按题库执行高频词翻译、题目导入成功后自动创建高频词翻译任务
+- 任务进度会写入数据库，前端轮询的是任务状态而不是直接长循环调用批量翻译接口
+- 任务失败会自动重试，最多 3 次；达到上限后进入失败终态，可在页面上再次触发，仅继续处理剩余未完成数据
 
-项目仓库已提供生产启动脚本 [`scripts/start-prod.sh`](/home/ubuntu/github/quiz-app/scripts/start-prod.sh) 和安装脚本 [`scripts/install-systemd-service.sh`](/home/ubuntu/github/quiz-app/scripts/install-systemd-service.sh)。
+## systemd 部署方式
 
-推荐流程：
+项目支持两种 systemd 部署方式：
+
+### 1. 推荐：user systemd
+
+适合当前用户直接维护代码和服务进程的场景。特点：
+
+- 不要求 root 常驻运行应用进程
+- 更适合个人 VPS / 单用户主机
+- 配合 `loginctl enable-linger $USER` 可实现开机自动拉起
+
+管理命令示例：
 
 ```bash
-cp .env.example .env
-pip install -r backend/requirements.txt
-cd frontend && npm install
-cd /home/ubuntu/github/quiz-app
+systemctl --user status quiz-app
+systemctl --user status quiz-app-worker
+systemctl --user restart quiz-app
+systemctl --user restart quiz-app-worker
+journalctl --user -u quiz-app -f
+journalctl --user -u quiz-app-worker -f
+```
+
+### 2. 可选：系统级 systemd
+
+项目仓库已提供安装脚本 `scripts/install-systemd-service.sh`，会把服务安装到 `/etc/systemd/system/`：
+
+```bash
 sudo bash scripts/install-systemd-service.sh
 ```
 
 说明：
 
-- 服务名默认是 `quiz-app.service`
+- Web 服务名默认是 `quiz-app.service`
+- Worker 服务名默认是 `quiz-app-worker.service`
+- 安装脚本会同时执行 `systemctl enable --now quiz-app.service` 和 `systemctl enable --now quiz-app-worker.service`
 - 默认监听 `0.0.0.0:5003`
 - 后端优先使用 `waitress` 启动，依赖已写入 `backend/requirements.txt`
 - 服务启动时会检查 `frontend/dist/`，缺失或过期时自动执行 `npm run build`
-- 如需自定义端口或服务名，可在执行安装脚本时传入环境变量，例如：
+- worker 默认以 2 个并发槽位运行；可通过 `JOB_WORKER_CONCURRENCY` 调整
+
+如需自定义端口或服务名，可在执行安装脚本时传入环境变量，例如：
 
 ```bash
 sudo SERVICE_NAME=quiz-app APP_PORT=5003 bash scripts/install-systemd-service.sh
 ```
 
-常用管理命令：
+系统级服务管理命令：
 
 ```bash
 sudo systemctl status quiz-app
+sudo systemctl status quiz-app-worker
 sudo systemctl restart quiz-app
+sudo systemctl restart quiz-app-worker
 sudo systemctl stop quiz-app
 sudo journalctl -u quiz-app -f
+sudo journalctl -u quiz-app-worker -f
 ```
 
 ## 项目结构
@@ -135,7 +184,7 @@ quiz-app/
 ├── backend/
 │   ├── app.py                  # Flask 应用工厂
 │   ├── config.py               # 配置管理
-│   ├── models.py               # 数据模型（8 个表）
+│   ├── models.py               # 数据模型（13 个表）
 │   ├── requirements.txt        # Python 依赖
 │   ├── routes/                 # API 蓝图
 │   │   ├── auth.py             #   认证（注册/登录）

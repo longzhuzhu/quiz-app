@@ -14,8 +14,13 @@ from models import (
     BankWordExclusion,
 )
 from services.import_service import MIN_FREQUENCY, TOP_FREQUENT_TERMS_LIMIT
+from services.job_service import list_bank_frequent_terms, text_missing, vocabulary_needs_translation
 
 vocab_bp = Blueprint('vocab', __name__)
+
+
+def word_needs_translation(word):
+    return vocabulary_needs_translation(word)
 
 
 @vocab_bp.route('/professional', methods=['GET'])
@@ -218,10 +223,10 @@ def batch_translate_professional():
     from services.ai_service import batch_translate_vocab
 
     # 查询所有未翻译的专业词汇
-    untranslated = Vocabulary.query.filter(
-        Vocabulary.is_system == True,
-        Vocabulary.term_zh.is_(None)
-    ).order_by(Vocabulary.term).all()
+    untranslated = [
+        word for word in Vocabulary.query.filter(Vocabulary.is_system.is_(True)).order_by(Vocabulary.term).all()
+        if word_needs_translation(word)
+    ]
 
     if not untranslated:
         return jsonify({'message': '所有词汇已翻译', 'translated': 0, 'remaining': 0})
@@ -290,7 +295,6 @@ def list_frequent():
     page = max(1, page)
     per_page = max(1, min(per_page, 100))
 
-    excluded_terms = _get_excluded_term_set(bank_id)
     progress_by_term = _get_bank_word_progress_map(user.id, bank_id)
     mastered_filter = request.args.get('mastered')
     mastered_value = None
@@ -298,13 +302,7 @@ def list_frequent():
         mastered_value = _parse_bool_arg(mastered_filter)
         if mastered_value is None:
             return jsonify({'error': 'mastered 参数无效'}), 400
-    frequent_query = BankWordFrequency.query.filter_by(bank_id=bank_id)
-    if excluded_terms:
-        frequent_query = frequent_query.filter(~BankWordFrequency.term.in_(excluded_terms))
-    top_terms = frequent_query.order_by(
-        BankWordFrequency.frequency.desc(),
-        BankWordFrequency.term.asc(),
-    ).limit(TOP_FREQUENT_TERMS_LIMIT).all()
+    top_terms = list_bank_frequent_terms(bank_id)
     visible_terms = top_terms
     if mastered_value is not None:
         visible_terms = [
@@ -312,6 +310,7 @@ def list_frequent():
             if progress_by_term.get(item.term, False) is mastered_value
         ]
 
+    untranslated_terms = sum(1 for item in visible_terms if text_missing(item.term_zh))
     total_terms = len(visible_terms)
     total_pages = max(1, ceil(total_terms / per_page)) if total_terms else 1
     start = (page - 1) * per_page
@@ -322,6 +321,7 @@ def list_frequent():
         'bank': {'id': bank.id, 'name': bank.name},
         'summary': {
             'total_terms': total_terms,
+            'untranslated_terms': untranslated_terms,
             'min_frequency': MIN_FREQUENCY,
             'top_terms_limit': TOP_FREQUENT_TERMS_LIMIT,
         },

@@ -87,6 +87,50 @@ def test_save_ai_settings_encrypts_key_and_masks_response(app):
     assert body["ai_api_key"].startswith("sk-")
 
 
+def test_get_ai_settings_returns_scene_model_fields(app):
+    token = create_admin_token(app)
+    client = app.test_client()
+
+    with app.app_context():
+        SystemSetting.set("ai_api_base_url", "https://gateway.example.com")
+        SystemSetting.set("ai_model", "gpt-5.4")
+        SystemSetting.set("ai_translate_model", "gpt-5-nano")
+        SystemSetting.set("ai_explain_model", "gpt-5.4")
+
+    res = client.get(
+        "/api/settings/ai",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["ai_translate_model"] == "gpt-5-nano"
+    assert body["ai_explain_model"] == "gpt-5.4"
+
+
+def test_save_ai_settings_persists_scene_models(app):
+    token = create_admin_token(app)
+    client = app.test_client()
+
+    res = client.put(
+        "/api/settings/ai",
+        json={
+            "ai_api_base_url": "https://api.example.com",
+            "ai_api_key": "sk-test-secret-12345678",
+            "ai_model": "gpt-5.4",
+            "ai_translate_model": "gpt-5-nano",
+            "ai_explain_model": "gpt-5.4",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert res.status_code == 200
+
+    with app.app_context():
+        assert SystemSetting.get("ai_translate_model") == "gpt-5-nano"
+        assert SystemSetting.get("ai_explain_model") == "gpt-5.4"
+
+
 def test_save_ai_settings_keeps_existing_key_when_payload_key_is_blank_and_test_uses_stored_key(app, monkeypatch):
     token = create_admin_token(app)
     client = app.test_client()
@@ -110,7 +154,9 @@ def test_save_ai_settings_keeps_existing_key_when_payload_key_is_blank_and_test_
         json={
             "ai_api_base_url": "https://gateway.example.com",
             "ai_api_key": "",
-            "ai_model": "gpt-4.1-mini",
+            "ai_model": "gpt-5.4",
+            "ai_translate_model": "gpt-5-nano",
+            "ai_explain_model": "gpt-5.4",
         },
         headers={"Authorization": f"Bearer {token}"},
     )
@@ -137,7 +183,9 @@ def test_save_ai_settings_keeps_existing_key_when_payload_key_is_blank_and_test_
         json={
             "ai_api_base_url": "https://gateway.example.com",
             "ai_api_key": "",
-            "ai_model": "gpt-4.1-mini",
+            "ai_model": "gpt-5.4",
+            "ai_translate_model": "gpt-5-nano",
+            "ai_explain_model": "gpt-5.4",
         },
         headers={"Authorization": f"Bearer {token}"},
     )
@@ -146,6 +194,7 @@ def test_save_ai_settings_keeps_existing_key_when_payload_key_is_blank_and_test_
     assert test_res.get_json()["success"] is True
     assert captured["url"] == "https://gateway.example.com/v1/chat/completions"
     assert captured["headers"]["Authorization"] == "Bearer sk-stored-secret-keepme"
+    assert captured["json"]["model"] == "gpt-5.4"
 
 
 def test_get_ai_key_no_longer_returns_plaintext_secret(app):
