@@ -44,6 +44,8 @@ def set_user_password(user, new_password):
 
 
 def change_password(user, current_password, new_password):
+    if not isinstance(current_password, str) or current_password == '':
+        raise ValueError('当前密码错误')
     if not check_password_hash(user.password_hash, current_password):
         raise ValueError('当前密码错误')
     set_user_password(user, new_password)
