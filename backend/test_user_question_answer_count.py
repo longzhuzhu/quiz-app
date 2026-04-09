@@ -1,15 +1,16 @@
 import json
 import os
-import sqlite3
 import sys
 import tempfile
 
 from flask import Flask
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager, create_access_token
+from sqlalchemy import inspect
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 
+from app import create_app
 from models import db, User, Question, QuestionBank
 from routes.auth import auth_bp
 from routes.quiz import quiz_bp
@@ -96,5 +97,24 @@ def test_start_quiz_returns_zero_user_answer_count_for_new_user():
         data = response.get_json()
         assert [question['user_answer_count'] for question in data['questions']] == [0, 0]
     finally:
+        os.close(db_fd)
+        os.unlink(db_path)
+
+
+def test_create_app_ensures_user_question_stats_schema():
+    db_fd, db_path = tempfile.mkstemp(suffix='.db')
+    database_url = f'sqlite:///{db_path}'
+    original_database_url = os.environ.get('DATABASE_URL')
+    os.environ['DATABASE_URL'] = database_url
+    try:
+        app = create_app()
+        with app.app_context():
+            inspector = inspect(db.engine)
+            assert 'user_question_stats' in inspector.get_table_names()
+    finally:
+        if original_database_url is None:
+            os.environ.pop('DATABASE_URL', None)
+        else:
+            os.environ['DATABASE_URL'] = original_database_url
         os.close(db_fd)
         os.unlink(db_path)
