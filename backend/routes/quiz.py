@@ -69,6 +69,7 @@ def start_quiz():
     bank_id = data['bank_id']
     mode = data.get('mode', 'sequential')
     question_count = data.get('question_count')
+    is_exam = mode == 'exam'
 
     query = Question.query.filter_by(bank_id=bank_id)
     if mode in ('random', 'exam'):
@@ -98,16 +99,18 @@ def start_quiz():
 
     questions_out = []
     for q in questions:
-        questions_out.append({
+        question_data = {
             'id': q.id,
             'question_type': q.question_type,
             'content': q.content,
             'content_zh': q.content_zh,
             'options': json.loads(q.options),
-            'explanation': q.explanation,
-            'explanation_zh': q.explanation_zh,
             'user_answer_count': counts.get(q.id, 0),
-        })
+        }
+        if not is_exam:
+            question_data['explanation'] = q.explanation
+            question_data['explanation_zh'] = q.explanation_zh
+        questions_out.append(question_data)
 
     return jsonify({
         'session': {
@@ -287,23 +290,26 @@ def session_detail(session_id):
     session = QuizSession.query.get_or_404(session_id)
     if session.user_id != user_id:
         return jsonify({'error': '无权限'}), 403
+    is_exam = session.mode == 'exam'
 
     answers = QuizAnswer.query.filter_by(session_id=session_id).all()
     answers_out = []
     for a in answers:
         q = a.question
-        answers_out.append({
+        answer_data = {
             'question_id': a.question_id,
             'question_content': q.content,
             'question_content_zh': q.content_zh,
             'question_type': q.question_type,
             'options': json.loads(q.options),
             'user_answer': a.user_answer,
-            'correct_answer': q.correct_answer,
             'is_correct': a.is_correct,
-            'explanation': q.explanation,
-            'explanation_zh': q.explanation_zh,
-        })
+        }
+        if not is_exam:
+            answer_data['correct_answer'] = q.correct_answer
+            answer_data['explanation'] = q.explanation
+            answer_data['explanation_zh'] = q.explanation_zh
+        answers_out.append(answer_data)
 
     # 未完成的会话返回完整题目列表，用于页面刷新后恢复答题
     questions_out = []
@@ -316,17 +322,19 @@ def session_detail(session_id):
         for qid in q_ids:
             q = q_map.get(qid)
             if q:
-                questions_out.append({
+                question_data = {
                     'id': q.id,
                     'question_type': q.question_type,
                     'content': q.content,
                     'content_zh': q.content_zh,
                     'options': json.loads(q.options),
-                    'explanation': q.explanation,
-                    'explanation_zh': q.explanation_zh,
                     'answered': qid in answered_ids,
                     'user_answer_count': counts.get(q.id, 0),
-                })
+                }
+                if not is_exam:
+                    question_data['explanation'] = q.explanation
+                    question_data['explanation_zh'] = q.explanation_zh
+                questions_out.append(question_data)
 
     result = {
         'session': {
