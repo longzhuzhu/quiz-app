@@ -32,7 +32,7 @@ def list_users():
         return error
 
     users = User.query.order_by(User.id.asc()).all()
-    return jsonify({'users': [user_to_dict(user) for user in users]})
+    return jsonify([user_to_dict(user) for user in users])
 
 
 @admin_users_bp.route('/<int:user_id>/password', methods=['PUT'])
@@ -56,4 +56,4 @@ def reset_user_password(user_id):
         return jsonify({'error': str(exc)}), 400
 
     db.session.commit()
-    return jsonify({'message': '密码重置成功'})
+    return jsonify({'message': '密码已重置'})
