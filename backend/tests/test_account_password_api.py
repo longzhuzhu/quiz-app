@@ -113,3 +113,31 @@ def test_put_account_password_success_and_new_password_can_login(app):
         new_token, user = login_user("demo", "new-password")
         assert new_token
         assert user.username == "demo"
+
+
+def test_put_account_password_returns_400_when_payload_is_json_array(app):
+    _, token = seed_user_and_token(app)
+    client = app.test_client()
+
+    res = client.put(
+        "/api/account/password",
+        json=["current_password", "old-password"],
+        headers=auth_headers(token),
+    )
+
+    assert res.status_code == 400
+    assert "error" in res.get_json()
+
+
+def test_put_account_password_returns_400_when_new_password_is_not_string(app):
+    _, token = seed_user_and_token(app)
+    client = app.test_client()
+
+    res = client.put(
+        "/api/account/password",
+        json={"current_password": "old-password", "new_password": 123456},
+        headers=auth_headers(token),
+    )
+
+    assert res.status_code == 400
+    assert "error" in res.get_json()
