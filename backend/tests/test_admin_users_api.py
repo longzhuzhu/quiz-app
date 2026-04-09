@@ -76,8 +76,8 @@ def test_admin_can_get_user_list(app):
 
     assert res.status_code == 200
     body = res.get_json()
-    assert "users" in body
-    usernames = {user["username"] for user in body["users"]}
+    assert isinstance(body, list)
+    usernames = {user["username"] for user in body}
     assert usernames == {"admin", "user1", "user2"}
 
 
@@ -92,7 +92,7 @@ def test_admin_can_reset_target_user_password(app):
     )
 
     assert res.status_code == 200
-    assert res.get_json() == {"message": "密码重置成功"}
+    assert res.get_json() == {"message": "密码已重置"}
 
     with app.app_context():
         user = db.session.get(User, seeded["normal_id"])
