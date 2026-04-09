@@ -12,7 +12,13 @@ from services.settings_service import (
 
 settings_bp = Blueprint('settings', __name__)
 
-AI_SETTING_KEYS = ['ai_api_base_url', 'ai_api_key', 'ai_model']
+AI_SETTING_KEYS = [
+    'ai_api_base_url',
+    'ai_api_key',
+    'ai_model',
+    'ai_translate_model',
+    'ai_explain_model',
+]
 
 
 @settings_bp.route('/ai', methods=['GET'])
@@ -27,6 +33,8 @@ def get_ai_settings():
         'ai_api_key': get_masked_effective_ai_api_key(),
         'ai_api_key_configured': has_effective_ai_api_key(),
         'ai_model': SystemSetting.get('ai_model', ''),
+        'ai_translate_model': SystemSetting.get('ai_translate_model', ''),
+        'ai_explain_model': SystemSetting.get('ai_explain_model', ''),
     })
 
 
@@ -45,6 +53,10 @@ def update_ai_settings():
         set_encrypted_ai_api_key(api_key)
     if 'ai_model' in data:
         SystemSetting.set('ai_model', data['ai_model'].strip())
+    if 'ai_translate_model' in data:
+        SystemSetting.set('ai_translate_model', data['ai_translate_model'].strip())
+    if 'ai_explain_model' in data:
+        SystemSetting.set('ai_explain_model', data['ai_explain_model'].strip())
 
     return jsonify({'message': '设置已保存'})
 
