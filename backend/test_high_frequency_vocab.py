@@ -194,7 +194,7 @@ def test_import_rebuilds_bank_word_frequencies_for_full_bank():
 
 
 
-def test_import_rebuilds_bank_word_frequencies_with_translations():
+def test_import_rebuilds_bank_word_frequencies_and_translate_endpoint_persists_translations():
     app, db_fd, db_path = create_test_app()
     try:
         admin_id, bank_id = seed_admin(app)
@@ -204,7 +204,7 @@ def test_import_rebuilds_bank_word_frequencies_with_translations():
         import routes.banks as banks_module
 
         original_parse_file = banks_module.parse_file if hasattr(banks_module, 'parse_file') else None
-        original_translate = getattr(banks_module, 'translate_bank_word_frequencies', None)
+        original_batch_translate_terms = banks_module.batch_translate_terms
 
         def fake_parse_file(file_storage, filename):
             return [
@@ -224,7 +224,7 @@ def test_import_rebuilds_bank_word_frequencies_with_translations():
                 },
             ]
 
-        def fake_translate_bank_word_frequencies(items):
+        def fake_batch_translate_terms(items):
             translations = {
                 'privacy': '隐私',
                 'controller': '控制者',
@@ -232,14 +232,13 @@ def test_import_rebuilds_bank_word_frequencies_with_translations():
             }
             return [
                 {
-                    **item,
+                    'id': item['id'],
                     'term_zh': translations.get(item['term']),
                 }
                 for item in items
             ]
 
         banks_module.parse_file = fake_parse_file
-        banks_module.translate_bank_word_frequencies = fake_translate_bank_word_frequencies
 
         response = client.post(
             f'/api/banks/{bank_id}/import',
@@ -253,12 +252,31 @@ def test_import_rebuilds_bank_word_frequencies_with_translations():
         else:
             delattr(banks_module, 'parse_file')
 
-        if original_translate is not None:
-            banks_module.translate_bank_word_frequencies = original_translate
-        elif hasattr(banks_module, 'translate_bank_word_frequencies'):
-            delattr(banks_module, 'translate_bank_word_frequencies')
-
         assert response.status_code == 200
+        assert response.get_json()['frequency_count'] == 3
+
+        with app.app_context():
+            frequencies = BankWordFrequency.query.filter_by(bank_id=bank_id).order_by(
+                BankWordFrequency.frequency.desc(), BankWordFrequency.term.asc()
+            ).all()
+            assert [
+                (item.term, item.frequency, getattr(item, 'term_zh', None))
+                for item in frequencies
+            ] == [
+                ('privacy', 4, None),
+                ('controller', 3, None),
+                ('governance', 2, None),
+            ]
+
+        banks_module.batch_translate_terms = fake_batch_translate_terms
+        translate_res = client.post(
+            f'/api/banks/{bank_id}/translate-frequencies',
+            headers=headers,
+        )
+        banks_module.batch_translate_terms = original_batch_translate_terms
+
+        assert translate_res.status_code == 200
+        assert translate_res.get_json() == {'translated': 3, 'remaining': 0}
 
         with app.app_context():
             frequencies = BankWordFrequency.query.filter_by(bank_id=bank_id).order_by(
@@ -385,8 +403,22 @@ def test_get_frequent_vocab_returns_bank_summary_and_paginated_items():
             'summary': {'total_terms': 3, 'min_frequency': 2, 'top_terms_limit': 5000},
             'pagination': {'page': 1, 'per_page': 2, 'total_pages': 2, 'total_items': 3},
             'items': [
-                {'term': 'privacy', 'term_zh': '隐私', 'frequency': 8},
-                {'term': 'controller', 'term_zh': '控制者', 'frequency': 5},
+                {
+                    'term': 'privacy',
+                    'term_zh': '隐私',
+                    'frequency': 8,
+                    'is_mastered': False,
+                    'can_delete': True,
+                    'can_mark_mastered': True,
+                },
+                {
+                    'term': 'controller',
+                    'term_zh': '控制者',
+                    'frequency': 5,
+                    'is_mastered': False,
+                    'can_delete': True,
+                    'can_mark_mastered': True,
+                },
             ],
         }
     finally:
@@ -418,8 +450,22 @@ def test_get_frequent_vocab_limits_results_to_top_5000_before_pagination():
         assert payload['summary'] == {'total_terms': 5000, 'min_frequency': 2, 'top_terms_limit': 5000}
         assert payload['pagination'] == {'page': 500, 'per_page': 10, 'total_pages': 500, 'total_items': 5000}
         assert len(payload['items']) == 10
-        assert payload['items'][0] == {'term': 'term-4990', 'term_zh': None, 'frequency': 1010}
-        assert payload['items'][-1] == {'term': 'term-4999', 'term_zh': None, 'frequency': 1001}
+        assert payload['items'][0] == {
+            'term': 'term-4990',
+            'term_zh': None,
+            'frequency': 1010,
+            'is_mastered': False,
+            'can_delete': True,
+            'can_mark_mastered': True,
+        }
+        assert payload['items'][-1] == {
+            'term': 'term-4999',
+            'term_zh': None,
+            'frequency': 1001,
+            'is_mastered': False,
+            'can_delete': True,
+            'can_mark_mastered': True,
+        }
     finally:
         os.close(db_fd)
         os.unlink(db_path)
