@@ -5,9 +5,20 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import func
 
-from models import db, Question, QuizSession, QuizAnswer, WrongAnswer
+from models import db, Question, QuizSession, QuizAnswer, WrongAnswer, UserQuestionStat
 
 quiz_bp = Blueprint('quiz', __name__)
+
+
+def _get_user_question_counts(user_id, question_ids):
+    if not question_ids:
+        return {}
+
+    stats = UserQuestionStat.query.filter(
+        UserQuestionStat.user_id == user_id,
+        UserQuestionStat.question_id.in_(question_ids),
+    ).all()
+    return {item.question_id: item.answer_count for item in stats}
 
 
 @quiz_bp.route('/start', methods=['POST'])
@@ -42,6 +53,9 @@ def start_quiz():
     db.session.add(session)
     db.session.commit()
 
+    question_ids = [q.id for q in questions]
+    counts = _get_user_question_counts(user_id, question_ids)
+
     questions_out = []
     for q in questions:
         questions_out.append({
@@ -52,6 +66,7 @@ def start_quiz():
             'options': json.loads(q.options),
             'explanation': q.explanation,
             'explanation_zh': q.explanation_zh,
+            'user_answer_count': counts.get(q.id, 0),
         })
 
     return jsonify({

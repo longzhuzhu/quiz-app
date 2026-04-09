@@ -91,6 +91,36 @@ class WrongAnswer(db.Model):
     __table_args__ = (db.UniqueConstraint('user_id', 'question_id'),)
 
 
+class UserQuestionStat(db.Model):
+    __tablename__ = 'user_question_stats'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    question_id = db.Column(db.Integer, db.ForeignKey('questions.id'), nullable=False, index=True)
+    answer_count = db.Column(db.Integer, nullable=False, default=0)
+    first_answered_at = db.Column(db.DateTime, nullable=True)
+    last_answered_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(
+        db.DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    user = db.relationship(
+        'User',
+        backref=db.backref('question_stats', lazy='dynamic', cascade='all, delete-orphan')
+    )
+    question = db.relationship(
+        'Question',
+        backref=db.backref('user_stats', lazy='dynamic', cascade='all, delete-orphan')
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'question_id'),
+        db.Index('idx_user_question_stats_lookup', 'user_id', 'question_id'),
+    )
+
+
 class Vocabulary(db.Model):
     __tablename__ = 'vocabularies'
     id = db.Column(db.Integer, primary_key=True)
