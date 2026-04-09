@@ -301,3 +301,63 @@ def test_exam_mode_submit_returns_counts_without_answers():
     finally:
         os.close(db_fd)
         os.unlink(db_path)
+
+
+def test_exam_mode_start_hides_explanations_but_includes_user_answer_count():
+    app, db_fd, db_path = create_test_app()
+    try:
+        user_id, bank_id, _, _ = seed_user_bank_questions(app)
+        client = app.test_client()
+        headers = auth_headers(app, user_id)
+
+        exam_session = start_quiz(client, headers, bank_id, mode='exam')
+
+        for question in exam_session['questions']:
+            assert 'user_answer_count' in question
+            assert 'explanation' not in question
+            assert 'explanation_zh' not in question
+    finally:
+        os.close(db_fd)
+        os.unlink(db_path)
+
+
+def test_exam_mode_session_detail_hides_explanations_and_correct_answers():
+    app, db_fd, db_path = create_test_app()
+    try:
+        user_id, bank_id, q1_id, _ = seed_user_bank_questions(app)
+        client = app.test_client()
+        headers = auth_headers(app, user_id)
+
+        exam_session = start_quiz(client, headers, bank_id, mode='exam')
+        exam_session_id = exam_session['session']['id']
+
+        submit = client.post(
+            '/api/quiz/answer',
+            json={'session_id': exam_session_id, 'question_id': q1_id, 'user_answer': 'A'},
+            headers=headers,
+        )
+        assert submit.status_code == 200
+
+        response = client.get(
+            f'/api/quiz/session/{exam_session_id}',
+            headers=headers,
+        )
+        assert response.status_code == 200
+        data = response.get_json()
+
+        assert 'questions' in data
+        for question in data['questions']:
+            assert 'user_answer_count' in question
+            assert 'explanation' not in question
+            assert 'explanation_zh' not in question
+
+        assert len(data['answers']) == 1
+        answer = data['answers'][0]
+        assert answer['question_id'] == q1_id
+        assert 'user_answer' in answer
+        assert 'correct_answer' not in answer
+        assert 'explanation' not in answer
+        assert 'explanation_zh' not in answer
+    finally:
+        os.close(db_fd)
+        os.unlink(db_path)
