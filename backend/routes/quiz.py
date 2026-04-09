@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 
 from models import db, Question, QuizSession, QuizAnswer, WrongAnswer, UserQuestionStat
 
@@ -23,20 +24,41 @@ def _get_user_question_counts(user_id, question_ids):
 
 def _upsert_user_question_stat(user_id, question_id):
     now = datetime.now(timezone.utc)
-    stat = UserQuestionStat.query.filter_by(user_id=user_id, question_id=question_id).first()
-    if stat:
-        stat.answer_count += 1
-        stat.last_answered_at = now
-    else:
-        stat = UserQuestionStat(
-            user_id=user_id,
-            question_id=question_id,
-            answer_count=1,
-            first_answered_at=now,
-            last_answered_at=now,
-        )
+    rows_updated = UserQuestionStat.query.filter_by(
+        user_id=user_id, question_id=question_id
+    ).update({
+        UserQuestionStat.answer_count: UserQuestionStat.answer_count + 1,
+        UserQuestionStat.last_answered_at: now,
+    }, synchronize_session=False)
+    if rows_updated:
+        return db.session.query(UserQuestionStat.answer_count).filter_by(
+            user_id=user_id, question_id=question_id
+        ).scalar() or 0
+
+    stat = UserQuestionStat(
+        user_id=user_id,
+        question_id=question_id,
+        answer_count=1,
+        first_answered_at=now,
+        last_answered_at=now,
+    )
+    nested = db.session.begin_nested()
+    try:
         db.session.add(stat)
-    return stat.answer_count
+        db.session.flush()
+        nested.commit()
+        return stat.answer_count
+    except IntegrityError:
+        nested.rollback()
+        UserQuestionStat.query.filter_by(
+            user_id=user_id, question_id=question_id
+        ).update({
+            UserQuestionStat.answer_count: UserQuestionStat.answer_count + 1,
+            UserQuestionStat.last_answered_at: now,
+        }, synchronize_session=False)
+        return db.session.query(UserQuestionStat.answer_count).filter_by(
+            user_id=user_id, question_id=question_id
+        ).scalar() or 0
 
 
 @quiz_bp.route('/start', methods=['POST'])
