@@ -400,7 +400,12 @@ def test_get_frequent_vocab_returns_bank_summary_and_paginated_items():
         assert response.status_code == 200
         assert response.get_json() == {
             'bank': {'id': bank_id, 'name': 'Test Bank'},
-            'summary': {'total_terms': 3, 'min_frequency': 2, 'top_terms_limit': 5000},
+            'summary': {
+                'total_terms': 3,
+                'untranslated_terms': 0,
+                'min_frequency': 2,
+                'top_terms_limit': 5000,
+            },
             'pagination': {'page': 1, 'per_page': 2, 'total_pages': 2, 'total_items': 3},
             'items': [
                 {
@@ -447,7 +452,12 @@ def test_get_frequent_vocab_limits_results_to_top_5000_before_pagination():
 
         assert response.status_code == 200
         payload = response.get_json()
-        assert payload['summary'] == {'total_terms': 5000, 'min_frequency': 2, 'top_terms_limit': 5000}
+        assert payload['summary'] == {
+            'total_terms': 5000,
+            'untranslated_terms': 5000,
+            'min_frequency': 2,
+            'top_terms_limit': 5000,
+        }
         assert payload['pagination'] == {'page': 500, 'per_page': 10, 'total_pages': 500, 'total_items': 5000}
         assert len(payload['items']) == 10
         assert payload['items'][0] == {
