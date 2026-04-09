@@ -126,7 +126,7 @@ def test_put_account_password_returns_400_when_payload_is_json_array(app):
     )
 
     assert res.status_code == 400
-    assert "error" in res.get_json()
+    assert res.get_json()["error"] == "请求体必须为 JSON 对象"
 
 
 def test_put_account_password_returns_400_when_new_password_is_not_string(app):
@@ -140,4 +140,48 @@ def test_put_account_password_returns_400_when_new_password_is_not_string(app):
     )
 
     assert res.status_code == 400
-    assert "error" in res.get_json()
+    assert res.get_json()["error"] == "新密码必须为字符串"
+
+
+def test_put_account_password_returns_controlled_json_error_when_body_is_missing(app):
+    _, token = seed_user_and_token(app)
+    client = app.test_client()
+
+    res = client.put(
+        "/api/account/password",
+        headers=auth_headers(token),
+    )
+
+    assert res.status_code == 400
+    assert res.is_json is True
+    assert res.get_json()["error"] == "请求体必须为 JSON 对象"
+
+
+def test_put_account_password_returns_controlled_json_error_when_json_is_malformed(app):
+    _, token = seed_user_and_token(app)
+    client = app.test_client()
+
+    res = client.put(
+        "/api/account/password",
+        data="{bad-json",
+        headers={**auth_headers(token), "Content-Type": "application/json"},
+    )
+
+    assert res.status_code == 400
+    assert res.is_json is True
+    assert res.get_json()["error"] == "请求体必须为 JSON 对象"
+
+
+def test_put_account_password_returns_controlled_json_error_when_body_is_json_null(app):
+    _, token = seed_user_and_token(app)
+    client = app.test_client()
+
+    res = client.put(
+        "/api/account/password",
+        data="null",
+        headers={**auth_headers(token), "Content-Type": "application/json"},
+    )
+
+    assert res.status_code == 400
+    assert res.is_json is True
+    assert res.get_json()["error"] == "请求体必须为 JSON 对象"

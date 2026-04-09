@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
-from models import User
+from models import User, db
 from services.auth_service import change_password, user_to_dict
 
 account_bp = Blueprint('account', __name__)
@@ -12,7 +12,7 @@ def _get_current_user():
         user_id = int(get_jwt_identity())
     except (TypeError, ValueError):
         return None
-    return User.query.get(user_id)
+    return db.session.get(User, user_id)
 
 
 @account_bp.route('', methods=['GET'])
@@ -31,7 +31,7 @@ def update_password():
     if not user:
         return jsonify({'error': '用户不存在或登录已失效'}), 401
 
-    data = request.get_json() or {}
+    data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify({'error': '请求体必须为 JSON 对象'}), 400
     try:
