@@ -253,8 +253,11 @@ async function handleSubmit(answer, callback) {
 
     const res = await quizStore.submitAnswer(submitQuestionId, answer)
 
-    if (currentQuestion.value && typeof res.user_answer_count === 'number') {
-      currentQuestion.value.user_answer_count = res.user_answer_count
+    if (typeof res.user_answer_count === 'number') {
+      const targetQuestion = quizStore.questions.find(q => q.id === submitQuestionId)
+      if (targetQuestion) {
+        targetQuestion.user_answer_count = res.user_answer_count
+      }
     }
 
     questionAnswerMap[submitQuestionId] = answer
