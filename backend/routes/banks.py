@@ -237,18 +237,19 @@ def import_questions(bank_id):
         }
         for question in full_bank_questions
     ])
+    translated_frequency_items = translate_bank_word_frequencies(frequency_items)
     excluded_terms = {
         row.term
         for row in BankWordExclusion.query.filter_by(bank_id=bank.id).all()
     }
     BankWordFrequency.query.filter_by(bank_id=bank.id).delete()
-    for item in frequency_items:
+    for item in translated_frequency_items:
         if item['term'] in excluded_terms:
             continue
         db.session.add(BankWordFrequency(
             bank_id=bank.id,
             term=item['term'],
-            term_zh=None,
+            term_zh=item.get('term_zh'),
             frequency=item['frequency'],
         ))
 
@@ -260,7 +261,11 @@ def import_questions(bank_id):
     )
     db.session.commit()
 
-    frequency_count = sum(1 for item in frequency_items if item['term'] not in excluded_terms)
+    frequency_count = sum(
+        1
+        for item in translated_frequency_items
+        if item['term'] not in excluded_terms and not item.get('term_zh')
+    )
     msg = f'成功导入 {count} 道题目'
     if skipped_duplicate_count:
         msg += f'，跳过 {skipped_duplicate_count} 道重复题'
