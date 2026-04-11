@@ -4,6 +4,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from models import db, Question, QuestionBank, User
+from services.ai_service import clear_question_explanation, clear_question_translation
 
 questions_bp = Blueprint('questions', __name__)
 
@@ -71,14 +72,34 @@ def update_question(question_id):
         return jsonify({'error': '需要管理员权限'}), 403
     q = Question.query.get_or_404(question_id)
     data = request.get_json()
-    if 'content' in data:
-        q.content = data['content']
+    content = data.get('content')
+    if content is not None:
+        if content != q.content:
+            clear_question_translation(q)
+            clear_question_explanation(q)
+        q.content = content
+
     if 'options' in data:
-        q.options = json.dumps(data['options'])
+        import json as _json
+
+        updated_options = data['options']
+        current_options = json.loads(q.options)
+        if updated_options != current_options:
+            clear_question_translation(q)
+            clear_question_explanation(q)
+        q.options = _json.dumps(updated_options, ensure_ascii=False)
+
     if 'correct_answer' in data:
-        q.correct_answer = data['correct_answer']
+        correct_answer = data['correct_answer']
+        if correct_answer != q.correct_answer:
+            clear_question_explanation(q)
+        q.correct_answer = correct_answer
+
     if 'question_type' in data:
-        q.question_type = data['question_type']
+        question_type = data['question_type']
+        if question_type != q.question_type:
+            clear_question_explanation(q)
+        q.question_type = question_type
     db.session.commit()
     return jsonify(question_to_dict(q))
 
