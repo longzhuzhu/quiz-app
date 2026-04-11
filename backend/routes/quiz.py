@@ -4,10 +4,61 @@ from datetime import datetime, timezone
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 
-from models import db, Question, QuizSession, QuizAnswer, WrongAnswer
+from models import db, Question, QuizSession, QuizAnswer, WrongAnswer, UserQuestionStat
 
 quiz_bp = Blueprint('quiz', __name__)
+
+
+def _get_user_question_counts(user_id, question_ids):
+    if not question_ids:
+        return {}
+
+    stats = UserQuestionStat.query.filter(
+        UserQuestionStat.user_id == user_id,
+        UserQuestionStat.question_id.in_(question_ids),
+    ).all()
+    return {item.question_id: item.answer_count for item in stats}
+
+
+def _upsert_user_question_stat(user_id, question_id):
+    now = datetime.now(timezone.utc)
+    rows_updated = UserQuestionStat.query.filter_by(
+        user_id=user_id, question_id=question_id
+    ).update({
+        UserQuestionStat.answer_count: UserQuestionStat.answer_count + 1,
+        UserQuestionStat.last_answered_at: now,
+    }, synchronize_session=False)
+    if rows_updated:
+        return db.session.query(UserQuestionStat.answer_count).filter_by(
+            user_id=user_id, question_id=question_id
+        ).scalar() or 0
+
+    stat = UserQuestionStat(
+        user_id=user_id,
+        question_id=question_id,
+        answer_count=1,
+        first_answered_at=now,
+        last_answered_at=now,
+    )
+    nested = db.session.begin_nested()
+    try:
+        db.session.add(stat)
+        db.session.flush()
+        nested.commit()
+        return stat.answer_count
+    except IntegrityError:
+        nested.rollback()
+        UserQuestionStat.query.filter_by(
+            user_id=user_id, question_id=question_id
+        ).update({
+            UserQuestionStat.answer_count: UserQuestionStat.answer_count + 1,
+            UserQuestionStat.last_answered_at: now,
+        }, synchronize_session=False)
+        return db.session.query(UserQuestionStat.answer_count).filter_by(
+            user_id=user_id, question_id=question_id
+        ).scalar() or 0
 
 
 @quiz_bp.route('/start', methods=['POST'])
@@ -18,6 +69,7 @@ def start_quiz():
     bank_id = data['bank_id']
     mode = data.get('mode', 'sequential')
     question_count = data.get('question_count')
+    is_exam = mode == 'exam'
 
     query = Question.query.filter_by(bank_id=bank_id)
     if mode in ('random', 'exam'):
@@ -42,17 +94,23 @@ def start_quiz():
     db.session.add(session)
     db.session.commit()
 
+    question_ids = [q.id for q in questions]
+    counts = _get_user_question_counts(user_id, question_ids)
+
     questions_out = []
     for q in questions:
-        questions_out.append({
+        question_data = {
             'id': q.id,
             'question_type': q.question_type,
             'content': q.content,
             'content_zh': q.content_zh,
             'options': json.loads(q.options),
-            'explanation': q.explanation,
-            'explanation_zh': q.explanation_zh,
-        })
+            'user_answer_count': counts.get(q.id, 0),
+        }
+        if not is_exam:
+            question_data['explanation'] = q.explanation
+            question_data['explanation_zh'] = q.explanation_zh
+        questions_out.append(question_data)
 
     return jsonify({
         'session': {
@@ -91,6 +149,10 @@ def submit_answer():
     question = Question.query.get_or_404(question_id)
     is_correct = user_answer.strip().upper() == question.correct_answer.strip().upper()
 
+    counted_as_new_attempt = False
+    stat = UserQuestionStat.query.filter_by(user_id=user_id, question_id=question_id).first()
+    user_answer_count = stat.answer_count if stat else 0
+
     if existing:
         old_is_correct = existing.is_correct
         existing.user_answer = user_answer
@@ -115,6 +177,9 @@ def submit_answer():
         if is_correct:
             session.correct_count += 1
 
+        user_answer_count = _upsert_user_question_stat(user_id, question_id)
+        counted_as_new_attempt = True
+
     if not is_correct:
         # Auto-collect wrong answer（保持现有错题累积行为）
         wrong = WrongAnswer.query.filter_by(
@@ -132,13 +197,19 @@ def submit_answer():
 
     # 模拟考试模式不返回正确答案和解析
     if session.mode == 'exam':
-        return jsonify({'submitted': True})
+        return jsonify({
+            'submitted': True,
+            'user_answer_count': user_answer_count,
+            'counted_as_new_attempt': counted_as_new_attempt,
+        })
 
     return jsonify({
         'is_correct': is_correct,
         'correct_answer': question.correct_answer,
         'explanation': question.explanation,
         'explanation_zh': question.explanation_zh,
+        'user_answer_count': user_answer_count,
+        'counted_as_new_attempt': counted_as_new_attempt,
     })
 
 
@@ -219,44 +290,51 @@ def session_detail(session_id):
     session = QuizSession.query.get_or_404(session_id)
     if session.user_id != user_id:
         return jsonify({'error': '无权限'}), 403
+    is_exam = session.mode == 'exam'
 
     answers = QuizAnswer.query.filter_by(session_id=session_id).all()
     answers_out = []
     for a in answers:
         q = a.question
-        answers_out.append({
+        answer_data = {
             'question_id': a.question_id,
             'question_content': q.content,
             'question_content_zh': q.content_zh,
             'question_type': q.question_type,
             'options': json.loads(q.options),
             'user_answer': a.user_answer,
-            'correct_answer': q.correct_answer,
-            'is_correct': a.is_correct,
-            'explanation': q.explanation,
-            'explanation_zh': q.explanation_zh,
-        })
+        }
+        if not is_exam:
+            answer_data['is_correct'] = a.is_correct
+            answer_data['correct_answer'] = q.correct_answer
+            answer_data['explanation'] = q.explanation
+            answer_data['explanation_zh'] = q.explanation_zh
+        answers_out.append(answer_data)
 
     # 未完成的会话返回完整题目列表，用于页面刷新后恢复答题
     questions_out = []
     if not session.is_completed and session.question_ids:
         q_ids = json.loads(session.question_ids)
+        counts = _get_user_question_counts(user_id, q_ids)
         answered_ids = {a.question_id for a in answers}
         all_questions = Question.query.filter(Question.id.in_(q_ids)).all()
         q_map = {q.id: q for q in all_questions}
         for qid in q_ids:
             q = q_map.get(qid)
             if q:
-                questions_out.append({
+                question_data = {
                     'id': q.id,
                     'question_type': q.question_type,
                     'content': q.content,
                     'content_zh': q.content_zh,
                     'options': json.loads(q.options),
-                    'explanation': q.explanation,
-                    'explanation_zh': q.explanation_zh,
                     'answered': qid in answered_ids,
-                })
+                    'user_answer_count': counts.get(q.id, 0),
+                }
+                if not is_exam:
+                    question_data['explanation'] = q.explanation
+                    question_data['explanation_zh'] = q.explanation_zh
+                questions_out.append(question_data)
 
     result = {
         'session': {

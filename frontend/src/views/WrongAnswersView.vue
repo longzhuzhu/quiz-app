@@ -144,17 +144,27 @@
                   @translated="onTranslated(w, $event)"
                   @toggle="translationVisible[w.id] = !translationVisible[w.id]"
                 />
-                <ExplainButton :question-id="w.question.id" @explained="(e) => explainResults[w.id] = e" />
+                <ExplainButton
+                  :question-id="w.question.id"
+                  :initial-explanation="{ explanation: w.question.explanation, explanation_zh: w.question.explanation_zh }"
+                  @explained="(e) => explainResults[w.id] = e"
+                />
                 <AddVocabButton />
               </div>
               <!-- AI 解析内容 -->
-              <div v-if="explainResults[w.id]"
+              <div
+                v-if="explainResults[w.id] && (explainResults[w.id].explanation || explainResults[w.id].explanation_zh)"
                 class="mt-3 rounded-card border border-sky-200 bg-sky-50 p-4 text-sm
                        dark:border-sky-800 dark:bg-sky-900/20">
                 <p class="font-medium text-sky-800 dark:text-sky-300">AI 解析</p>
-                <p class="mt-1 whitespace-pre-wrap text-gray-700 dark:text-gray-300">{{ explainResults[w.id].explanation }}</p>
-                <p v-if="explainResults[w.id].explanation_zh"
-                  class="mt-2 whitespace-pre-wrap text-gray-600 dark:text-gray-400">{{ explainResults[w.id].explanation_zh }}</p>
+                <p
+                  v-if="explainResults[w.id].explanation"
+                  class="mt-1 whitespace-pre-wrap text-gray-700 dark:text-gray-300"
+                >{{ explainResults[w.id].explanation }}</p>
+                <p
+                  v-if="explainResults[w.id].explanation_zh"
+                  class="mt-2 whitespace-pre-wrap text-gray-600 dark:text-gray-400"
+                >{{ explainResults[w.id].explanation_zh }}</p>
               </div>
             </div>
           </div>

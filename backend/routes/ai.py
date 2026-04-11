@@ -2,7 +2,14 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from models import Question, User
-from services.ai_service import translate_question, explain_question
+from services.ai_service import (
+    build_question_explanation_payload,
+    build_question_translation_payload,
+    explain_question,
+    has_question_explanation,
+    has_question_translation,
+    translate_question,
+)
 
 ai_bp = Blueprint('ai', __name__)
 
@@ -13,9 +20,9 @@ def translate():
     data = request.get_json()
     question = Question.query.get_or_404(data['question_id'])
 
-    if question.content_zh:
+    if has_question_translation(question):
         return jsonify({
-            'content_zh': question.content_zh,
+            **build_question_translation_payload(question),
             'cached': True,
         })
 
@@ -56,10 +63,9 @@ def explain():
     data = request.get_json()
     question = Question.query.get_or_404(data['question_id'])
 
-    if question.explanation:
+    if has_question_explanation(question):
         return jsonify({
-            'explanation': question.explanation,
-            'explanation_zh': question.explanation_zh,
+            **build_question_explanation_payload(question),
             'cached': True,
         })
 

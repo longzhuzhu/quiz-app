@@ -4,6 +4,11 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from models import db, Question, QuestionBank, User
+from services.ai_service import (
+    clear_question_explanation,
+    clear_question_translation,
+    sanitize_options_for_storage,
+)
 
 questions_bp = Blueprint('questions', __name__)
 
@@ -72,13 +77,33 @@ def update_question(question_id):
     q = Question.query.get_or_404(question_id)
     data = request.get_json()
     if 'content' in data:
-        q.content = data['content']
+        content = data['content']
+        if content != q.content:
+            clear_question_translation(q)
+            clear_question_explanation(q)
+        q.content = content
+
     if 'options' in data:
-        q.options = json.dumps(data['options'])
+        updated_options = data['options']
+        sanitized_updated = sanitize_options_for_storage(updated_options)
+        current_options = json.loads(q.options)
+        sanitized_current = sanitize_options_for_storage(current_options)
+        if sanitized_updated != sanitized_current:
+            clear_question_translation(q)
+            clear_question_explanation(q)
+            q.options = json.dumps(sanitized_updated, ensure_ascii=False)
+
     if 'correct_answer' in data:
-        q.correct_answer = data['correct_answer']
+        correct_answer = data['correct_answer']
+        if correct_answer != q.correct_answer:
+            clear_question_explanation(q)
+        q.correct_answer = correct_answer
+
     if 'question_type' in data:
-        q.question_type = data['question_type']
+        question_type = data['question_type']
+        if question_type != q.question_type:
+            clear_question_explanation(q)
+        q.question_type = question_type
     db.session.commit()
     return jsonify(question_to_dict(q))
 

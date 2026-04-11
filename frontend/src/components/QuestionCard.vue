@@ -2,12 +2,19 @@
   <div class="rounded-xl bg-white dark:bg-slate-800 shadow-card p-4 md:p-6">
     <template v-if="question">
     <!-- 题目信息 -->
-    <div class="mb-4 flex items-center justify-between">
-      <span class="text-sm text-gray-500 dark:text-gray-400">
-        第 {{ currentIndex + 1 }}{{ !hideProgress ? ` / ${total}` : '' }} 题
-      </span>
-      <span v-if="question.question_type === 'multiple'" class="rounded-full bg-amber-100 dark:bg-amber-900/30 px-2.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400">多选</span>
-      <span v-else-if="question.question_type === 'truefalse'" class="rounded-full bg-sky-100 dark:bg-sky-900/30 px-2.5 py-0.5 text-xs font-medium text-sky-700 dark:text-sky-400">判断</span>
+    <div class="mb-4 flex items-center justify-between gap-2">
+      <div class="min-w-0">
+        <span class="text-sm text-gray-500 dark:text-gray-400 block truncate">
+          第 {{ currentIndex + 1 }}{{ !hideProgress ? ` / ${total}` : '' }} 题
+        </span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span v-if="question.question_type === 'multiple'" class="rounded-full bg-amber-100 dark:bg-amber-900/30 px-2.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400">多选</span>
+        <span v-else-if="question.question_type === 'truefalse'" class="rounded-full bg-sky-100 dark:bg-sky-900/30 px-2.5 py-0.5 text-xs font-medium text-sky-700 dark:text-sky-400">判断</span>
+        <span class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+          已答 {{ answerCount }} 次
+        </span>
+      </div>
     </div>
 
     <!-- 进度条（仅 !hideProgress） -->
@@ -46,16 +53,22 @@
       <TranslateButton :question-id="question.id" :has-translation="!!question.content_zh" :show="showTranslation"
         @translated="(e) => { $emit('translated', e); showTranslation = true }"
         @toggle="showTranslation = !showTranslation" />
-      <ExplainButton v-if="!examMode" :key="question.id" :question-id="question.id" @explained="(e) => explainData = e" />
+      <ExplainButton
+        v-if="!examMode"
+        :key="question.id"
+        :question-id="question.id"
+        :initial-explanation="initialExplanation"
+        @explained="(e) => explainData = e"
+      />
       <AddVocabButton />
     </div>
 
     <!-- AI 解析内容（独立于按钮行） -->
-    <div v-if="explainData && !examMode"
+    <div v-if="explainData && !examMode && (explainData.explanation || explainData.explanation_zh)"
       class="mt-3 rounded-card border border-sky-200 bg-sky-50 p-4 text-sm
              dark:border-sky-800 dark:bg-sky-900/20">
       <p class="font-medium text-sky-800 dark:text-sky-300">AI 解析</p>
-      <p class="mt-1 whitespace-pre-wrap text-gray-700 dark:text-gray-300">{{ explainData.explanation }}</p>
+      <p v-if="explainData.explanation" class="mt-1 whitespace-pre-wrap text-gray-700 dark:text-gray-300">{{ explainData.explanation }}</p>
       <p v-if="explainData.explanation_zh"
         class="mt-2 whitespace-pre-wrap text-gray-600 dark:text-gray-400">{{ explainData.explanation_zh }}</p>
     </div>
@@ -97,7 +110,7 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { CheckCircleIcon, XCircleIcon } from '@heroicons/vue/24/outline'
 import TranslateButton from './TranslateButton.vue'
 import ExplainButton from './ExplainButton.vue'
@@ -112,6 +125,7 @@ const props = defineProps({
   initialAnswer: { type: String, default: '' },
   initialResult: { type: Object, default: null },
   examMode: { type: Boolean, default: false },
+  answerCount: { type: Number, default: 0 },
 })
 
 const emit = defineEmits(['submit', 'next', 'prev', 'finish', 'translated'])
@@ -121,6 +135,12 @@ const answered = ref(false)
 const result = ref(null)
 const showTranslation = ref(false)
 const explainData = ref(null)
+const initialExplanation = computed(() => {
+  if (!props.question) return null
+  const { explanation, explanation_zh } = props.question
+  if (!explanation && !explanation_zh) return null
+  return { explanation, explanation_zh }
+})
 
 watch(
   [() => props.currentIndex, () => props.initialAnswer, () => props.initialResult],
