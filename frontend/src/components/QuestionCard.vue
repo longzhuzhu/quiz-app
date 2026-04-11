@@ -53,16 +53,22 @@
       <TranslateButton :question-id="question.id" :has-translation="!!question.content_zh" :show="showTranslation"
         @translated="(e) => { $emit('translated', e); showTranslation = true }"
         @toggle="showTranslation = !showTranslation" />
-      <ExplainButton v-if="!examMode" :key="question.id" :question-id="question.id" @explained="(e) => explainData = e" />
+      <ExplainButton
+        v-if="!examMode"
+        :key="question.id"
+        :question-id="question.id"
+        :initial-explanation="initialExplanation"
+        @explained="(e) => explainData = e"
+      />
       <AddVocabButton />
     </div>
 
     <!-- AI 解析内容（独立于按钮行） -->
-    <div v-if="explainData && !examMode"
+    <div v-if="explainData && !examMode && (explainData.explanation || explainData.explanation_zh)"
       class="mt-3 rounded-card border border-sky-200 bg-sky-50 p-4 text-sm
              dark:border-sky-800 dark:bg-sky-900/20">
       <p class="font-medium text-sky-800 dark:text-sky-300">AI 解析</p>
-      <p class="mt-1 whitespace-pre-wrap text-gray-700 dark:text-gray-300">{{ explainData.explanation }}</p>
+      <p v-if="explainData.explanation" class="mt-1 whitespace-pre-wrap text-gray-700 dark:text-gray-300">{{ explainData.explanation }}</p>
       <p v-if="explainData.explanation_zh"
         class="mt-2 whitespace-pre-wrap text-gray-600 dark:text-gray-400">{{ explainData.explanation_zh }}</p>
     </div>
@@ -104,7 +110,7 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { CheckCircleIcon, XCircleIcon } from '@heroicons/vue/24/outline'
 import TranslateButton from './TranslateButton.vue'
 import ExplainButton from './ExplainButton.vue'
@@ -129,6 +135,12 @@ const answered = ref(false)
 const result = ref(null)
 const showTranslation = ref(false)
 const explainData = ref(null)
+const initialExplanation = computed(() => {
+  if (!props.question) return null
+  const { explanation, explanation_zh } = props.question
+  if (!explanation && !explanation_zh) return null
+  return { explanation, explanation_zh }
+})
 
 watch(
   [() => props.currentIndex, () => props.initialAnswer, () => props.initialResult],

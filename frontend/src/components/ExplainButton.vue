@@ -19,14 +19,22 @@ import { useToast } from '../composables/useToast'
 
 const toast = useToast()
 
-const props = defineProps({ questionId: Number })
+const props = defineProps({
+  questionId: Number,
+  initialExplanation: { type: Object, default: null },
+})
 const emit = defineEmits(['explained'])
 const loading = ref(false)
 const explanation = ref(null)
 
+function hasExplanation(payload) {
+  return !!(payload && (payload.explanation || payload.explanation_zh))
+}
+
 async function handleExplain() {
-  if (explanation.value) {
-    emit('explained', explanation.value)
+  const existing = explanation.value ?? props.initialExplanation
+  if (hasExplanation(existing)) {
+    emit('explained', existing)
     return
   }
   loading.value = true
