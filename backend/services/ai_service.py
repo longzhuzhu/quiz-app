@@ -62,6 +62,10 @@ def clear_question_explanation(question: Question):
     question.explanation_zh = None
 
 
+def sanitize_options_for_storage(options):
+    return [{k: v for k, v in option.items() if k != 'text_zh'} for option in options]
+
+
 def call_ai_api(messages, scene='default'):
     ai = _get_ai_config(scene=scene)
     if not ai['api_key']:
