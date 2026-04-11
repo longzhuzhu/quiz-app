@@ -122,3 +122,96 @@ def test_cached_explain_with_partial_payload_skips_ai(app, monkeypatch):
         "explanation_zh": "已有中文解析",
         "cached": True,
     }
+
+
+def test_invalidates_ai_fields_when_content_changes(app):
+    seeded = seed_user_and_question(app)
+    client = app.test_client()
+
+    res = client.put(
+        f"/api/questions/{seeded['question_id']}",
+        json={"content": "New privacy question text"},
+        headers=auth_headers(seeded["token"]),
+    )
+
+    assert res.status_code == 200
+
+    with app.app_context():
+        question = Question.query.get(seeded["question_id"])
+        assert question.content == "New privacy question text"
+        assert question.content_zh is None
+        assert question.explanation is None
+        assert question.explanation_zh is None
+        stored_options = json.loads(question.options)
+        assert all(opt.get("text_zh") is None for opt in stored_options)
+
+
+def test_invalidates_ai_fields_when_options_change(app):
+    seeded = seed_user_and_question(app)
+    client = app.test_client()
+
+    updated_options = [
+        {"key": "B", "text": "A legal basis"},
+        {"key": "A", "text": "A design principle"},
+    ]
+
+    res = client.put(
+        f"/api/questions/{seeded['question_id']}",
+        json={"options": updated_options},
+        headers=auth_headers(seeded["token"]),
+    )
+
+    assert res.status_code == 200
+
+    with app.app_context():
+        question = Question.query.get(seeded["question_id"])
+        stored_options = json.loads(question.options)
+        assert stored_options[0]["key"] == "B"
+        assert question.content_zh is None
+        assert question.explanation is None
+        assert question.explanation_zh is None
+        assert all(opt.get("text_zh") is None for opt in stored_options)
+
+
+def test_invalidates_explanation_when_correct_answer_changes(app):
+    seeded = seed_user_and_question(app)
+    client = app.test_client()
+
+    res = client.put(
+        f"/api/questions/{seeded['question_id']}",
+        json={"correct_answer": "B"},
+        headers=auth_headers(seeded["token"]),
+    )
+
+    assert res.status_code == 200
+
+    with app.app_context():
+        question = Question.query.get(seeded["question_id"])
+        assert question.correct_answer == "B"
+        assert question.content_zh == "已有中文题干"
+        stored_options = json.loads(question.options)
+        assert stored_options[0].get("text_zh") == "一种设计原则"
+        assert question.explanation is None
+        assert question.explanation_zh is None
+
+
+def test_invalidates_explanation_when_question_type_changes(app):
+    seeded = seed_user_and_question(app)
+    client = app.test_client()
+
+    res = client.put(
+        f"/api/questions/{seeded['question_id']}",
+        json={"question_type": "multiple"},
+        headers=auth_headers(seeded["token"]),
+    )
+
+    assert res.status_code == 200
+
+    with app.app_context():
+        question = Question.query.get(seeded["question_id"])
+        assert question.question_type == "multiple"
+        assert question.content_zh == "已有中文题干"
+        stored_options = json.loads(question.options)
+        assert stored_options[0].get("text_zh") == "一种设计原则"
+        assert question.explanation is None
+        assert question.explanation_zh is None

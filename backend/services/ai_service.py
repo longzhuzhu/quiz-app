@@ -49,6 +49,19 @@ def build_question_explanation_payload(question: Question) -> dict:
     }
 
 
+def clear_question_translation(question: Question):
+    question.content_zh = None
+    options = _load_options(question)
+    for option in options:
+        option.pop('text_zh', None)
+    question.options = json.dumps(options, ensure_ascii=False)
+
+
+def clear_question_explanation(question: Question):
+    question.explanation = None
+    question.explanation_zh = None
+
+
 def call_ai_api(messages, scene='default'):
     ai = _get_ai_config(scene=scene)
     if not ai['api_key']:
