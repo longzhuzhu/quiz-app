@@ -11,6 +11,61 @@ def _get_ai_config(scene='default'):
     return get_effective_ai_settings(scene=scene)
 
 
+def _load_options(question: Question):
+    return json.loads(question.options)
+
+
+def _strip_code_fence(text: str) -> str:
+    text = text.strip()
+    if text.startswith('```'):
+        text = text.split('\n', 1)[1]
+        text = text.rsplit('```', 1)[0]
+    return text
+
+
+def has_question_translation(question: Question) -> bool:
+    return bool(question.content_zh)
+
+
+def has_question_explanation(question: Question) -> bool:
+    return bool(question.explanation or question.explanation_zh)
+
+
+def build_question_translation_payload(question: Question) -> dict:
+    options_zh = []
+    for option in _load_options(question):
+        if option.get('text_zh'):
+            options_zh.append({'key': option['key'], 'text_zh': option['text_zh']})
+    return {
+        'content_zh': question.content_zh,
+        'options_zh': options_zh,
+    }
+
+
+def build_question_explanation_payload(question: Question) -> dict:
+    return {
+        'explanation': question.explanation,
+        'explanation_zh': question.explanation_zh,
+    }
+
+
+def clear_question_translation(question: Question):
+    question.content_zh = None
+    options = _load_options(question)
+    for option in options:
+        option.pop('text_zh', None)
+    question.options = json.dumps(options, ensure_ascii=False)
+
+
+def clear_question_explanation(question: Question):
+    question.explanation = None
+    question.explanation_zh = None
+
+
+def sanitize_options_for_storage(options):
+    return [{k: v for k, v in option.items() if k != 'text_zh'} for option in options]
+
+
 def call_ai_api(messages, scene='default'):
     ai = _get_ai_config(scene=scene)
     if not ai['api_key']:
@@ -44,7 +99,7 @@ def call_ai_api(messages, scene='default'):
 
 
 def translate_question(question):
-    options = json.loads(question.options)
+    options = _load_options(question)
     options_text = '\n'.join([f"{o['key']}. {o['text']}" for o in options])
 
     messages = [
@@ -63,11 +118,7 @@ def translate_question(question):
         },
     ]
 
-    result_text = call_ai_api(messages, scene='translate')
-    result_text = result_text.strip()
-    if result_text.startswith('```'):
-        result_text = result_text.split('\n', 1)[1]
-        result_text = result_text.rsplit('```', 1)[0]
+    result_text = _strip_code_fence(call_ai_api(messages, scene='translate'))
 
     result = json.loads(result_text)
 
@@ -80,7 +131,7 @@ def translate_question(question):
     question.options = json.dumps(options, ensure_ascii=False)
     db.session.commit()
 
-    return result
+    return build_question_translation_payload(question)
 
 
 def translate_term(term):
@@ -168,7 +219,7 @@ def batch_translate_terms(terms_data):
 
 
 def explain_question(question):
-    options = json.loads(question.options)
+    options = _load_options(question)
     options_text = '\n'.join([f"{o['key']}. {o['text']}" for o in options])
 
     messages = [
@@ -187,11 +238,7 @@ def explain_question(question):
         },
     ]
 
-    result_text = call_ai_api(messages, scene='explain')
-    result_text = result_text.strip()
-    if result_text.startswith('```'):
-        result_text = result_text.split('\n', 1)[1]
-        result_text = result_text.rsplit('```', 1)[0]
+    result_text = _strip_code_fence(call_ai_api(messages, scene='explain'))
 
     result = json.loads(result_text)
 
@@ -199,4 +246,4 @@ def explain_question(question):
     question.explanation_zh = result['explanation_zh']
     db.session.commit()
 
-    return result
+    return build_question_explanation_payload(question)

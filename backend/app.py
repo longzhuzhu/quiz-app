@@ -6,7 +6,14 @@ from flask_jwt_extended import JWTManager
 from sqlalchemy import inspect, text
 
 from config import Config
-from models import db, UserVocabProgress, UserBankWordProgress, BankWordExclusion, BackgroundJob
+from models import (
+    db,
+    UserVocabProgress,
+    UserBankWordProgress,
+    BankWordExclusion,
+    BackgroundJob,
+    UserQuestionStat,
+)
 
 
 def _apply_runtime_env_overrides(app):
@@ -71,6 +78,12 @@ def _ensure_background_job_schema():
         BackgroundJob.__table__.create(bind=db.engine, checkfirst=True)
 
 
+def _ensure_user_question_stats_schema():
+    inspector = inspect(db.engine)
+    if 'user_question_stats' not in inspector.get_table_names():
+        UserQuestionStat.__table__.create(bind=db.engine, checkfirst=True)
+
+
 
 def create_app():
     dist_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'frontend', 'dist'))
@@ -113,6 +126,7 @@ def create_app():
         _ensure_bank_word_progress_schema()
         _ensure_bank_word_exclusion_schema()
         _ensure_background_job_schema()
+        _ensure_user_question_stats_schema()
 
     @app.route('/')
     @app.route('/<path:path>')
