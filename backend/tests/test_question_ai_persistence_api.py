@@ -173,6 +173,33 @@ def test_invalidates_ai_fields_when_options_change(app):
         assert all(opt.get("text_zh") is None for opt in stored_options)
 
 
+def test_options_update_with_text_zh_strips_translation(app):
+    seeded = seed_user_and_question(app)
+    client = app.test_client()
+
+    updated_options = [
+        {"key": "B", "text": "A legal basis", "text_zh": "旧翻译"},
+        {"key": "A", "text": "A design principle", "text_zh": "旧翻译"},
+    ]
+
+    res = client.put(
+        f"/api/questions/{seeded['question_id']}",
+        json={"options": updated_options, "content": "New privacy question text"},
+        headers=auth_headers(seeded["token"]),
+    )
+
+    assert res.status_code == 200
+
+    with app.app_context():
+        question = Question.query.get(seeded["question_id"])
+        stored_options = json.loads(question.options)
+        assert stored_options[0]["key"] == "B"
+        assert all("text_zh" not in opt for opt in stored_options)
+        assert question.content_zh is None
+        assert question.explanation is None
+        assert question.explanation_zh is None
+
+
 def test_invalidates_explanation_when_correct_answer_changes(app):
     seeded = seed_user_and_question(app)
     client = app.test_client()

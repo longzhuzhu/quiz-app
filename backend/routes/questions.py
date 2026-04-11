@@ -4,7 +4,10 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from models import db, Question, QuestionBank, User
-from services.ai_service import clear_question_explanation, clear_question_translation
+from services.ai_service import (
+    clear_question_explanation,
+    clear_question_translation,
+)
 
 questions_bp = Blueprint('questions', __name__)
 
@@ -72,8 +75,8 @@ def update_question(question_id):
         return jsonify({'error': '需要管理员权限'}), 403
     q = Question.query.get_or_404(question_id)
     data = request.get_json()
-    content = data.get('content')
-    if content is not None:
+    if 'content' in data:
+        content = data['content']
         if content != q.content:
             clear_question_translation(q)
             clear_question_explanation(q)
@@ -87,7 +90,9 @@ def update_question(question_id):
         if updated_options != current_options:
             clear_question_translation(q)
             clear_question_explanation(q)
-        q.options = _json.dumps(updated_options, ensure_ascii=False)
+        q.options = _json.dumps(extended_options := [
+            {**{k: v for k, v in opt.items() if k != 'text_zh'}} for opt in updated_options
+        ], ensure_ascii=False)
 
     if 'correct_answer' in data:
         correct_answer = data['correct_answer']
