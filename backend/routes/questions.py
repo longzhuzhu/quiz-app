@@ -7,6 +7,7 @@ from models import db, Question, QuestionBank, User
 from services.ai_service import (
     clear_question_explanation,
     clear_question_translation,
+    sanitize_options_for_storage,
 )
 
 questions_bp = Blueprint('questions', __name__)
@@ -83,16 +84,14 @@ def update_question(question_id):
         q.content = content
 
     if 'options' in data:
-        import json as _json
-
         updated_options = data['options']
+        sanitized_updated = sanitize_options_for_storage(updated_options)
         current_options = json.loads(q.options)
-        if updated_options != current_options:
+        sanitized_current = sanitize_options_for_storage(current_options)
+        if sanitized_updated != sanitized_current:
             clear_question_translation(q)
             clear_question_explanation(q)
-        q.options = _json.dumps(extended_options := [
-            {**{k: v for k, v in opt.items() if k != 'text_zh'}} for opt in updated_options
-        ], ensure_ascii=False)
+            q.options = json.dumps(sanitized_updated, ensure_ascii=False)
 
     if 'correct_answer' in data:
         correct_answer = data['correct_answer']

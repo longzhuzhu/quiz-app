@@ -200,6 +200,32 @@ def test_options_update_with_text_zh_strips_translation(app):
         assert question.explanation_zh is None
 
 
+def test_options_update_with_text_zh_preserves_translation_when_no_change(app):
+    seeded = seed_user_and_question(app)
+    client = app.test_client()
+
+    with app.app_context():
+        question = Question.query.get(seeded["question_id"])
+        original_options = json.loads(question.options)
+
+    res = client.put(
+        f"/api/questions/{seeded['question_id']}",
+        json={"options": original_options},
+        headers=auth_headers(seeded["token"]),
+    )
+
+    assert res.status_code == 200
+
+    with app.app_context():
+        question = Question.query.get(seeded["question_id"])
+        assert question.content_zh == "已有中文题干"
+        assert question.explanation == "Existing explanation"
+        assert question.explanation_zh == "已有中文解析"
+        stored_options = json.loads(question.options)
+        assert stored_options == original_options
+        assert stored_options[0].get("text_zh") == "一种设计原则"
+
+
 def test_invalidates_explanation_when_correct_answer_changes(app):
     seeded = seed_user_and_question(app)
     client = app.test_client()
