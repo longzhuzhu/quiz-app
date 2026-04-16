@@ -1,0 +1,40 @@
+{
+  "name": "ui-ux-pro-max",
+  "version": "2.5.0",
+  "description": "AI-powered UI/UX design intelligence with 67 styles, 161 color palettes, 57 font pairings, 99 UX guidelines, and multi-platform design rules.",
+  "author": {
+    "name": "NextLevelBuilder",
+    "url": "https://uupm.cc"
+  },
+  "homepage": "https://uupm.cc",
+  "repository": "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill",
+  "license": "MIT",
+  "keywords": [
+    "ui",
+    "ux",
+    "design",
+    "design-system",
+    "color-palette",
+    "typography",
+    "accessibility",
+    "charts"
+  ],
+  "skills": "./.claude/skills/",
+  "interface": {
+    "displayName": "UI/UX Pro Max",
+    "shortDescription": "Project-local UI/UX design skill pack for web and mobile",
+    "longDescription": "UI/UX Pro Max brings a broad design rule base, component guidance, palettes, typography pairings, and UX review heuristics into Codex as a project-local plugin.",
+    "developerName": "NextLevelBuilder",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://uupm.cc",
+    "defaultPrompt": [
+      "Review or design this interface using UI/UX Pro Max guidance"
+    ],
+    "brandColor": "#2563EB"
+  }
+}
