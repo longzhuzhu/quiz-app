@@ -213,7 +213,9 @@ def recover_stale_jobs(db: Session, now: datetime | None = None) -> int:
     for job in running_jobs:
         if not job.lease_until:
             continue
-        if _normalize_utc(job.lease_until) >= _normalize_utc(now):
+        normalized_lease = _normalize_utc(job.lease_until)
+        normalized_now = _normalize_utc(now)
+        if normalized_lease is not None and normalized_now is not None and normalized_lease >= normalized_now:
             continue
         job.status = "queued"
         job.lease_until = None

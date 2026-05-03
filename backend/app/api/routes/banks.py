@@ -7,6 +7,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_admin
+from app.core.config import settings as app_settings
 from app.core.database import get_db
 from app.models.question_bank import QuestionBank
 from app.models.question import Question
@@ -14,6 +15,7 @@ from app.models.quiz import QuizSession, QuizAnswer
 from app.models.wrong import WrongAnswer
 from app.models.bank_word import BankWordFrequency, UserBankWordProgress, BankWordExclusion
 from app.models.user import User
+from app.schemas.bank import BankCreateRequest, BankUpdateRequest
 from app.services.import_service import parse_file, build_bank_word_frequencies
 from app.services.ai_service import batch_translate_terms
 from app.services.job_service import (
@@ -101,11 +103,11 @@ def list_banks(
 
 @router.post("/", status_code=201)
 def create_bank(
-    data: dict,
+    data: BankCreateRequest,
     _admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    bank = QuestionBank(name=data["name"], description=data.get("description", ""))
+    bank = QuestionBank(name=data.name, description=data.description)
     db.add(bank)
     db.commit()
     db.refresh(bank)
@@ -115,7 +117,7 @@ def create_bank(
 @router.put("/{bank_id}")
 def update_bank(
     bank_id: int,
-    data: dict,
+    data: BankUpdateRequest,
     _admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -123,10 +125,10 @@ def update_bank(
     if not bank:
         raise HTTPException(status_code=404, detail="题库不存在")
 
-    if "name" in data:
-        bank.name = data["name"]
-    if "description" in data:
-        bank.description = data["description"]
+    if data.name is not None:
+        bank.name = data.name
+    if data.description is not None:
+        bank.description = data.description
     db.commit()
     db.refresh(bank)
     return bank_to_dict(bank)
@@ -180,8 +182,13 @@ def import_questions(
 
     filename = (file.filename or "").lower()
 
-    # 读取文件内容
+    # 读取文件内容并校验大小
     file_bytes = file.file.read()
+    if len(file_bytes) > app_settings.upload_max_size_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"文件大小超过限制（最大 {app_settings.MAX_UPLOAD_SIZE_MB}MB）",
+        )
 
     # 创建 SpooledTemporaryFile 兼容的类文件对象供 parse_file 使用
     import io

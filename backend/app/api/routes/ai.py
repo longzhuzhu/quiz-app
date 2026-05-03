@@ -7,6 +7,7 @@ from app.api.deps import get_current_user, require_admin
 from app.core.database import get_db
 from app.models.question import Question
 from app.models.user import User
+from app.schemas.ai import AITranslateRequest, AITranslateBatchRequest, AIExplainRequest
 from app.services.ai_service import (
     build_question_explanation_payload,
     build_question_translation_payload,
@@ -21,11 +22,11 @@ router = APIRouter()
 
 @router.post("/translate")
 def translate(
-    data: dict,
+    data: AITranslateRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    question = db.get(Question, data["question_id"])
+    question = db.get(Question, data.question_id)
     if not question:
         raise HTTPException(status_code=404, detail="题目不存在")
 
@@ -44,11 +45,11 @@ def translate(
 
 @router.post("/translate/batch")
 def translate_batch(
-    data: dict,
+    data: AITranslateBatchRequest,
     _admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    bank_id = data.get("bank_id")
+    bank_id = data.bank_id
     questions = db.query(Question).filter_by(bank_id=bank_id).filter(
         Question.content_zh.is_(None)
     ).all()
@@ -67,11 +68,11 @@ def translate_batch(
 
 @router.post("/explain")
 def explain(
-    data: dict,
+    data: AIExplainRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    question = db.get(Question, data["question_id"])
+    question = db.get(Question, data.question_id)
     if not question:
         raise HTTPException(status_code=404, detail="题目不存在")
 

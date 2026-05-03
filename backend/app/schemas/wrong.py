@@ -1,6 +1,12 @@
 """Pydantic schemas - Wrong Answer"""
 
+from typing import Optional
+
 from pydantic import BaseModel, Field
+
+
+class WrongPracticeRequest(BaseModel):
+    bank_id: int | None = None
 
 
 class WrongAnswerQuestionOut(BaseModel):
