@@ -1,0 +1,270 @@
+"""AI 服务 - 翻译、解析、术语翻译（适配 FastAPI + SQLAlchemy 2.x）"""
+
+import json
+
+import httpx
+
+from app.models.question import Question
+from app.services.settings_service import get_effective_ai_settings
+
+
+def _load_options(question: Question) -> list:
+    options = question.options
+    if isinstance(options, str):
+        return json.loads(options)
+    return options
+
+
+def _strip_code_fence(text: str) -> str:
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1]
+        text = text.rsplit("```", 1)[0]
+    return text
+
+
+def has_question_translation(question: Question) -> bool:
+    return bool(question.content_zh)
+
+
+def has_question_explanation(question: Question) -> bool:
+    return bool(question.explanation or question.explanation_zh)
+
+
+def build_question_translation_payload(question: Question) -> dict:
+    options = _load_options(question)
+    options_zh = []
+    for option in options:
+        if option.get("text_zh"):
+            options_zh.append({"key": option["key"], "text_zh": option["text_zh"]})
+    return {
+        "content_zh": question.content_zh,
+        "options_zh": options_zh,
+    }
+
+
+def build_question_explanation_payload(question: Question) -> dict:
+    return {
+        "explanation": question.explanation,
+        "explanation_zh": question.explanation_zh,
+    }
+
+
+def clear_question_translation(db, question: Question):
+    question.content_zh = None
+    options = _load_options(question)
+    for option in options:
+        option.pop("text_zh", None)
+    question.options = options  # JSONB 直接赋值
+
+
+def clear_question_explanation(db, question: Question):
+    question.explanation = None
+    question.explanation_zh = None
+
+
+def sanitize_options_for_storage(options):
+    return [{k: v for k, v in option.items() if k != "text_zh"} for option in options]
+
+
+def call_ai_api(messages, db, scene="default"):
+    ai = get_effective_ai_settings(db, scene=scene)
+    if not ai["api_key"]:
+        raise ValueError("AI API Key 未配置，请在管理后台设置")
+
+    base = ai["base_url"].rstrip("/")
+    # 智能拼接：支持多种 Base URL 格式
+    if base.endswith("/chat/completions"):
+        api_url = base
+    elif base.endswith("/v1"):
+        api_url = base + "/chat/completions"
+    else:
+        api_url = base + "/v1/chat/completions"
+
+    headers = {
+        "Authorization": f'Bearer {ai["api_key"]}',
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": ai["model"],
+        "messages": messages,
+        "temperature": 0.3,
+    }
+
+    resp = httpx.post(api_url, json=payload, headers=headers, timeout=60.0, verify=False)
+    if not resp.is_success:
+        detail = resp.text[:200] if resp.text else resp.reason_phrase
+        raise ValueError(f"AI API 错误 ({resp.status_code}): {detail}")
+    data = resp.json()
+    return data["choices"][0]["message"]["content"]
+
+
+def translate_question(db, question: Question) -> dict:
+    options = _load_options(question)
+    options_text = "\n".join([f"{o['key']}. {o['text']}" for o in options])
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "你是一位专业的隐私技术领域翻译专家。请将以下 CIPT 考试题目从英文翻译为中文。"
+                "保留技术缩写（如 GDPR、PII、DPO、DPIA 等）不翻译。"
+                '返回 JSON 格式：{"content_zh": "中文题目", "options_zh": [{"key": "A", "text_zh": "中文选项"}, ...]}'
+                "只返回 JSON，不要其他内容。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"题目：{question.content}\n\n选项：\n{options_text}",
+        },
+    ]
+
+    result_text = _strip_code_fence(call_ai_api(messages, db, scene="translate"))
+    result = json.loads(result_text)
+
+    question.content_zh = result["content_zh"]
+    for opt in options:
+        for opt_zh in result["options_zh"]:
+            if opt["key"] == opt_zh["key"]:
+                opt["text_zh"] = opt_zh["text_zh"]
+                break
+    question.options = options  # JSONB 直接赋值
+    db.commit()
+
+    return build_question_translation_payload(question)
+
+
+def translate_term(term: str) -> dict:
+    """翻译单个术语（不需要 db，使用全局配置回退）"""
+    # 翻译术语为轻量调用，直接使用环境变量配置
+    from app.core.config import settings
+
+    base_url = settings.AI_API_BASE_URL
+    api_key = settings.AI_API_KEY
+    model = settings.AI_MODEL
+
+    if not api_key:
+        raise ValueError("AI API Key 未配置")
+
+    base = base_url.rstrip("/")
+    if base.endswith("/chat/completions"):
+        api_url = base
+    elif base.endswith("/v1"):
+        api_url = base + "/chat/completions"
+    else:
+        api_url = base + "/v1/chat/completions"
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "你是一位专业的隐私技术领域翻译专家。"
+                "请将以下英文术语或短语翻译为中文，并提供简短的中文释义。"
+                '返回 JSON 格式：{"term_zh": "中文翻译", "definition_zh": "中文释义"}'
+                "只返回 JSON，不要其他内容。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": term,
+        },
+    ]
+
+    payload = {"model": model, "messages": messages, "temperature": 0.3}
+    resp = httpx.post(api_url, json=payload, headers=headers, timeout=60.0, verify=False)
+    if not resp.is_success:
+        raise ValueError(f"AI API 错误: {resp.status_code}")
+
+    result_text = resp.json()["choices"][0]["message"]["content"]
+    result_text = _strip_code_fence(result_text)
+    return json.loads(result_text)
+
+
+def batch_translate_vocab(db, vocab_list) -> int:
+    """批量翻译词汇，返回成功翻译的数量"""
+    from app.models.vocabulary import Vocabulary
+
+    terms_data = []
+    for v in vocab_list:
+        entry = {"id": v.id, "term": v.term}
+        if v.definition:
+            entry["definition"] = v.definition
+        terms_data.append(entry)
+
+    results = batch_translate_terms(terms_data, db)
+    result_map = {r["id"]: r for r in results}
+
+    count = 0
+    for v in vocab_list:
+        r = result_map.get(v.id)
+        if r:
+            v.term_zh = r.get("term_zh") or v.term_zh
+            v.definition_zh = r.get("definition_zh") or v.definition_zh
+            count += 1
+
+    db.commit()
+    return count
+
+
+def batch_translate_terms(terms_data, db=None) -> list:
+    terms_json = json.dumps(terms_data, ensure_ascii=False)
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "你是一位专业的隐私技术领域翻译专家。"
+                "请将以下隐私/数据保护领域的英文术语翻译为中文。"
+                "对每个术语提供：term_zh（术语的中文翻译）和 definition_zh（释义的中文翻译，如有英文释义的话）。"
+                "技术缩写（如 GDPR、APEC、DPO 等）保留原文不翻译。"
+                '返回 JSON 数组格式：[{"id": 1, "term_zh": "中文翻译", "definition_zh": "中文释义"}, ...]'
+                "只返回 JSON 数组，不要其他内容。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": terms_json,
+        },
+    ]
+
+    result_text = call_ai_api(messages, db, scene="translate")
+    result_text = result_text.strip()
+    if result_text.startswith("```"):
+        result_text = result_text.split("\n", 1)[1]
+        result_text = result_text.rsplit("```", 1)[0]
+
+    return json.loads(result_text)
+
+
+def explain_question(db, question: Question) -> dict:
+    options = _load_options(question)
+    options_text = "\n".join([f"{o['key']}. {o['text']}" for o in options])
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "你是一位 CIPT（认证信息隐私技术师）考试辅导专家。"
+                "请解析以下题目，说明正确答案的原因以及其他选项为什么不正确。"
+                '返回 JSON 格式：{"explanation": "英文解析", "explanation_zh": "中文解析"}'
+                "只返回 JSON，不要其他内容。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"题目：{question.content}\n\n选项：\n{options_text}\n\n正确答案：{question.correct_answer}",
+        },
+    ]
+
+    result_text = _strip_code_fence(call_ai_api(messages, db, scene="explain"))
+    result = json.loads(result_text)
+
+    question.explanation = result["explanation"]
+    question.explanation_zh = result["explanation_zh"]
+    db.commit()
+
+    return build_question_explanation_payload(question)
