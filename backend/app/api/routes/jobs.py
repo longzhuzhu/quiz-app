@@ -8,6 +8,7 @@ from app.core.database import get_db
 from app.models.background_job import BackgroundJob
 from app.models.question_bank import QuestionBank
 from app.models.user import User
+from app.schemas.job import JobCreateRequest
 from app.services.job_service import (
     JOB_TYPE_BANK_FREQUENT_TRANSLATE,
     JOB_TYPE_PROFESSIONAL_VOCAB_TRANSLATE,
@@ -40,35 +41,35 @@ def _parse_bank_id(value):
     return None
 
 
-def _build_payload(job_type: str, source: dict, db: Session) -> tuple[dict | None, HTTPException | None]:
-    payload = {}
+def _build_payload(job_type: str, source: dict, db: Session) -> tuple[dict, HTTPException | None]:
+    payload: dict = {}
     if job_type == JOB_TYPE_BANK_FREQUENT_TRANSLATE:
         bank_id = _parse_bank_id(source.get("bank_id"))
         if bank_id is None:
-            return None, HTTPException(status_code=400, detail="bank_id 必须为整数")
+            return {}, HTTPException(status_code=400, detail="bank_id 必须为整数")
         bank = db.get(QuestionBank, bank_id)
         if not bank:
-            return None, HTTPException(status_code=404, detail="题库不存在")
+            return {}, HTTPException(status_code=404, detail="题库不存在")
         payload["bank_id"] = bank_id
     return payload, None
 
 
 @router.post("")
 def create_job(
-    data: dict,
+    data: JobCreateRequest,
     _admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    job_type = data.get("job_type")
+    job_type = data.job_type
     if job_type not in VALID_JOB_TYPES:
         raise HTTPException(status_code=400, detail="不支持的任务类型")
 
-    payload, payload_error = _build_payload(job_type, data, db)
+    payload, payload_error = _build_payload(job_type, data.model_dump(), db)
     if payload_error:
         raise payload_error
 
     try:
-        result, job, message = create_or_reuse_job(job_type, payload, _admin.id, db)
+        result, job, message = create_or_reuse_job(db, job_type, payload, _admin.id)
     except JobServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message)
 

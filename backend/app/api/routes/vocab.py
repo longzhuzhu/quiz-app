@@ -12,6 +12,11 @@ from app.models.vocabulary import Vocabulary, UserVocabProgress
 from app.models.question_bank import QuestionBank
 from app.models.bank_word import BankWordFrequency, UserBankWordProgress, BankWordExclusion
 from app.models.user import User
+from app.schemas.vocab import (
+    VocabAddRequest,
+    VocabProgressUpdateRequest,
+    FrequentProgressUpdateRequest,
+)
 from app.services.import_service import MIN_FREQUENCY, TOP_FREQUENT_TERMS_LIMIT
 
 router = APIRouter()
@@ -114,19 +119,19 @@ def list_personal(
 
 @router.post("/personal", status_code=201)
 def add_personal(
-    data: dict,
+    data: VocabAddRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    term = data.get("term", "").strip()
+    term = data.term.strip()
     if not term:
         raise HTTPException(status_code=400, detail="单词不能为空")
 
-    term_zh = (data.get("term_zh") or "").strip() or None
-    definition_zh = (data.get("definition_zh") or "").strip() or None
+    term_zh = (data.term_zh or "").strip() or None
+    definition_zh = (data.definition_zh or "").strip() or None
 
     # 自动翻译：未提供中文时调用 AI
-    if data.get("auto_translate") and not term_zh:
+    if data.auto_translate and not term_zh:
         try:
             from app.services.ai_service import translate_term
             result = translate_term(term)
@@ -137,7 +142,7 @@ def add_personal(
 
     word = Vocabulary(
         term=term,
-        definition=(data.get("definition") or "").strip() or None,
+        definition=data.definition.strip() or None if data.definition else None,
         term_zh=term_zh,
         definition_zh=definition_zh,
         is_system=False,
@@ -152,7 +157,7 @@ def add_personal(
 @router.put("/items/{vocabulary_id}/progress")
 def update_progress(
     vocabulary_id: int,
-    data: dict,
+    data: VocabProgressUpdateRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -160,11 +165,10 @@ def update_progress(
     if not word:
         raise HTTPException(status_code=404, detail="词汇不存在")
 
-    is_mastered = data.get("is_mastered")
-    if not isinstance(is_mastered, bool):
-        raise HTTPException(status_code=400, detail="is_mastered 必须为布尔值")
     if not word.is_system and word.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="无权限")
+
+    is_mastered = data.is_mastered
 
     progress = db.query(UserVocabProgress).filter_by(
         user_id=current_user.id,
@@ -186,19 +190,19 @@ def update_progress(
 
 @router.post("/professional", status_code=201)
 def add_professional(
-    data: dict,
+    data: VocabAddRequest,
     _admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    term = data.get("term", "").strip()
+    term = data.term.strip()
     if not term:
         raise HTTPException(status_code=400, detail="单词不能为空")
 
     word = Vocabulary(
         term=term,
-        definition=(data.get("definition") or "").strip() or None,
-        term_zh=(data.get("term_zh") or "").strip() or None,
-        definition_zh=(data.get("definition_zh") or "").strip() or None,
+        definition=data.definition.strip() or None if data.definition else None,
+        term_zh=data.term_zh.strip() if data.term_zh else None,
+        definition_zh=data.definition_zh.strip() if data.definition_zh else None,
         is_system=True,
     )
     db.add(word)
@@ -339,8 +343,8 @@ def list_frequent(
     progress_by_term = _get_bank_word_progress_map(current_user.id, bank_id, db)
 
     mastered_value = _parse_bool_arg(mastered)
-    if mastered_value is not None and mastered_value is None:
-        raise HTTPException(status_code=400, detail="mastered 参数无效")
+    # mastered_value 为 None 表示未传参或值无效，此时不做筛选
+    # _parse_bool_arg 已将无效字符串转为 None，无需额外校验
 
     frequent_query = db.query(BankWordFrequency).filter_by(bank_id=bank_id)
     if excluded_terms:
@@ -394,20 +398,13 @@ def list_frequent(
 
 @router.put("/frequent-items/progress")
 def update_frequent_progress(
-    data: dict,
+    data: FrequentProgressUpdateRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    bank_id = data.get("bank_id")
-    term = (data.get("term") or "").strip()
-    is_mastered = data.get("is_mastered")
-
-    if not isinstance(bank_id, int):
-        raise HTTPException(status_code=400, detail="bank_id 必须为整数")
-    if not term:
-        raise HTTPException(status_code=400, detail="term 不能为空")
-    if not isinstance(is_mastered, bool):
-        raise HTTPException(status_code=400, detail="is_mastered 必须为布尔值")
+    bank_id = data.bank_id
+    term = data.term.strip()
+    is_mastered = data.is_mastered
 
     bank = db.get(QuestionBank, bank_id)
     if not bank:

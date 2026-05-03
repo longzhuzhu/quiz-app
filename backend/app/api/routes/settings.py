@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_admin
 from app.core.database import get_db
 from app.models.user import User
+from app.schemas.settings import AISettingsUpdateRequest, AITestRequest
 from app.services.settings_service import (
     get_effective_ai_settings,
     get_key as get_setting,
@@ -43,21 +44,21 @@ def get_ai_settings(
 
 @router.put("/ai")
 def update_ai_settings(
-    data: dict,
+    data: AISettingsUpdateRequest,
     _admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    if "ai_api_base_url" in data:
-        set_setting(db, "ai_api_base_url", data["ai_api_base_url"].strip())
-    api_key = (data.get("ai_api_key") or "").strip()
+    if data.ai_api_base_url is not None:
+        set_setting(db, "ai_api_base_url", data.ai_api_base_url.strip())
+    api_key = (data.ai_api_key or "").strip()
     if api_key:
         set_encrypted_ai_api_key(db, api_key)
-    if "ai_model" in data:
-        set_setting(db, "ai_model", data["ai_model"].strip())
-    if "ai_translate_model" in data:
-        set_setting(db, "ai_translate_model", data["ai_translate_model"].strip())
-    if "ai_explain_model" in data:
-        set_setting(db, "ai_explain_model", data["ai_explain_model"].strip())
+    if data.ai_model is not None:
+        set_setting(db, "ai_model", data.ai_model.strip())
+    if data.ai_translate_model is not None:
+        set_setting(db, "ai_translate_model", data.ai_translate_model.strip())
+    if data.ai_explain_model is not None:
+        set_setting(db, "ai_explain_model", data.ai_explain_model.strip())
 
     db.commit()
     return {"message": "设置已保存"}
@@ -72,7 +73,7 @@ def get_ai_key(
 
 @router.post("/ai/test")
 def test_ai_connection(
-    data: dict,
+    data: AITestRequest,
     _admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -81,9 +82,9 @@ def test_ai_connection(
     try:
         ai_config = get_effective_ai_settings(
             db,
-            base_url=data.get("ai_api_base_url"),
-            api_key=data.get("ai_api_key"),
-            model=data.get("ai_model"),
+            base_url=data.ai_api_base_url,
+            api_key=data.ai_api_key,
+            model=data.ai_model,
         )
     except ValueError as exc:
         return {"success": False, "error": str(exc)}

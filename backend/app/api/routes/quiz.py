@@ -14,6 +14,7 @@ from app.models.question import Question
 from app.models.quiz import QuizSession, QuizAnswer
 from app.models.wrong import WrongAnswer, UserQuestionStat
 from app.models.user import User
+from app.schemas.quiz import QuizStartRequest, QuizAnswerRequest, QuizFinishRequest
 
 router = APIRouter()
 
@@ -70,7 +71,7 @@ def _upsert_user_question_stat(user_id: int, question_id: int, db: Session) -> i
         return result or 0
 
 
-def _load_options(question: Question) -> list:
+def _load_options(question: Question) -> list | dict:
     """加载题目选项，兼容 JSONB 和 JSON 字符串格式"""
     options = question.options
     if isinstance(options, str):
@@ -80,14 +81,14 @@ def _load_options(question: Question) -> list:
 
 @router.post("/start")
 def start_quiz(
-    data: dict,
+    data: QuizStartRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     user_id = current_user.id
-    bank_id = data["bank_id"]
-    mode = data.get("mode", "sequential")
-    question_count = data.get("question_count")
+    bank_id = data.bank_id
+    mode = data.mode
+    question_count = data.question_count
     is_exam = mode == "exam"
 
     query = db.query(Question).filter_by(bank_id=bank_id)
@@ -145,14 +146,14 @@ def start_quiz(
 
 @router.post("/answer")
 def submit_answer(
-    data: dict,
+    data: QuizAnswerRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     user_id = current_user.id
-    session_id = data["session_id"]
-    question_id = data["question_id"]
-    user_answer = data["user_answer"]
+    session_id = data.session_id
+    question_id = data.question_id
+    user_answer = data.user_answer
 
     session = db.get(QuizSession, session_id)
     if not session:
@@ -241,12 +242,12 @@ def submit_answer(
 
 @router.post("/finish")
 def finish_quiz(
-    data: dict,
+    data: QuizFinishRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     user_id = current_user.id
-    session = db.get(QuizSession, data["session_id"])
+    session = db.get(QuizSession, data.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="答题会话不存在")
     if session.user_id != user_id:

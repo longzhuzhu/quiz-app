@@ -12,6 +12,7 @@ from app.models.question import Question
 from app.models.quiz import QuizSession, QuizAnswer
 from app.models.wrong import WrongAnswer, UserQuestionStat
 from app.models.user import User
+from app.schemas.wrong import WrongPracticeRequest
 
 router = APIRouter()
 
@@ -26,7 +27,7 @@ def _get_user_question_counts(user_id: int, question_ids: list[int], db: Session
     return {item.question_id: item.answer_count for item in stats}
 
 
-def _load_options(question: Question) -> list:
+def _load_options(question: Question) -> list | dict:
     options = question.options
     if isinstance(options, str):
         return json.loads(options)
@@ -71,12 +72,12 @@ def list_wrong(
 
 @router.post("/practice")
 def practice_wrong(
-    data: dict,
+    data: WrongPracticeRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     user_id = current_user.id
-    bank_id = data.get("bank_id")
+    bank_id = data.bank_id
 
     query = db.query(WrongAnswer).filter_by(user_id=user_id, is_resolved=False)
     if bank_id:

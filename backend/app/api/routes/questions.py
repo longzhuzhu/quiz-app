@@ -10,6 +10,7 @@ from app.core.database import get_db
 from app.models.question import Question
 from app.models.question_bank import QuestionBank
 from app.models.user import User
+from app.schemas.question import QuestionCreateRequest, QuestionUpdateRequest
 from app.services.ai_service import (
     clear_question_explanation,
     clear_question_translation,
@@ -71,20 +72,20 @@ def list_questions(
 
 @router.post("/", status_code=201)
 def create_question(
-    data: dict,
+    data: QuestionCreateRequest,
     _admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     q = Question(
-        bank_id=data["bank_id"],
-        question_type=data["question_type"],
-        content=data["content"],
-        options=data["options"],  # JSONB 直接存储列表
-        correct_answer=data["correct_answer"],
+        bank_id=data.bank_id,
+        question_type=data.question_type,
+        content=data.content,
+        options=data.options,  # JSONB 直接存储列表
+        correct_answer=data.correct_answer,
     )
     db.add(q)
 
-    bank = db.get(QuestionBank, data["bank_id"])
+    bank = db.get(QuestionBank, data.bank_id)
     if bank:
         bank.question_count = db.query(Question).filter_by(bank_id=bank.id).count() + 1
 
@@ -96,7 +97,7 @@ def create_question(
 @router.put("/{question_id}")
 def update_question(
     question_id: int,
-    data: dict,
+    data: QuestionUpdateRequest,
     _admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -104,16 +105,14 @@ def update_question(
     if not q:
         raise HTTPException(status_code=404, detail="题目不存在")
 
-    if "content" in data:
-        content = data["content"]
-        if content != q.content:
+    if data.content is not None:
+        if data.content != q.content:
             clear_question_translation(db, q)
             clear_question_explanation(db, q)
-        q.content = content
+        q.content = data.content
 
-    if "options" in data:
-        updated_options = data["options"]
-        sanitized_updated = sanitize_options_for_storage(updated_options)
+    if data.options is not None:
+        sanitized_updated = sanitize_options_for_storage(data.options)
         current_options = q.options
         if isinstance(current_options, str):
             current_options = json.loads(current_options)
@@ -123,17 +122,15 @@ def update_question(
             clear_question_explanation(db, q)
             q.options = sanitized_updated  # JSONB 直接存储
 
-    if "correct_answer" in data:
-        correct_answer = data["correct_answer"]
-        if correct_answer != q.correct_answer:
+    if data.correct_answer is not None:
+        if data.correct_answer != q.correct_answer:
             clear_question_explanation(db, q)
-        q.correct_answer = correct_answer
+        q.correct_answer = data.correct_answer
 
-    if "question_type" in data:
-        question_type = data["question_type"]
-        if question_type != q.question_type:
+    if data.question_type is not None:
+        if data.question_type != q.question_type:
             clear_question_explanation(db, q)
-        q.question_type = question_type
+        q.question_type = data.question_type
 
     db.commit()
     db.refresh(q)
