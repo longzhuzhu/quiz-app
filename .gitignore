@@ -10,5 +10,4 @@ dist/
 logs/
 plugins/
 .venv/
-
 .worktrees/
