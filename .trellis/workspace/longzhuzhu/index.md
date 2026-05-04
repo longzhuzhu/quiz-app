@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 6
+- **Total Sessions**: 7
 - **Last Active**: 2026-05-04
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~214 | Active |
+| `journal-1.md` | ~252 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 7 | 2026-05-04 | smart-import 准确率优化(CIPT 283 PDF) — PR-0~PR-4 全部闭环 + spec 收尾 | `5ab8125`, `109c45b`, `4c5ca3e`, `41af6cf`, `5d7014e`, `4fba0b7` | `codex/vocab-progress-settings-deploy` |
 | 6 | 2026-05-04 | Bootstrap Guidelines: 填充项目开发规范 spec | `882f1dc`, `ed5460f`, `9670f82` | `codex/vocab-progress-settings-deploy` |
 | 5 | 2026-05-04 | 智能导入去重与准确率提升 | `057b9ac`, `13b0cc3` | `codex/vocab-progress-settings-deploy` |
 | 4 | 2026-05-04 | 智能导入核心闭环实现 | `deba9e4`, `8c0a96d`, `64a88b6`, `59b3696` | `codex/vocab-progress-settings-deploy` |

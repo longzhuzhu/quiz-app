@@ -212,3 +212,41 @@ Convert vocabulary batch translation from synchronous while-loop to async Backgr
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: smart-import 准确率优化(CIPT 283 PDF) — PR-0~PR-4 全部闭环 + spec 收尾
+
+**Date**: 2026-05-04
+**Task**: smart-import 准确率优化(CIPT 283 PDF) — PR-0~PR-4 全部闭环 + spec 收尾
+**Branch**: `codex/vocab-progress-settings-deploy`
+
+### Summary
+
+完成 smart-import CIPT 283 PDF 准确率优化任务：PR-0 移除 Flask 测试、PR-1 call_ai_api timeout 参数化、PR-2 chunk 失败两级重试+单题降级、PR-3 reparse 卫生(imported_qnos 去重)、PR-4 reconciliation 报告+logger+集成测试；收尾修复 flag_modified→整字段重赋值、补充 import-pipeline/database-guidelines/logging-guidelines spec；31 测试全绿，AC1-AC6 勾选。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5ab8125` | (see git log) |
+| `109c45b` | (see git log) |
+| `4c5ca3e` | (see git log) |
+| `41af6cf` | (see git log) |
+| `5d7014e` | (see git log) |
+| `4fba0b7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
