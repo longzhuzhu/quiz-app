@@ -12,8 +12,14 @@ from app.core.database import get_db
 from app.models.question_bank import QuestionBank
 from app.models.question import Question
 from app.models.quiz import QuizSession, QuizAnswer
-from app.models.wrong import WrongAnswer
+from app.models.wrong import WrongAnswer, UserQuestionStat
 from app.models.bank_word import BankWordFrequency, UserBankWordProgress, BankWordExclusion
+from app.models.background_job import BackgroundJob
+from app.models.import_job import ImportJob
+from app.models.import_chunk import ImportChunk
+from app.models.import_parsed_question import ImportParsedQuestion
+from app.models.import_review_item import ImportReviewItem
+from app.models.vector_index import VectorIndex
 from app.models.user import User
 from app.schemas.bank import BankCreateRequest, BankUpdateRequest
 from app.services.import_service import build_bank_word_frequencies
@@ -154,12 +160,37 @@ def delete_bank(
         db.query(WrongAnswer).filter(
             WrongAnswer.question_id.in_(question_ids_subquery)
         ).delete(synchronize_session=False)
+        db.query(UserQuestionStat).filter(
+            UserQuestionStat.question_id.in_(question_ids_subquery)
+        ).delete(synchronize_session=False)
 
         db.query(QuizSession).filter_by(bank_id=bank.id).delete(synchronize_session=False)
         db.query(BankWordFrequency).filter_by(bank_id=bank.id).delete(synchronize_session=False)
         db.query(UserBankWordProgress).filter_by(bank_id=bank.id).delete(synchronize_session=False)
         db.query(BankWordExclusion).filter_by(bank_id=bank.id).delete(synchronize_session=False)
+        db.query(VectorIndex).filter_by(bank_id=bank.id).delete(synchronize_session=False)
         db.query(Question).filter_by(bank_id=bank.id).delete(synchronize_session=False)
+
+        # 清理 import_jobs 链：按 FK 依赖从叶子到根删除
+        import_job_ids_subquery = db.query(ImportJob.id).filter(ImportJob.bank_id == bank.id)
+        db.query(ImportReviewItem).filter(
+            ImportReviewItem.import_job_id.in_(import_job_ids_subquery)
+        ).delete(synchronize_session=False)
+        db.query(ImportParsedQuestion).filter(
+            ImportParsedQuestion.import_job_id.in_(import_job_ids_subquery)
+        ).delete(synchronize_session=False)
+        db.query(ImportChunk).filter(
+            ImportChunk.import_job_id.in_(import_job_ids_subquery)
+        ).delete(synchronize_session=False)
+        # 断开 ImportJob -> BackgroundJob FK，再删除关联的 BackgroundJob
+        import_jobs = db.query(ImportJob).filter(ImportJob.bank_id == bank.id).all()
+        bg_job_ids = [ij.background_job_id for ij in import_jobs if ij.background_job_id]
+        for ij in import_jobs:
+            ij.background_job_id = None
+        db.flush()
+        if bg_job_ids:
+            db.query(BackgroundJob).filter(BackgroundJob.id.in_(bg_job_ids)).delete(synchronize_session=False)
+        db.query(ImportJob).filter_by(bank_id=bank.id).delete(synchronize_session=False)
 
         db.delete(bank)
         db.commit()
@@ -174,6 +205,7 @@ def delete_bank(
 def import_questions(
     bank_id: int,
     file: UploadFile = File(...),
+    force: str = Form("false"),
     _admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -190,16 +222,20 @@ def import_questions(
             detail=f"文件大小超过限制（最大 {app_settings.MAX_UPLOAD_SIZE_MB}MB）",
         )
 
+    force = force.lower() == "true"
     result = create_smart_import_job(
         db=db,
         bank_id=bank_id,
         file_bytes=file_bytes,
         filename=file.filename or "unknown",
         user_id=_admin.id,
+        force=force,
     )
 
     if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
+        # 同文件重复导入返回 409 Conflict
+        status_code = 409 if result.get("duplicate_of") else 400
+        raise HTTPException(status_code=status_code, detail=result)
 
     return result
 

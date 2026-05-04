@@ -482,3 +482,18 @@ heartbeat_job(db, job)
 # Correct
 heartbeat_job(db, job, success_increment=1)
 ```
+
+### 新增迁移后必须验证 `alembic upgrade head` 实际执行成功
+
+```python
+# Wrong - 只验证 app 能 import，不验证迁移已执行
+# implement/check agent 报告 "Verification: Passed" 但数据库表不存在
+
+# Correct - 验证清单必须包含：
+# 1. cd backend && alembic upgrade head   ← 迁移实际执行
+# 2. cd backend && alembic downgrade -1   ← 回滚验证
+# 3. 对新表做一次实际查询确认表存在
+# 4. 关键 API 端点端到端调用（至少 curl）
+```
+
+> **教训**: 子代理验证 `from app.main import create_app` 成功只说明代码能加载，不代表数据库 schema 与代码一致。新增 Alembic 迁移时，**迁移执行是验收的必要步骤**，不是可选步骤。

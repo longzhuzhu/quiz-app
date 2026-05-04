@@ -81,6 +81,34 @@ NOISE_PATTERNS = [
 ]
 
 
+# ─── 去重签名 ──────────────────────────────────
+
+
+def _question_signature(
+    question_type: str, content: str, options: list, correct_answer: list
+) -> tuple:
+    """生成题目唯一签名，用于去重（复用旧版逻辑，增强 options/answer 排序归一化）"""
+    normalized_options = (
+        json.dumps(
+            sorted(options, key=lambda o: o.get("label", o.get("key", ""))),
+            sort_keys=True, ensure_ascii=False, separators=(",", ":"),
+        )
+        if isinstance(options, list)
+        else str(options)
+    )
+    normalized_answer = (
+        ",".join(sorted(a.strip().upper() for a in correct_answer))
+        if correct_answer
+        else ""
+    )
+    return (
+        question_type,
+        (content or "").strip(),
+        normalized_options,
+        normalized_answer,
+    )
+
+
 # ─── 创建导入任务 ──────────────────────────────────
 
 
@@ -92,6 +120,7 @@ def create_smart_import_job(
     user_id: int,
     auto_import: bool = True,
     use_llm_cache: bool = True,
+    force: bool = False,
 ) -> dict:
     """创建 ImportJob + BackgroundJob，返回导入任务信息"""
     bank = db.get(QuestionBank, bank_id)
@@ -113,8 +142,24 @@ def create_smart_import_job(
     else:
         return {"error": f"不支持的文件格式: {filename}"}
 
-    # 保存文件
+    # 保存文件（先保存以获取 file_hash）
     file_path, file_hash = save_upload_file(file_bytes, filename)
+
+    # 同文件重复导入检测
+    if not force:
+        dup_job = (
+            db.query(ImportJob)
+            .filter_by(bank_id=bank_id, file_hash=file_hash)
+            .filter(ImportJob.status.in_(["completed", "partial_imported", "parsing", "extracting", "chunking", "validating", "review_required"]))
+            .first()
+        )
+        if dup_job:
+            return {
+                "error": "该文件已导入过",
+                "duplicate_of": dup_job.id,
+                "existing_status": dup_job.status,
+                "hint": "使用 force=true 强制重新导入",
+            }
 
     # 创建 ImportJob
     import_job = ImportJob(
@@ -249,6 +294,14 @@ def run_smart_import(db: Session, background_job: BackgroundJob) -> None:
     # 阶段3：LLM 解析
     _update_import_job_status(db, import_job, "parsing")
 
+    # 构建 seen_signatures：Bank 已有题目 + 本 Job 已入库题目
+    seen_signatures = set()
+    existing_questions = db.query(Question).filter_by(bank_id=import_job.bank_id).all()
+    for eq in existing_questions:
+        eq_options = eq.options if isinstance(eq.options, list) else json.loads(eq.options or "[]")
+        eq_answer = [a.strip() for a in (eq.correct_answer or "").split(",")] if eq.correct_answer else []
+        seen_signatures.add(_question_signature(eq.question_type, eq.content, eq_options, eq_answer))
+
     chunks = (
         db.query(ImportChunk)
         .filter_by(import_job_id=import_job.id)
@@ -274,6 +327,7 @@ def run_smart_import(db: Session, background_job: BackgroundJob) -> None:
                 import_job=import_job,
                 auto_import=auto_import,
                 use_llm_cache=use_llm_cache,
+                seen_signatures=seen_signatures,
             )
         except Exception as exc:
             logger.error("Chunk %d 解析失败: %s", chunk.chunk_no, exc)
@@ -303,6 +357,7 @@ def _process_chunk(
     import_job: ImportJob,
     auto_import: bool,
     use_llm_cache: bool,
+    seen_signatures: set | None = None,
 ) -> None:
     """处理单个 chunk：LLM 解析 → 质量评分 → 自动入库或人工复核"""
     chunk.status = "parsing"
@@ -383,6 +438,7 @@ def _process_chunk(
             chunk=chunk,
             chunk_text=chunk_text,
             auto_import=auto_import,
+            seen_signatures=seen_signatures,
         )
 
 
@@ -393,8 +449,46 @@ def _save_parsed_question(
     chunk: ImportChunk,
     chunk_text: str,
     auto_import: bool,
+    seen_signatures: set | None = None,
 ) -> None:
     """保存单个解析题目，执行质量评分并决定自动入库或人工复核"""
+    # 去重签名检查
+    correct_answer_list = parsed_q.correct_answer or []
+    question_type = parsed_q.question_type
+    if question_type == "unknown":
+        question_type = "single"
+
+    options_for_sig = [{"label": opt.label, "text": opt.text} for opt in parsed_q.options]
+    sig = _question_signature(question_type, parsed_q.content, options_for_sig, correct_answer_list)
+    if seen_signatures is not None and sig in seen_signatures:
+        # 转换 options 格式用于存储
+        options_for_storage = [{"key": opt.label, "text": opt.text} for opt in parsed_q.options]
+        correct_answer_str = ",".join(correct_answer_list) if correct_answer_list else ""
+        parsed_question = ImportParsedQuestion(
+            import_job_id=import_job.id,
+            chunk_id=chunk.id,
+            source_question_no=parsed_q.source_question_no,
+            question_type=question_type,
+            scenario_text=parsed_q.scenario,
+            content=parsed_q.content,
+            options_json=options_for_storage,
+            correct_answer=correct_answer_str.split(",") if correct_answer_str else [],
+            explanation=parsed_q.explanation or None,
+            references_json=parsed_q.references if parsed_q.references else None,
+            llm_confidence=Decimal(str(round(parsed_q.confidence, 4))),
+            final_confidence=Decimal("0"),
+            issues_json={"issues": ["DUPLICATE"], "details": [{"code": "DUPLICATE", "severity": "LOW", "detail": "与已有题目重复"}]},
+            review_status="duplicate",
+            import_status="skipped",
+        )
+        db.add(parsed_question)
+        import_job.parsed_questions = (import_job.parsed_questions or 0) + 1
+        db.commit()
+        return
+
+    if seen_signatures is not None:
+        seen_signatures.add(sig)
+
     # 质量检查
     final_confidence, issues = _quality_check(parsed_q, chunk_text)
 
@@ -402,12 +496,7 @@ def _save_parsed_question(
     options_for_storage = [{"key": opt.label, "text": opt.text} for opt in parsed_q.options]
 
     # 转换 correct_answer 格式：list[str] -> str
-    correct_answer_str = ",".join(parsed_q.correct_answer) if parsed_q.correct_answer else ""
-
-    # 确定 question_type
-    question_type = parsed_q.question_type
-    if question_type == "unknown":
-        question_type = "single"
+    correct_answer_str = ",".join(correct_answer_list) if correct_answer_list else ""
 
     # 创建 ImportParsedQuestion
     parsed_question = ImportParsedQuestion(
@@ -471,26 +560,54 @@ def _write_question_to_bank(
     db: Session,
     parsed_question: ImportParsedQuestion,
     bank_id: int,
-) -> Question:
-    """将解析结果写入 Question 表"""
-    # 获取当前最大 order_index
-    max_order = db.query(func.max(Question.order_index)).filter_by(bank_id=bank_id).scalar() or -1
-
-    # 转换 options 格式
+) -> Question | None:
+    """将解析结果写入 Question 表（双重保险：再次检查 Question 表去重）"""
+    # 转换 options 和 correct_answer 格式
     options = parsed_question.options_json
     if isinstance(options, list):
-        # 确保每个 option 有 key 和 text
         options = [
             {"key": opt.get("key", opt.get("label", "")), "text": opt.get("text", "")}
             for opt in options
         ]
 
-    # 转换 correct_answer 格式
     correct_answer = parsed_question.correct_answer
     if isinstance(correct_answer, list):
+        correct_answer_list = correct_answer
         correct_answer_str = ",".join(correct_answer) if correct_answer else ""
     else:
         correct_answer_str = str(correct_answer) if correct_answer else ""
+        correct_answer_list = [a.strip() for a in correct_answer_str.split(",")] if correct_answer_str else []
+
+    # 双重保险：检查 Question 表是否已存在相同签名
+    sig = _question_signature(
+        parsed_question.question_type or "single",
+        parsed_question.content,
+        options,
+        correct_answer_list,
+    )
+    existing = (
+        db.query(Question)
+        .filter_by(bank_id=bank_id, content=sig[1])
+        .first()
+    )
+    if existing:
+        # 比较完整签名
+        existing_sig = _question_signature(
+            existing.question_type,
+            existing.content,
+            existing.options if isinstance(existing.options, list) else json.loads(existing.options or "[]"),
+            [a.strip() for a in (existing.correct_answer or "").split(",")] if existing.correct_answer else [],
+        )
+        if existing_sig == sig:
+            logger.info("题库 %d 已存在相同题目 (id=%d)，跳过写入", bank_id, existing.id)
+            parsed_question.import_status = "skipped"
+            parsed_question.review_status = "duplicate"
+            parsed_question.imported_question_id = existing.id
+            db.flush()
+            return existing
+
+    # 获取当前最大 order_index
+    max_order = db.query(func.max(Question.order_index)).filter_by(bank_id=bank_id).scalar() or -1
 
     question = Question(
         bank_id=bank_id,
@@ -616,16 +733,24 @@ def run_reparse(db: Session, background_job: BackgroundJob) -> None:
     auto_import = config.get("auto_import", True)
     use_llm_cache = False  # 重新解析时跳过缓存
 
+    # 构建已入库题目的 seen_signatures
+    seen_signatures = set()
+    existing_questions = db.query(Question).filter_by(bank_id=import_job.bank_id).all()
+    for eq in existing_questions:
+        eq_options = eq.options if isinstance(eq.options, list) else json.loads(eq.options or "[]")
+        eq_answer = [a.strip() for a in (eq.correct_answer or "").split(",")] if eq.correct_answer else []
+        seen_signatures.add(_question_signature(eq.question_type, eq.content, eq_options, eq_answer))
+
     _process_chunk(
         db=db,
         chunk=chunk,
         import_job=import_job,
         auto_import=auto_import,
         use_llm_cache=use_llm_cache,
+        seen_signatures=seen_signatures,
     )
 
     # 更新 import_job 状态
-    import_job = db.get(ImportJob, import_job_id)
     if import_job.review_questions > 0:
         _update_import_job_status(db, import_job, "review_required")
     else:
@@ -828,6 +953,7 @@ def _split_into_chunks(
     """将文本按题号切分成 chunks，每个 chunk 包含 1-5 道题
 
     返回: [{chunk_no, start_page, end_page, chunk_text, normalized_text}]
+    答案参考表不再拼入 chunk_text，通过 _build_llm_prompt() 的 system prompt 传递
     """
     # 尝试按题号模式分割
     segments = _split_by_question_markers(normalized_text)
@@ -836,18 +962,13 @@ def _split_into_chunks(
         # 没有找到题号模式，按字符数粗切
         segments = _split_by_char_count(normalized_text)
 
-    # 将答案键上下文加入 chunk 文本
     chunks = []
     for i, segment in enumerate(segments, start=1):
-        chunk_text = segment["text"]
-        if answer_key_text:
-            chunk_text += f"\n\n--- 答案参考表 ---\n{answer_key_text}"
-
         chunks.append({
             "chunk_no": i,
             "start_page": segment.get("start_page"),
             "end_page": segment.get("end_page"),
-            "chunk_text": chunk_text,
+            "chunk_text": segment["text"],
             "normalized_text": segment["text"],
         })
 
@@ -944,6 +1065,9 @@ def _build_llm_prompt(chunk_text: str, answer_key_text: str = "") -> list[dict]:
         "8. 输出必须是 JSON，不要输出 Markdown 代码块标记。\n"
         "9. question_type 取值: single（单选）、multiple（多选）、truefalse（判断题）、unknown（不确定）。\n"
         "10. 如果选项标记有 [CORRECT] 或类似标记，该选项即为正确答案。\n"
+        "11. 只提取有明确题号标记的题目（如 Q1、Question #1、1. 等编号格式），"
+        "忽略没有题号标记的段落、知识点讲解、案例分析说明等非题目内容。\n"
+        "12. 如果一段文字是知识讲解而非考试题目，不要将其转化为题目格式。\n"
         f"{answer_key_section}"
         "\n"
         'JSON 格式要求：\n'
@@ -1064,8 +1188,12 @@ def _quality_check(
     if short_options > 0:
         option_quality_score *= 0.8
 
-    # 4. duplicate_safety_score: 本阶段无向量去重，默认为 1.0
-    duplicate_safety_score = 1.0
+    # 4. duplicate_safety_score: 无题号标记的题目降分
+    if not parsed_q.source_question_no or parsed_q.source_question_no.strip().lower() in ("unknown", ""):
+        duplicate_safety_score = 0.5
+        issues.append({"code": "NO_QUESTION_NO", "severity": "MEDIUM", "detail": "无题号标记，可能不是正式题目"})
+    else:
+        duplicate_safety_score = 1.0
 
     # 5. noise_clean_score: 噪声检测
     noise_clean_score = 1.0
