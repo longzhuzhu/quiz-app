@@ -70,7 +70,28 @@ def sanitize_options_for_storage(options):
     return [{k: v for k, v in option.items() if k != "text_zh"} for option in options]
 
 
-def call_ai_api(messages, db, scene="default"):
+def call_ai_api(messages, db, scene: str = "default", timeout: float = 60.0):
+    """调用 AI Chat Completion API（OpenAI 兼容协议）。
+
+    参数:
+        messages: OpenAI 兼容的 messages 列表（list[{"role": ..., "content": ...}])
+        db: SQLAlchemy Session，用于读取 SystemSetting 中的 AI 配置
+        scene: AI 场景标识（"default" / "translate" / "explain" / "smart_import"），
+            用于按场景选择不同的 model 配置。
+        timeout: HTTP 请求超时秒数。默认 60.0；smart_import 等异步重 chunk
+            场景应显式传 120.0。该值直接透传给 httpx.post 的 timeout 参数
+            （对连接 + 读 + 写都生效）。
+
+    返回:
+        str: LLM 响应中 ``choices[0].message.content`` 字段。
+
+    抛出:
+        ValueError: API Key 未配置，或 API 返回非 2xx 状态码。
+        httpx.TimeoutException: 请求超时（含 ConnectTimeout / ReadTimeout 等）。
+            注意：本函数**不**对超时做 wrap，原生异常直接冒泡，调用方可
+            ``except httpx.TimeoutException`` 精准捕获并按需重试。
+        httpx.HTTPError: 其它 httpx 层错误（连接拒绝、SSL 等）。
+    """
     ai = get_effective_ai_settings(db, scene=scene)
     if not ai["api_key"]:
         raise ValueError("AI API Key 未配置，请在管理后台设置")
@@ -94,7 +115,7 @@ def call_ai_api(messages, db, scene="default"):
         "temperature": 0.3,
     }
 
-    resp = httpx.post(api_url, json=payload, headers=headers, timeout=60.0, verify=False)
+    resp = httpx.post(api_url, json=payload, headers=headers, timeout=timeout, verify=False)
     if not resp.is_success:
         detail = resp.text[:200] if resp.text else resp.reason_phrase
         raise ValueError(f"AI API 错误 ({resp.status_code}): {detail}")

@@ -385,7 +385,7 @@ def _process_chunk(
         db.commit()
 
         try:
-            response_text = call_ai_api(messages, db, scene="smart_import")
+            response_text = call_ai_api(messages, db, scene="smart_import", timeout=120.0)
         except Exception as exc:
             chunk.status = "llm_failed"
             chunk.issues_json = {"error": f"LLM 调用失败: {exc}"}
