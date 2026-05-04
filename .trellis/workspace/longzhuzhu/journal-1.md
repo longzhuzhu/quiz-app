@@ -287,3 +287,36 @@ Convert vocabulary batch translation from synchronous while-loop to async Backgr
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: 移除硬编码数据库凭据
+
+**Date**: 2026-05-04
+**Task**: 移除硬编码数据库凭据
+**Branch**: `codex/vocab-progress-settings-deploy`
+
+### Summary
+
+将 config.py 和 db_diag.py 中的明文 PostgreSQL 密码替换为占位符/环境变量，.env 提供真实值
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `683c180` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
