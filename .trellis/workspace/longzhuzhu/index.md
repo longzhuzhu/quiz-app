@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 2
+- **Total Sessions**: 3
 - **Last Active**: 2026-05-04
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~76 | Active |
+| `journal-1.md` | ~109 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 3 | 2026-05-04 | Fix quiz translate options + vocab auto-translate | `45d0e5b` | `codex/vocab-progress-settings-deploy` |
 | 2 | 2026-05-04 | Async batch translate: sync→async job pattern | `07e4d11` | `codex/vocab-progress-settings-deploy` |
 | 1 | 2026-05-03 | FastAPI + PostgreSQL MVP Phase 1 基础迁移 | `08bd8a7`, `97011ba`, `03d42fd`, `bccca29` | `codex/vocab-progress-settings-deploy` |
 <!-- @@@/auto:session-history -->
