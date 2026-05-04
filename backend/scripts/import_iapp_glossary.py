@@ -12,10 +12,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from sqlalchemy.orm import Session
 from app.models.vocabulary import Vocabulary
 
-# IAPP Algolia 搜索配置（公开的搜索 API）
-ALGOLIA_APP_ID = 'JQI28CT642'
-ALGOLIA_API_KEY = '05142b663d0923f3d221386f59c9702c'
-ALGOLIA_INDEX = 'all'
+# IAPP Algolia 搜索配置（从环境变量读取）
+ALGOLIA_APP_ID = os.environ.get('ALGOLIA_APP_ID', '')
+ALGOLIA_API_KEY = os.environ.get('ALGOLIA_API_KEY', '')
+ALGOLIA_INDEX = os.environ.get('ALGOLIA_INDEX', 'all')
 ALGOLIA_URL = f'https://{ALGOLIA_APP_ID}-dsn.algolia.net/1/indexes/{ALGOLIA_INDEX}/query'
 
 
@@ -84,6 +84,8 @@ def import_terms(terms, db: Session):
 
 
 def main():
+    if not ALGOLIA_APP_ID or not ALGOLIA_API_KEY:
+        sys.exit('错误：请设置环境变量 ALGOLIA_APP_ID 和 ALGOLIA_API_KEY')
     print('正在从 IAPP 获取隐私术语表...')
     terms = fetch_glossary_terms()
     print(f'获取到 {len(terms)} 个术语')
