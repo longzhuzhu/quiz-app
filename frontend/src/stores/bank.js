@@ -9,7 +9,7 @@ export const useBankStore = defineStore('bank', () => {
   async function fetchBanks() {
     loading.value = true
     try {
-      const res = await client.get('/banks/')
+      const res = await client.get('/banks')
       banks.value = res.data
     } finally {
       loading.value = false

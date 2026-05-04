@@ -9,8 +9,8 @@ import requests
 # 将 backend 目录加入 sys.path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from app import create_app
-from models import db, Vocabulary
+from sqlalchemy.orm import Session
+from app.models.vocabulary import Vocabulary
 
 # IAPP Algolia 搜索配置（公开的搜索 API）
 ALGOLIA_APP_ID = 'JQI28CT642'
@@ -59,9 +59,9 @@ def fetch_glossary_terms():
     return terms
 
 
-def import_terms(terms):
+def import_terms(terms, db: Session):
     """将术语导入数据库，跳过已存在的"""
-    existing = {v.term for v in Vocabulary.query.filter_by(is_system=True).all()}
+    existing = {v.term for v in db.query(Vocabulary).filter_by(is_system=True).all()}
 
     added = 0
     skipped = 0
@@ -75,11 +75,11 @@ def import_terms(terms):
             definition=t['definition'] or None,
             is_system=True,
         )
-        db.session.add(vocab)
+        db.add(vocab)
         existing.add(t['term'])
         added += 1
 
-    db.session.commit()
+    db.commit()
     return added, skipped
 
 
@@ -88,10 +88,13 @@ def main():
     terms = fetch_glossary_terms()
     print(f'获取到 {len(terms)} 个术语')
 
-    app = create_app()
-    with app.app_context():
-        added, skipped = import_terms(terms)
+    from app.core.database import SessionLocal
+    db = SessionLocal()
+    try:
+        added, skipped = import_terms(terms, db)
         print(f'导入完成：新增 {added} 个，跳过 {skipped} 个已存在术语')
+    finally:
+        db.close()
 
 
 if __name__ == '__main__':

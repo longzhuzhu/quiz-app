@@ -312,7 +312,7 @@ def import_iapp_glossary(
     try:
         from scripts.import_iapp_glossary import fetch_glossary_terms, import_terms
         terms = fetch_glossary_terms()
-        added, skipped = import_terms(terms)
+        added, skipped = import_terms(terms, db)
         return {
             "message": f"导入完成：新增 {added} 个，跳过 {skipped} 个已存在术语",
             "added": added,

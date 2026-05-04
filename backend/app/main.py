@@ -2,7 +2,7 @@
 
 import os
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -21,6 +21,7 @@ def create_app() -> FastAPI:
         version="2.0.0",
         docs_url=None,
         redoc_url=None,
+        redirect_slashes=False,
     )
 
     # CORS 配置（与 Flask 版一致：仅 /api/* 允许跨域）
@@ -72,9 +73,11 @@ def create_app() -> FastAPI:
             app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
         # SPA fallback：所有非 /api/* 且未匹配到静态文件的路径返回 index.html
-        # 注意：此路由必须在所有 API 路由之后注册
+        # 使用 APIRoute 检查排除 /api 前缀路径，避免 catch-all 路由吞掉 404 API 请求
         @app.get("/{full_path:path}")
         async def serve_frontend(request: Request, full_path: str):
+            if full_path.startswith("api"):
+                raise HTTPException(status_code=404)
             file_path = os.path.join(dist_dir, full_path)
             if full_path and os.path.isfile(file_path):
                 return FileResponse(file_path)
