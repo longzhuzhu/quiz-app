@@ -250,3 +250,40 @@ Convert vocabulary batch translation from synchronous while-loop to async Backgr
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: Deploy verify smart-import accuracy
+
+**Date**: 2026-05-04
+**Task**: Deploy verify smart-import accuracy
+**Branch**: `codex/vocab-progress-settings-deploy`
+
+### Summary
+
+部署环境验证 PR-0~PR-4 smart-import 改造效果：后端重启+前端重启+新导入 Job 10 验证 282/283 唯一题号入库(99.6%)，chunk 27 重试成功，零重复，reconciliation 六字段齐全，所有验收标准通过
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e358076` | (see git log) |
+| `8063656` | (see git log) |
+| `4fba0b7` | (see git log) |
+| `5d7014e` | (see git log) |
+| `41af6cf` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
