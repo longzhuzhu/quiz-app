@@ -1,112 +1,165 @@
-# State Management
+# 状态管理
 
-> How state is managed in this project.
-
----
-
-## Overview
-
-Vue 3 + Pinia 管理全局状态，组件内部使用 `ref`/`reactive` 管理局部状态。服务端状态通过 Axios API 获取，对长时间运行的任务使用轮询保持同步。
+> Pinia Store 与异步错误处理的实际模式。
 
 ---
 
-## State Categories
+## Store 风格
 
-| 类型 | 管理方式 | 示例 |
-|------|---------|------|
-| **全局认证状态** | Pinia store (`auth.js`) | 用户信息、JWT token |
-| **领域状态** | Pinia store (`bank.js`, `quiz.js`) | 题库列表、答题会话 |
-| **页面局部状态** | 组件 `ref`/`reactive` | 表单输入、展开/折叠 |
-| **异步任务状态** | 组件内轮询 `setInterval` | 导入任务进度、后台任务状态 |
-| **URL 状态** | Vue Router params/query | 当前题库 ID、分页参数 |
-
----
-
-## When to Use Global State
-
-- 多个页面/组件共享的数据（用户认证、活跃题库）
-- 需要跨页面持久化的状态
-- 不需要用 Pinia 的场景：仅单个页面使用的列表数据，直接在组件内管理
-
----
-
-## Server State
-
-### 短请求：一次性获取
+全量 **Pinia Setup Store**（函数式 `defineStore`），不使用 Options Store。
 
 ```javascript
-const jobs = ref([])
-const loading = ref(true)
-try {
-  const { data } = await apiClient.get('/api/import-jobs')
-  jobs.value = data
-} finally {
-  loading.value = false
-}
+export const useAuthStore = defineStore('auth', () => {
+  const user = ref(JSON.parse(localStorage.getItem('user') || 'null'))
+  const token = ref(localStorage.getItem('token') || '')
+  const isLoggedIn = computed(() => !!token.value)
+  // ...
+  return { user, token, isLoggedIn, login, register, logout, fetchMe }
+})
 ```
 
-### 长任务：轮询模式
+真实示例：`frontend/src/stores/auth.js` 行1-42
 
-对 `running`/`parsing` 等进行中状态的任务，使用 `setInterval` 轮询：
+---
+
+## 三个 Store
+
+| Store | 职责 | 持久化 |
+|-------|------|--------|
+| `auth.js` | 认证状态 + 用户信息 | localStorage（token + user JSON） |
+| `quiz.js` | 答题会话 + 当前题目索引 | 无 |
+| `bank.js` | 题库列表 + loading 状态 | 无 |
+
+---
+
+## Store 之间无直接 import
+
+Store 不互相 import，依赖通过 View 组件层编排：
 
 ```javascript
-const pollTimer = ref(null)
+// HomeView.vue — View 层同时使用两个 Store
+const bankStore = useBankStore()
+const quizStore = useQuizStore()
+```
 
-function startPolling(jobId) {
-  stopPolling()
-  pollTimer.value = setInterval(async () => {
-    const { data } = await apiClient.get(`/api/import-jobs/${jobId}`)
-    Object.assign(job.value, data)
-    if (['completed', 'failed', 'cancelled'].includes(data.status)) {
-      stopPolling()
-    }
-  }, 3000)
-}
+真实示例：`frontend/src/views/HomeView.vue` 行132-133
 
-function stopPolling() {
-  if (pollTimer.value) {
-    clearInterval(pollTimer.value)
-    pollTimer.value = null
+---
+
+## 异步操作与错误处理分层
+
+### Store 层：try/finally 管理 loading，不 catch 错误
+
+Store 内 action 不 catch 异常，错误直接抛出。只负责 loading 状态管理：
+
+```javascript
+// bank.js — try/finally 管理 loading
+async function fetchBanks() {
+  loading.value = true
+  try {
+    const res = await client.get('/banks')
+    banks.value = res.data
+  } finally {
+    loading.value = false
   }
 }
-
-// 组件卸载时清理
-onBeforeUnmount(stopPolling)
 ```
 
-**关键约定**：
-- 轮询间隔 3 秒（平衡实时性与服务器负载）
-- 必须在 `onBeforeUnmount` 中清理定时器，避免内存泄漏
-- 任务进入终态（completed/failed/cancelled）后立即停止轮询
-- 初始加载时先做一次同步请求，再启动轮询
+真实示例：`frontend/src/stores/bank.js` 行9-17
+
+```javascript
+// quiz.js — 不 catch，错误抛给调用方
+async function startQuiz(bankId, mode, questionCount) {
+  const res = await client.post('/quiz/start', { bank_id: bankId, mode, question_count: questionCount })
+  session.value = res.data.session
+  questions.value = res.data.questions
+  currentIndex.value = 0
+}
+```
+
+真实示例：`frontend/src/stores/quiz.js` 行10-19
+
+### View 层：try/catch + toast.error() 展示错误
+
+View 组件捕获 Store 抛出的错误，用 toast 展示给用户：
+
+```javascript
+async function startQuiz(bank, mode) {
+  try {
+    await quizStore.startQuiz(bank.id, mode)
+    router.push(`/quiz/${quizStore.session.id}`)
+  } catch (e) {
+    toast.error(e.response?.data?.error || '开始答题失败')
+  }
+}
+```
+
+真实示例：`frontend/src/views/HomeView.vue` 行159-166
+
+### 例外：auth.fetchMe 自行处理 401
+
+`fetchMe` 是唯一在 Store 内 catch 的 action，401 时自行 `logout()`：
+
+```javascript
+async function fetchMe() {
+  try {
+    const res = await client.get('/auth/me')
+    user.value = res.data
+    localStorage.setItem('user', JSON.stringify(user.value))
+  } catch {
+    logout()
+  }
+}
+```
+
+真实示例：`frontend/src/stores/auth.js` 行31-39
 
 ---
 
-## Common Mistakes
+## 路由守卫读 localStorage，不读 Store
 
-### Don't: 忘记清理轮询定时器
-
-```javascript
-// Wrong - 组件卸载后定时器仍在执行
-setInterval(fetchJobStatus, 3000)
-```
-
-### Do: 组件卸载时清理
+路由守卫直接读 `localStorage.getItem('token')` 和 `localStorage.getItem('user')`，不使用 `useAuthStore()`，因为 Pinia 可能尚未初始化：
 
 ```javascript
-const timer = setInterval(fetchJobStatus, 3000)
-onBeforeUnmount(() => clearInterval(timer))
+router.beforeEach((to, from, next) => {
+  const token = localStorage.getItem('token')
+  if (to.meta.auth && !token) {
+    next('/login')
+  } else if (to.meta.guest && token) {
+    next('/')
+  } else if (to.meta.admin) {
+    const user = JSON.parse(localStorage.getItem('user') || 'null')
+    if (!user?.is_admin) next('/')
+    else next()
+  } else {
+    next()
+  }
+})
 ```
 
-### Don't: 可能为 null 的属性不加 optional chaining
+真实示例：`frontend/src/router/index.js` 行27-43
+
+---
+
+## auth Store localStorage 持久化
+
+登录成功时写入，logout 时清除：
 
 ```javascript
-// Wrong - file_type 可能为 null 导致 TypeError
-job.file_type.toUpperCase()
+// 写入
+localStorage.setItem('token', token.value)
+localStorage.setItem('user', JSON.stringify(user.value))
+
+// 清除
+localStorage.removeItem('token')
+localStorage.removeItem('user')
 ```
 
-### Do: 使用 optional chaining
+Store 初始化时从 localStorage 恢复：
 
 ```javascript
-job.file_type?.toUpperCase() ?? ''
+const user = ref(JSON.parse(localStorage.getItem('user') || 'null'))
+const token = ref(localStorage.getItem('token') || '')
 ```
+
+真实示例：`frontend/src/stores/auth.js` 行6-7

@@ -1,249 +1,183 @@
-# Quality Guidelines
+# 代码质量
 
-> Code quality standards for frontend development.
-
----
-
-## Testing Framework
-
-### Design Decision: Vitest + Vue Test Utils
-
-**Context**: 项目需要前端测试能力覆盖纯函数、组合函数、Pinia store 逻辑和 Vue 组件行为。
-
-**Options Considered**:
-1. Node.js 内置 test runner — 零依赖但仅支持纯函数测试，无法 mount 组件
-2. Jest + Vue Test Utils — 成熟稳定但配置复杂，与 Vite 集成需额外 babel 转译
-3. Vitest + Vue Test Utils — Vite 原生集成，配置极简，支持组件 mount 和 jsdom
-
-**Decision**: 选择 **Vitest + Vue Test Utils + jsdom**。理由：
-- Vitest 直接复用 Vite 配置（别名、插件、转换），零额外配置
-- Vue Test Utils 是 Vue 3 官方组件测试库，可 `mount` 组件并模拟用户交互
-- jsdom 提供浏览器 API 模拟，组件测试必需
-
-### 测试层级与工具映射
-
-| 测试层级 | 工具 | 适用范围 |
-|---------|------|---------|
-| 单元测试 | Vitest | 纯函数（`utils/*.js`）、组合函数（`composables/*.js`） |
-| Store 测试 | Vitest + Pinia 测试工具 | Pinia store 逻辑（state / action / getter） |
-| 组件测试 | Vitest + Vue Test Utils | Vue 组件渲染、用户交互、事件触发 |
-
-### 依赖与配置
-
-**devDependencies**（需添加到 `package.json`）：
-
-```
-vitest: ^2.1.8
-@vue/test-utils: ^2.4.6
-jsdom: ^25.0.1
-```
-
-**scripts**：
-
-```json
-{
-  "test": "vitest",
-  "test:run": "vitest run"
-}
-```
-
-**vitest.config.ts**：
-
-```typescript
-import { defineConfig } from 'vitest/config'
-import vue from '@vitejs/plugin-vue'
-import { fileURLToPath } from 'node:url'
-
-export default defineConfig({
-  plugins: [vue()],
-  resolve: {
-    alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url)),
-    },
-  },
-  test: {
-    environment: 'jsdom',
-    globals: true,
-    include: ['tests/**/*.{test,spec}.{js,ts}'],
-  },
-})
-```
-
-> `globals: true` 允许在测试文件中直接使用 `describe` / `it` / `expect` / `vi` 而无需显式 import。
-
-### 测试文件组织
-
-```
-frontend/tests/
-├── unit/               # 纯函数 / composables
-│   ├── jobStatus.test.js
-│   └── formatXxx.test.js
-├── stores/             # Pinia store 测试
-│   └── auth.test.js
-└── components/         # 组件测试
-    └── QuestionCard.test.js
-```
-
-### 测试模式
-
-#### 纯函数测试
-
-```javascript
-// tests/unit/jobStatus.test.js
-import { describe, it, expect } from 'vitest'
-import { formatJobBannerMessage } from '@/utils/jobStatus'
-
-describe('formatJobBannerMessage', () => {
-  it('running job formats single-line progress', () => {
-    const result = formatJobBannerMessage(
-      { status: 'running', status_message: '翻译中，已处理 40/542', progress_done: 40, progress_total: 542, attempt_count: 1, max_attempts: 3 },
-      { idleMessage: '任务正在后台执行' },
-    )
-    expect(result).toBe('翻译中 · 已处理 40/542 · 第 1/3 次 · 刷新页面不会中断')
-  })
-})
-```
-
-#### Pinia Store 测试
-
-```javascript
-// tests/stores/auth.test.js
-import { describe, it, expect, beforeEach } from 'vitest'
-import { setActivePinia, createPinia } from 'pinia'
-import { useAuthStore } from '@/stores/auth'
-
-describe('auth store', () => {
-  beforeEach(() => {
-    setActivePinia(createPinia())
-  })
-
-  it('isLoggedIn returns false when user is null', () => {
-    const store = useAuthStore()
-    expect(store.isLoggedIn).toBe(false)
-  })
-})
-```
-
-#### 组件测试
-
-```javascript
-// tests/components/QuestionCard.test.js
-import { describe, it, expect } from 'vitest'
-import { mount } from '@vue/test-utils'
-import QuestionCard from '@/components/QuestionCard.vue'
-
-describe('QuestionCard', () => {
-  it('renders question content', () => {
-    const wrapper = mount(QuestionCard, {
-      props: {
-        question: { content: 'What is IAPP?', options: ['A', 'B', 'C', 'D'], type: 'single' },
-      },
-    })
-    expect(wrapper.text()).toContain('What is IAPP?')
-  })
-})
-```
-
-### Mock 约定
-
-- **API 请求**：用 `vi.mock('@/api/client')` 拦截，不发起真实请求
-- **路由**：用 `vi.mock('vue-router')` 模拟 `useRoute` / `useRouter`
-- **定时器**：用 `vi.useFakeTimers()` 替代 `setTimeout` / `setInterval`
-
-### Lint 工具
-
-项目**未配置** lint 工具（无 eslint、prettier、stylelint 等）。代码格式和风格主要通过代码审查保障。
+> API 调用组织、错误处理体系与路由守卫的实际模式。
 
 ---
 
-## Required Patterns
+## API 调用组织
 
-### 1. 组合式 API + `<script setup>`
-
-所有 Vue 组件必须使用 `<script setup>` 语法：
-
-```vue
-<!-- Correct -->
-<script setup>
-import { ref } from 'vue'
-const count = ref(0)
-</script>
-
-<!-- Wrong - Options API -->
-<script>
-export default {
-  data() { return { count: 0 } }
-}
-</script>
-```
-
-### 2. Pinia 状态管理
-
-跨组件共享状态必须使用 Pinia store，不允许通过 props/events 多层传递：
+无独立 API 函数层。Store 和 View 直接使用 `client`（`frontend/src/api/client.js`）。
 
 ```javascript
-// stores/auth.js
-export const useAuthStore = defineStore('auth', () => {
-  const user = ref(null)
-  const isLoggedIn = computed(() => !!user.value)
-  return { user, isLoggedIn }
-})
+// Store 内直接调用
+const res = await client.get('/banks')
+
+// View 内直接调用
+const res = await client.get('/wrong/stats')
 ```
 
-### 3. API 调用统一走 Axios 实例
-
-所有 API 调用必须通过 `src/api/client.js` 的 Axios 实例，确保 JWT 拦截和 401 自动登出生效：
-
-```javascript
-// Correct
-import client from '@/api/client'
-const res = await client.get('/api/banks')
-
-// Wrong - 绕过拦截器
-import axios from 'axios'
-const res = await axios.get('/api/banks')
-```
+不创建 `api/banks.js`、`api/quiz.js` 等封装模块。
 
 ---
 
-## Forbidden Patterns
+## Axios 配置
 
-### 1. 直接操作 DOM
+`frontend/src/api/client.js` 全文 28 行，配置要点：
 
-```vue
-<!-- Wrong -->
-<div ref="el"></div>
-<script setup>
-const el = ref(null)
-el.value.style.color = 'red'  // 直接操作 DOM
-</script>
+- `baseURL: '/api'`，无 timeout 设置
+- 请求拦截器：自动注入 Bearer Token
 
-<!-- Correct - 用响应式绑定 -->
-<div :style="{ color: 'red' }"></div>
+```javascript
+client.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token')
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
 ```
 
-### 2. 在模板中写复杂逻辑
+真实示例：`frontend/src/api/client.js` 行8-14
 
-```vue
-<!-- Wrong -->
-<div v-if="items.filter(i => i.active).map(i => i.name).join(', ')">
+- 响应拦截器：401 清理 + 跳转登录页
 
-<!-- Correct - 用 computed -->
-<div v-if="activeItemNames">
-<script setup>
-const activeItemNames = computed(() =>
-  items.value.filter(i => i.active).map(i => i.name).join(', ')
+```javascript
+client.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    if (err.response?.status === 401) {
+      localStorage.removeItem('token')
+      localStorage.removeItem('user')
+      router.push('/login')
+    }
+    return Promise.reject(err)
+  }
 )
-</script>
+```
+
+真实示例：`frontend/src/api/client.js` 行16-26
+
+---
+
+## 错误处理三级体系
+
+### 第 1 级：全局拦截器（401）
+
+Axios 响应拦截器处理 401，清理 token 并跳转登录。其他错误 `Promise.reject(err)` 继续传递。
+
+### 第 2 级：Store 层（不 catch）
+
+Store action 不 catch 异常，只负责 loading 管理（try/finally）：
+
+```javascript
+async function fetchBanks() {
+  loading.value = true
+  try {
+    const res = await client.get('/banks')
+    banks.value = res.data
+  } finally {
+    loading.value = false
+  }
+}
+```
+
+真实示例：`frontend/src/stores/bank.js` 行9-17
+
+唯一例外：`auth.fetchMe` 自行 catch 后 logout。
+
+### 第 3 级：View/Component 层（try/catch + toast）
+
+View 和智能组件捕获错误，用 toast 展示：
+
+```javascript
+// View 层
+try {
+  await quizStore.startQuiz(bank.id, mode)
+} catch (e) {
+  toast.error(e.response?.data?.error || '开始答题失败')
+}
+
+// 智能组件层
+try {
+  const res = await client.post('/ai/translate', { question_id: props.questionId })
+  emit('translated', res.data)
+} catch (e) {
+  toast.error(e.response?.data?.error || '翻译失败')
+}
+```
+
+真实示例：`frontend/src/views/HomeView.vue` 行159-166、`frontend/src/components/TranslateButton.vue` 行34-41
+
+---
+
+## 静默处理变体
+
+### catch {} 空块
+
+部分非关键 API 调用使用空 catch 块静默忽略错误：
+
+```javascript
+// HomeView.vue — 错题统计获取失败不影响页面
+try {
+  const res = await client.get('/wrong/stats')
+  wrongStats.value = res.data
+} catch {}
+```
+
+### 设置 error 标记
+
+部分场景用 `ref` 标记错误状态，不弹 toast：
+
+```javascript
+// useBackgroundJob.js — 轮询失败时设置 status
+catch {
+  setJobSafely(
+    job.value ? { ...job.value, status: 'unknown', status_message: '任务状态获取失败' } : null,
+    currentGeneration,
+  )
+}
 ```
 
 ---
 
-## Code Review Checklist
+## 路由 meta 分类
 
-- [ ] 新增 API 调用是否通过 `client.js` Axios 实例
-- [ ] 组件是否使用 `<script setup>` 语法
-- [ ] 共享状态是否使用 Pinia store
-- [ ] 纯工具函数是否可测试（无 DOM / Vue 依赖）
-- [ ] Tailwind 类名是否遵循项目风格一致性
-- [ ] 路由是否有正确的 `meta.auth` 守卫
+| meta 类型 | 含义 | 校验方式 |
+|-----------|------|---------|
+| `{ guest: true }` | 仅游客可访问 | 有 token 则跳转首页 |
+| `{ auth: true }` | 需登录 | 无 token 则跳转登录 |
+| `{ auth: true, admin: true }` | 需管理员 | 无 token 或非 admin 则跳转首页 |
+
+路由守卫直接读 `localStorage`，不读 Pinia Store：
+
+```javascript
+router.beforeEach((to, from, next) => {
+  const token = localStorage.getItem('token')
+  if (to.meta.auth && !token) {
+    next('/login')
+  } else if (to.meta.guest && token) {
+    next('/')
+  } else if (to.meta.admin) {
+    const user = JSON.parse(localStorage.getItem('user') || 'null')
+    if (!user?.is_admin) next('/')
+    else next()
+  } else {
+    next()
+  }
+})
+```
+
+真实示例：`frontend/src/router/index.js` 行27-43
+
+---
+
+## 路由懒加载
+
+所有页面组件均使用动态 `import()` 懒加载：
+
+```javascript
+{ path: '/login', component: () => import('../views/LoginView.vue') }
+{ path: '/admin/banks', component: () => import('../views/AdminBanksView.vue') }
+```
+
+真实示例：`frontend/src/router/index.js` 行4-20
