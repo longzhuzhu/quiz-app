@@ -107,3 +107,39 @@ Convert vocabulary batch translation from synchronous while-loop to async Backgr
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: 智能导入核心闭环实现
+
+**Date**: 2026-05-04
+**Task**: 智能导入核心闭环实现
+**Branch**: `codex/vocab-progress-settings-deploy`
+
+### Summary
+
+实现 FastAPI + PostgreSQL + LLM 异步智能导入闭环：6 个新模型 + 002 迁移、smart_import_service (抽取/切片/LLM解析/质量评分/自动入库/复核)、Worker job_handlers 扩展、import_jobs + import_review API 路由、前端 3 个新页面 + 异步上传流程。质量检查修复 8 个问题（answer_key_text 持久化、progress_total/heartbeat、JSONB 类型注解、null safety）。Spec 更新覆盖目录结构、JSONB 类型、Worker 模式、轮询、跨层一致性。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `deba9e4` | (see git log) |
+| `8c0a96d` | (see git log) |
+| `64a88b6` | (see git log) |
+| `59b3696` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
