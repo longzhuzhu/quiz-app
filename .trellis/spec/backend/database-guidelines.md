@@ -191,3 +191,48 @@ def _upsert_user_question_stat(user_id, question_id):
 - 索引名：`idx_<table>_<column>`（如 `idx_background_jobs_status`）
 - 外键列：`<referenced_table_singular>_id`（如 `bank_id` 引用 `question_banks.id`）
 - 时间戳列：`created_at`, `updated_at`（DEFAULT NOW()）
+
+---
+
+## JSONB 字段写入：必须重新赋值（不要 mutate）
+
+PostgreSQL JSONB 字段在 SQLAlchemy 中默认不会检测**就地变更**，必须整字段重新赋值才会触发 dirty。
+
+```python
+# Wrong：就地 mutate，flush 后丢失
+import_job.config_json["reconciliation"] = recon
+db.commit()  # config_json 视图未变更，不发出 UPDATE
+
+# Correct：dict spread 重新赋值
+import_job.config_json = {
+    **(import_job.config_json or {}),
+    "reconciliation": recon,
+}
+db.commit()  # 整字段重新赋值，发出 UPDATE
+```
+
+项目惯例不依赖 `flag_modified`（保持显式不可变赋值）。
+
+---
+
+## JSONB on SQLite（仅测试用）
+
+测试场景下用 in-memory SQLite 跑真 ORM（避免 fixture 走 mock 失真），但 `JSONB` 是 PostgreSQL 专属类型，SQLite 无法识别。约定通过 `@compiles(JSONB, "sqlite")` 钩子把 JSONB 编译成 SQLite 的 `JSON`，**仅作用于该测试文件，不污染生产模型**：
+
+```python
+# backend/tests/test_smart_import_e2e_reconciliation.py（示例）
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
+
+@compiles(JSONB, "sqlite")
+def _compile_jsonb_for_sqlite(type_, compiler, **kw):
+    return "JSON"
+```
+
+适用条件：
+
+- 仅 in-memory SQLite 测试需要（`sqlite:///:memory:`）
+- 同一 ORM 模型在生产（PG）和测试（SQLite）共用
+- **不适用于** Alembic 迁移文件（迁移必须在真实 PG 上跑 `upgrade head`）
+
+不要把这段写到生产代码或 `app/models/*.py`；写到具体测试文件顶部即可。
