@@ -35,8 +35,8 @@ backend/
 │   │       ├── jobs.py           # /api/jobs
 │   │       ├── settings.py       # /api/settings
 │   │       ├── vocab.py          # /api/vocab
-│   │       ├── import_jobs.py    # /api/import-jobs（预留，后续阶段实现）
-│   │       ├── import_review.py  # /api/import-review（预留，后续阶段实现）
+│   │       ├── import_jobs.py    # /api/import-jobs — 导入任务列表/详情/chunks/解析结果
+│   │       ├── import_review.py  # /api/import-jobs — 复核 accept/skip/reparse
 │   │       └── background_jobs.py # /api/background-jobs
 │   ├── models/
 │   │   ├── user.py
@@ -47,6 +47,12 @@ backend/
 │   │   ├── vocabulary.py
 │   │   ├── bank_word.py
 │   │   ├── background_job.py
+│   │   ├── import_job.py          # 智能导入任务
+│   │   ├── import_chunk.py       # 导入文本切片
+│   │   ├── import_parsed_question.py  # LLM 解析结果
+│   │   ├── import_review_item.py # 人工复核项
+│   │   ├── llm_parse_cache.py    # LLM 响应缓存
+│   │   ├── vector_index.py       # 向量索引预留（本阶段不启用 pgvector）
 │   │   └── system_setting.py
 │   ├── schemas/
 │   │   ├── auth.py
@@ -58,24 +64,24 @@ backend/
 │   │   ├── settings.py
 │   │   ├── vocab.py
 │   │   ├── job.py
-│   │   ├── import_job.py         # 预留
-│   │   ├── import_review.py      # 预留
-│   │   └── llm_parse.py          # 预留
+│   │   ├── import_job.py         # 智能导入任务 Pydantic response schema
+│   │   ├── import_review.py      # 复核 Pydantic response schema
+│   │   └── llm_parse.py          # LLM 解析 Pydantic schema (ParsedOption, ParsedQuestion, LlmParseResult)
 │   ├── services/
 │   │   ├── ai_service.py
-│   │   ├── import_service.py
+│   │   ├── import_service.py     # 旧规则解析 + 高频词统计（保留，词频逻辑仍复用）
+│   │   ├── smart_import_service.py  # 智能导入核心服务：抽取/切片/LLM解析/质量评分/入库/复核
 │   │   ├── settings_service.py
 │   │   ├── job_service.py
 │   │   ├── job_handlers.py
-│   │   └── smart_import/         # 预留，后续阶段实现
-│   │       └── __init__.py
 │   └── workers/
-│       └── job_worker.py         # 预留
+│       └── job_worker.py         # Worker 进程，支持 question_import_llm / reparse
 ├── alembic/
 │   ├── env.py
 │   ├── script.py.mako
 │   └── versions/
-│       └── 001_initial.py
+│       ├── 001_initial.py
+│       └── 002_smart_import_tables.py
 ├── alembic.ini
 ├── requirements-fastapi.txt       # FastAPI 依赖
 ├── requirements.txt              # Flask 依赖（旧）

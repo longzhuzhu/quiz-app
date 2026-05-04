@@ -92,3 +92,44 @@ Create detailed flow docs when:
 - Multiple teams are involved
 - Data format is complex
 - Feature has caused bugs before
+
+---
+
+## Smart Import Cross-Layer Flow
+
+### Data Flow
+
+```
+FileUpload.vue → POST /api/banks/{bank_id}/import
+  → create_smart_import_job() → ImportJob + BackgroundJob created
+  → Response: { import_job_id, background_job_id }
+
+Worker: handle_question_import_llm()
+  → run_smart_import()
+    → file extraction → text normalization → chunk splitting
+    → for each chunk:
+      → LLM parse (or cache hit) → quality scoring
+      → high confidence → auto-insert Question
+      → low confidence → create ImportReviewItem
+    → _finalize_import() → update bank stats + word frequencies
+
+Frontend: ImportJobDetailView.vue polls GET /api/import-jobs/{id}
+  → displays progress, stats, chunk status
+
+Frontend: ImportReviewView.vue
+  → GET /api/import-jobs/{id}/review-items → display pending items
+  → POST accept → write Question as-is
+  → POST skip → mark review_item as skipped
+  → POST reparse → creates new BackgroundJob (async)
+```
+
+### Critical Consistency Points
+
+| Checkpoint | Risk | Mitigation |
+|-----------|------|-----------|
+| `config_json.answer_key_text` | Worker 中计算但未持久化 → `_process_chunk` 读空 | 提交前存储到 config_json |
+| `progress_total` 初始为 0 | 前端显示 0/0 进度条 | chunk 创建后立即设置 |
+| `heartbeat_job` 缺少 `success_increment` | progress_done 永远不增长 | 每次心跳传递 increment |
+| 单 chunk 异常中断整个 Worker | 所有后续 chunk 丢失 | 每个chunk独立 try-except |
+| review accept 重复执行 | 同一题目重复入库 | 检查 review_status 幂等拒绝 |
+| reparse 同步执行 | API 超时 | 必须创建 BackgroundJob 异步执行 |

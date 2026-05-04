@@ -77,6 +77,26 @@ class Question(Base):
     bank: Mapped["QuestionBank"] = relationship(back_populates="questions")
 ```
 
+### JSONB 类型注解必须与实际存储类型匹配
+
+SQLAlchemy `Mapped[T]` 中 T 必须与实际存储的 Python 类型一致。PostgreSQL JSONB 可存储 `dict`、`list`、`str`、`int` 等。
+
+```python
+# Correct - 存储选项列表
+options_json: Mapped[list] = mapped_column(JSONB, nullable=False)
+
+# Correct - 存储对象
+config_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+# Wrong - 实际存储 list 但声明为 dict
+options_json: Mapped[dict] = mapped_column(JSONB, nullable=False)  # 实际是 [{...}, ...]
+
+# Wrong - 实际存储 list 但声明为 dict
+correct_answer: Mapped[dict | None] = mapped_column(JSONB)  # 实际是 ["A", "B"]
+```
+
+> **Gotcha**: 虽然错误的 `Mapped[T]` 在运行时不会直接报错（JSONB 不校验 Python 类型注解），但会导致 ORM 层的类型提示误导开发者，且 MyPy/Pylance 静态检查会产生假阳性或假阴性。
+
 ---
 
 ## Query Patterns
