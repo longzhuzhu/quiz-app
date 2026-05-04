@@ -74,3 +74,36 @@ Convert vocabulary batch translation from synchronous while-loop to async Backgr
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: Fix quiz translate options + vocab auto-translate
+
+**Date**: 2026-05-04
+**Task**: Fix quiz translate options + vocab auto-translate
+**Branch**: `codex/vocab-progress-settings-deploy`
+
+### Summary
+
+修复答题页面两个问题：1) 翻译按钮不翻译选项（has_question_translation 只检查 content_zh + JSONB flag_modified 缺失）；2) 收藏单词无自动翻译（translate_term 不传 db 导致使用空 .env 配置 + AddVocabButton 无题目上下文）
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `45d0e5b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
