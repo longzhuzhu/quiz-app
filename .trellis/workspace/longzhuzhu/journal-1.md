@@ -41,3 +41,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: Async batch translate: sync→async job pattern
+
+**Date**: 2026-05-04
+**Task**: Async batch translate: sync→async job pattern
+**Branch**: `codex/vocab-progress-settings-deploy`
+
+### Summary
+
+Convert vocabulary batch translation from synchronous while-loop to async BackgroundJob pattern. POST /jobs creates task, Worker processes in background, frontend polls GET /jobs/active for progress. Progress survives page refresh. Fix SPA catch-all swallowing API 404s. Update code-specs with async job conventions.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `07e4d11` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
