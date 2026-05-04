@@ -1,0 +1,578 @@
+{
+  "total_pages": 178,
+  "total_chars_raw": 332359,
+  "total_chars_cleaned": 332573,
+  "pathological_pages_lt300": [
+    [
+      1,
+      54
+    ],
+    [
+      19,
+      285
+    ],
+    [
+      42,
+      15
+    ],
+    [
+      168,
+      280
+    ]
+  ],
+  "page_chars_min": 15,
+  "page_chars_max": 3951,
+  "page_chars_avg": 1868.4,
+  "regex_question_topic_hits_clean": 283,
+  "regex_correct_answer_hits_clean": 282,
+  "regex_question_topic_hits_raw": 283,
+  "regex_correct_answer_hits_raw": 282,
+  "nul_in_raw": 477,
+  "nul_in_cleaned": 0,
+  "unicode_ligature_in_raw": 0,
+  "unicode_ligature_in_cleaned": 0,
+  "nul_samples_raw": [
+    "fs/newsletters/<NUL>rm09-rehabv1.pd",
+    "dle the back- o<NUL>ce tasks. Sam w",
+    "discuss Jane's <NUL>rst impressions",
+    " them when you <NUL>nish a piece th",
+    "Could you just <NUL>x things and he"
+  ],
+  "unicode_ligature_samples_raw": [],
+  "control_chars_in_cleaned": {},
+  "normalized_len": 332750,
+  "answer_key_triggered": false,
+  "chunk_count": 31,
+  "chunk_max_chars_const": 12000,
+  "chunks": [
+    {
+      "chunk_no": 1,
+      "chars": 9601,
+      "q_count": 4,
+      "qnums": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "chunk_no": 2,
+      "chars": 10183,
+      "q_count": 5,
+      "qnums": [
+        5,
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "chunk_no": 3,
+      "chars": 11699,
+      "q_count": 9,
+      "qnums": [
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18
+      ]
+    },
+    {
+      "chunk_no": 4,
+      "chars": 11373,
+      "q_count": 11,
+      "qnums": [
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29
+      ]
+    },
+    {
+      "chunk_no": 5,
+      "chars": 11926,
+      "q_count": 11,
+      "qnums": [
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40
+      ]
+    },
+    {
+      "chunk_no": 6,
+      "chars": 11684,
+      "q_count": 6,
+      "qnums": [
+        41,
+        42,
+        43,
+        44,
+        45,
+        46
+      ]
+    },
+    {
+      "chunk_no": 7,
+      "chars": 11620,
+      "q_count": 7,
+      "qnums": [
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53
+      ]
+    },
+    {
+      "chunk_no": 8,
+      "chars": 11894,
+      "q_count": 11,
+      "qnums": [
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64
+      ]
+    },
+    {
+      "chunk_no": 9,
+      "chars": 11067,
+      "q_count": 5,
+      "qnums": [
+        65,
+        66,
+        67,
+        68,
+        69
+      ]
+    },
+    {
+      "chunk_no": 10,
+      "chars": 11571,
+      "q_count": 4,
+      "qnums": [
+        70,
+        71,
+        72,
+        73
+      ]
+    },
+    {
+      "chunk_no": 11,
+      "chars": 10766,
+      "q_count": 10,
+      "qnums": [
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83
+      ]
+    },
+    {
+      "chunk_no": 12,
+      "chars": 8868,
+      "q_count": 3,
+      "qnums": [
+        84,
+        85,
+        86
+      ]
+    },
+    {
+      "chunk_no": 13,
+      "chars": 11616,
+      "q_count": 5,
+      "qnums": [
+        87,
+        88,
+        89,
+        90,
+        91
+      ]
+    },
+    {
+      "chunk_no": 14,
+      "chars": 11652,
+      "q_count": 6,
+      "qnums": [
+        92,
+        93,
+        94,
+        95,
+        96,
+        97
+      ]
+    },
+    {
+      "chunk_no": 15,
+      "chars": 11525,
+      "q_count": 9,
+      "qnums": [
+        98,
+        99,
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106
+      ]
+    },
+    {
+      "chunk_no": 16,
+      "chars": 9937,
+      "q_count": 6,
+      "qnums": [
+        107,
+        108,
+        109,
+        110,
+        111,
+        112
+      ]
+    },
+    {
+      "chunk_no": 17,
+      "chars": 11568,
+      "q_count": 5,
+      "qnums": [
+        113,
+        114,
+        115,
+        116,
+        117
+      ]
+    },
+    {
+      "chunk_no": 18,
+      "chars": 11390,
+      "q_count": 8,
+      "qnums": [
+        118,
+        119,
+        120,
+        121,
+        122,
+        123,
+        124,
+        125
+      ]
+    },
+    {
+      "chunk_no": 19,
+      "chars": 10740,
+      "q_count": 3,
+      "qnums": [
+        126,
+        127,
+        128
+      ]
+    },
+    {
+      "chunk_no": 20,
+      "chars": 11297,
+      "q_count": 8,
+      "qnums": [
+        129,
+        130,
+        131,
+        132,
+        133,
+        134,
+        135,
+        136
+      ]
+    },
+    {
+      "chunk_no": 21,
+      "chars": 11721,
+      "q_count": 15,
+      "qnums": [
+        137,
+        138,
+        139,
+        140,
+        141,
+        142,
+        143,
+        144,
+        145,
+        146,
+        147,
+        148,
+        149,
+        150,
+        151
+      ]
+    },
+    {
+      "chunk_no": 22,
+      "chars": 11335,
+      "q_count": 22,
+      "qnums": [
+        152,
+        153,
+        154,
+        155,
+        156,
+        157,
+        158,
+        159,
+        160,
+        161,
+        162,
+        163,
+        164,
+        165,
+        166,
+        167,
+        168,
+        169,
+        170,
+        171,
+        172,
+        173
+      ]
+    },
+    {
+      "chunk_no": 23,
+      "chars": 9535,
+      "q_count": 15,
+      "qnums": [
+        174,
+        175,
+        176,
+        177,
+        178,
+        179,
+        180,
+        181,
+        182,
+        183,
+        184,
+        185,
+        186,
+        187,
+        188
+      ]
+    },
+    {
+      "chunk_no": 24,
+      "chars": 11358,
+      "q_count": 14,
+      "qnums": [
+        189,
+        190,
+        191,
+        192,
+        193,
+        194,
+        195,
+        196,
+        197,
+        198,
+        199,
+        200,
+        201,
+        202
+      ]
+    },
+    {
+      "chunk_no": 25,
+      "chars": 9676,
+      "q_count": 3,
+      "qnums": [
+        203,
+        204,
+        205
+      ]
+    },
+    {
+      "chunk_no": 26,
+      "chars": 11120,
+      "q_count": 16,
+      "qnums": [
+        206,
+        207,
+        208,
+        209,
+        210,
+        211,
+        212,
+        213,
+        214,
+        215,
+        216,
+        217,
+        218,
+        219,
+        220,
+        221
+      ]
+    },
+    {
+      "chunk_no": 27,
+      "chars": 11848,
+      "q_count": 24,
+      "qnums": [
+        222,
+        223,
+        224,
+        225,
+        226,
+        227,
+        228,
+        229,
+        230,
+        231,
+        232,
+        233,
+        234,
+        235,
+        236,
+        237,
+        238,
+        239,
+        240,
+        241,
+        242,
+        243,
+        244,
+        245
+      ]
+    },
+    {
+      "chunk_no": 28,
+      "chars": 11011,
+      "q_count": 18,
+      "qnums": [
+        246,
+        247,
+        248,
+        249,
+        250,
+        251,
+        252,
+        253,
+        254,
+        255,
+        256,
+        257,
+        258,
+        259,
+        260,
+        261,
+        262,
+        263
+      ]
+    },
+    {
+      "chunk_no": 29,
+      "chars": 9422,
+      "q_count": 3,
+      "qnums": [
+        264,
+        265,
+        266
+      ]
+    },
+    {
+      "chunk_no": 30,
+      "chars": 11297,
+      "q_count": 13,
+      "qnums": [
+        267,
+        268,
+        269,
+        270,
+        271,
+        272,
+        273,
+        274,
+        275,
+        276,
+        277,
+        278,
+        279
+      ]
+    },
+    {
+      "chunk_no": 31,
+      "chars": 2617,
+      "q_count": 4,
+      "qnums": [
+        280,
+        281,
+        282,
+        283
+      ]
+    }
+  ],
+  "chunks_q_count_max": 24,
+  "chunks_q_count_avg": 9.13,
+  "chunks_over_max_chars": [],
+  "chunk_crossover_qnums": {},
+  "expected_count": 283,
+  "seen_in_chunks_count": 283,
+  "missing_after_split": [],
+  "qnums_in_full_normalized": {
+    "count": 283,
+    "missing_vs_1_283": []
+  },
+  "split_pattern_hits": [
+    {
+      "pattern": "(?:^|\\n)\\s*Question\\s+#?\\d+",
+      "hits": 283
+    },
+    {
+      "pattern": "(?:^|\\n)\\s*QUESTION\\s*[:#]\\s*\\d+",
+      "hits": 283
+    },
+    {
+      "pattern": "(?:^|\\n)\\s*NEW\\s+QUESTION\\s+\\d+",
+      "hits": 0
+    },
+    {
+      "pattern": "(?:^|\\n)\\s*NO\\.\\s*\\d+",
+      "hits": 0
+    }
+  ]
+}

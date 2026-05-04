@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "验收时核查 FastAPI 端类型注解、Depends 注入、序列化函数风格是否统一"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "验收时核查 L4 重试链路异常分类、重试上限是否吞了不该吞的异常"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "验收时核查 chunk 重试与单题降级的 logger 是否覆盖了关键节点（成功/失败/重试次数）"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "验收时核查是否复用了 _split_by_question_markers 等既有函数，而非平行实现"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "验收时核查 reconciliation 数据是否在 model→service→API 序列化层一致；前端是否需要改动（应为否）"}
+{"file": ".trellis/tasks/05-04-smart-import-cipt-283-pdf/prd.md", "reason": "AC1–AC6 验收清单与 Definition of Done 都在 PRD 中"}
+{"file": ".trellis/tasks/05-04-smart-import-cipt-283-pdf/research/diagnosis-step0.md", "reason": "回归断言所引用的题号集合（chunk 27 = 222–245、reparse 虚胖题号 = 174–188 + 265 + 266）需对照诊断报告核对"}
