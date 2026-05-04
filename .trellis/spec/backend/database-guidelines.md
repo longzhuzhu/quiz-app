@@ -1,214 +1,193 @@
-# Database Guidelines
+# 数据库规范
 
-> Database patterns and conventions for this project.
-
----
-
-## Overview
-
-使用 SQLAlchemy 2.x 声明式映射 + PostgreSQL + Alembic 迁移。数据库同时承担业务数据和任务调度。
+> 项目使用 SQLAlchemy，Flask 版为 1.x 风格，FastAPI 版为 2.x 风格。两套共存，共享同一数据库。
 
 ---
 
-## ORM Configuration
+## ORM 模型定义对比
+
+### Flask 版：`db.Model` + `db.Column` + `backref`
 
 ```python
-# app/core/database.py
-engine = create_engine(
-    settings.DATABASE_URL,    # postgresql+psycopg://...
-    pool_pre_ping=True,       # 自动检测断连
-    pool_size=5,
-    max_overflow=10,
-)
-
-class Base(DeclarativeBase):
-    pass
+# backend/models.py 行8-15
+class User(db.Model):
+    __tablename__ = 'users'
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(256), nullable=False)
+    is_admin = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 ```
 
-- 连接字符串使用 `postgresql+psycopg`（psycopg3 同步驱动）
-- 所有模型继承 `Base`，通过 `app/models/__init__.py` 统一导入确保 `Base.metadata` 包含所有表
-
----
-
-## Model Patterns
-
-### 基本模型结构
+关系使用 `backref`（自动在反向模型创建属性）：
 
 ```python
-from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import String, Integer, Text, JSON
-from app.core.database import Base
+# backend/models.py 行17-18
+quiz_sessions = db.relationship('QuizSession', backref='user', lazy='dynamic')
+wrong_answers = db.relationship('WrongAnswer', backref='user', lazy='dynamic')
+```
 
+### FastAPI 版：`Mapped[]` + `mapped_column()` + `back_populates`
+
+```python
+# backend/app/models/user.py 行11-22
 class User(Base):
     __tablename__ = "users"
-
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     username: Mapped[str] = mapped_column(String(80), unique=True, nullable=False)
-    is_admin: Mapped[bool] = mapped_column(default=False)
+    email: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(256), nullable=False)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 ```
 
-- 使用 `Mapped[T]` + `mapped_column()` 类型注解风格（SQLAlchemy 2.x 推荐）
-- 每个模型一个文件，放在 `app/models/` 下
-
-### JSONB 字段
+关系使用 `back_populates`（显式双向声明）：
 
 ```python
-from sqlalchemy.dialects.postgresql import JSONB
-
-class Question(Base):
-    options: Mapped[dict | list] = mapped_column(JSONB, nullable=False)
-    correct_answer: Mapped[list] = mapped_column(JSONB, default=[])
+# backend/app/models/user.py 行25-26
+quiz_sessions = relationship("QuizSession", back_populates="user", lazy="dynamic")
+wrong_answers = relationship("WrongAnswer", back_populates="user", lazy="dynamic")
 ```
-
-- PostgreSQL 使用 `JSONB` 替代 SQLite 的 `Text` + JSON 序列化
-- `options` 可以是 `list` 或 `dict`，前端兼容两种格式
-- 读取时无需 `json.loads()`，写入时无需 `json.dumps()`
-
-### 关系定义
-
-```python
-from sqlalchemy.orm import relationship
-
-class QuestionBank(Base):
-    questions: Mapped[list["Question"]] = relationship(back_populates="bank", cascade="all, delete-orphan")
-
-class Question(Base):
-    bank_id: Mapped[int] = mapped_column(Integer, ForeignKey("question_banks.id"))
-    bank: Mapped["QuestionBank"] = relationship(back_populates="questions")
-```
-
-### JSONB 类型注解必须与实际存储类型匹配
-
-SQLAlchemy `Mapped[T]` 中 T 必须与实际存储的 Python 类型一致。PostgreSQL JSONB 可存储 `dict`、`list`、`str`、`int` 等。
-
-```python
-# Correct - 存储选项列表
-options_json: Mapped[list] = mapped_column(JSONB, nullable=False)
-
-# Correct - 存储对象
-config_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-
-# Wrong - 实际存储 list 但声明为 dict
-options_json: Mapped[dict] = mapped_column(JSONB, nullable=False)  # 实际是 [{...}, ...]
-
-# Wrong - 实际存储 list 但声明为 dict
-correct_answer: Mapped[dict | None] = mapped_column(JSONB)  # 实际是 ["A", "B"]
-```
-
-> **Gotcha**: 虽然错误的 `Mapped[T]` 在运行时不会直接报错（JSONB 不校验 Python 类型注解），但会导致 ORM 层的类型提示误导开发者，且 MyPy/Pylance 静态检查会产生假阳性或假阴性。
 
 ---
 
-## Query Patterns
+## JSON 字段存储对比
 
-### 获取数据库会话
+### Flask 版：`db.Text` + `json.dumps/loads` 手动转换
 
 ```python
-# FastAPI 依赖注入
-def get_db() -> Generator[Session, None, None]:
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# backend/models.py 行41
+options = db.Column(db.Text, nullable=False)  # JSON string
+
+# 写入时手动序列化（backend/routes/banks.py 行222）
+question = Question(options=json.dumps(q['options']), ...)
+
+# 读取时手动反序列化（backend/routes/quiz.py 行107）
+'options': json.loads(q.options),
 ```
 
-### 常用查询
+### FastAPI 版：`JSONB` 直接存储，无需手动序列化
 
 ```python
-# 按 ID 查询
+# backend/app/models/question.py 行22
+options: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+# 写入时直接传 Python 对象（无需 json.dumps）
+question = Question(options=options_list, ...)
+
+# 读取时直接用（无需 json.loads）
+'options': question.options,
+```
+
+---
+
+## 查询风格对比
+
+### Flask 版：`Model.query.xxx`
+
+```python
+# backend/models.py 行279 — SystemSetting 静态方法
+setting = SystemSetting.query.filter_by(key=key).first()
+
+# backend/routes/quiz.py 行74
+query = Question.query.filter_by(bank_id=bank_id)
+
+# backend/routes/quiz.py 行135
+session = QuizSession.query.get_or_404(session_id)
+```
+
+### FastAPI 版：`db.query(Model).xxx` + `db.get(Model, pk)`
+
+```python
+# backend/app/services/job_service.py 行70-71
+db.query(BankWordExclusion).filter_by(bank_id=bank_id).all()
+
+# backend/app/services/job_service.py 行91
+bank = db.get(QuestionBank, bank_id)
+
+# backend/app/api/deps.py 行50
 user = db.get(User, user_id)
+```
 
-# 条件查询
-db.query(Question).filter(Question.bank_id == bank_id).offset(skip).limit(limit).all()
+进阶查询用 SQLAlchemy 2.x 的 `select()`/`update()` 风格：
 
-# 计数
-db.query(func.count(Question.id)).filter(Question.bank_id == bank_id).scalar()
+```python
+# backend/app/services/job_service.py 行249-254
+candidate_ids = db.execute(
+    select(BackgroundJob.id).where(
+        BackgroundJob.status == "queued",
+        or_(BackgroundJob.next_run_at.is_(None), BackgroundJob.next_run_at <= now),
+    ).order_by(BackgroundJob.created_at.asc(), BackgroundJob.id.asc())
+).scalars().all()
 ```
 
 ---
 
-## Migrations
+## 序列化：手工 `*_to_dict()` 函数
 
-### 初始化
+项目不使用 Pydantic `from_attributes` 自动转换（部分 FastAPI endpoint 用 `response_model`，但主流仍手工序列化）。
 
-```bash
-cd backend
-alembic init alembic               # 已完成
-alembic revision --autogenerate -m "description"
-alembic upgrade head
+```python
+# backend/routes/banks.py 行81-89
+def bank_to_dict(bank):
+    return {
+        'id': bank.id,
+        'name': bank.name,
+        'description': bank.description,
+        'source_filename': bank.source_filename,
+        'question_count': bank.question_count,
+        'created_at': bank.created_at.isoformat(),
+    }
+
+# backend/routes/vocab.py 行445-457
+def _word_to_dict(w, user, progress_by_vocab_id):
+    return {
+        'id': w.id,
+        'term': w.term,
+        'created_at': w.created_at.isoformat(),
+        ...
+    }
 ```
 
-### 配置要点
-
-- `alembic/env.py` 中 `target_metadata = Base.metadata`
-- 迁移文件放在 `backend/alembic/versions/`
-- 命名规则：`NNN_<description>.py`（如 `001_initial.py`）
-
-### 注意事项
-
-> **Gotcha**: 修改模型后必须手动运行 `alembic revision --autogenerate`，Alembic 不会自动检测变更。不要使用 `db.create_all()`。
+日期序列化统一用 `.isoformat()`。
 
 ---
 
-## Naming Conventions
+## 并发 upsert 用 savepoint（nested transaction）
+
+```python
+# backend/routes/quiz.py 行45-61
+def _upsert_user_question_stat(user_id, question_id):
+    now = datetime.now(timezone.utc)
+    # 先尝试更新
+    rows_updated = UserQuestionStat.query.filter_by(
+        user_id=user_id, question_id=question_id
+    ).update({...}, synchronize_session=False)
+    if rows_updated:
+        return ...
+
+    # 不存在则插入，用 savepoint 处理并发冲突
+    stat = UserQuestionStat(...)
+    nested = db.session.begin_nested()  # savepoint
+    try:
+        db.session.add(stat)
+        db.session.flush()
+        nested.commit()
+        return stat.answer_count
+    except IntegrityError:
+        nested.rollback()
+        # 并发插入冲突，回退到更新
+        UserQuestionStat.query.filter_by(...).update({...}, synchronize_session=False)
+        return ...
+```
+
+---
+
+## 命名规则
 
 - 表名：`snake_case` 复数（`users`, `question_banks`, `questions`）
 - 列名：`snake_case`（`bank_id`, `created_at`）
 - 索引名：`idx_<table>_<column>`（如 `idx_background_jobs_status`）
 - 外键列：`<referenced_table_singular>_id`（如 `bank_id` 引用 `question_banks.id`）
-- 时间戳列：`created_at`, `updated_at`（TIMESTAMP, DEFAULT NOW()）
-
----
-
-## Common Mistakes
-
-### Don't: 在路由中直接操作数据库
-
-```python
-# Wrong
-@router.post("/banks")
-def create_bank(data: dict, db: Session = Depends(get_db)):
-    bank = QuestionBank(name=data["name"])
-    db.add(bank)
-    db.commit()  # 路由不应管理事务细节
-```
-
-### Do: 通过 service 层操作
-
-```python
-# Correct
-@router.post("/banks")
-def create_bank(data: BankCreateRequest, db: Session = Depends(get_db), user: User = Depends(require_admin)):
-    return bank_service.create_bank(db, data, user)
-```
-
-### Don't: 使用 dict 作为请求体
-
-```python
-# Wrong - 绕过 FastAPI 自动校验
-def create_bank(data: dict, ...):
-```
-
-### Do: 使用 Pydantic schema
-
-```python
-# Correct - 充分利用 FastAPI 的类型校验
-def create_bank(data: BankCreateRequest, ...):
-```
-
-### Don't: 忘记检查文件上传大小
-
-```python
-# Wrong - 无大小限制
-content = await file.read()
-```
-
-### Do: 校验后读取
-
-```python
-# Correct
-content = await file.read()
-if len(content) > settings.upload_max_size_bytes:
-    raise HTTPException(status_code=413, detail="File too large")
-```
+- 时间戳列：`created_at`, `updated_at`（DEFAULT NOW()）
