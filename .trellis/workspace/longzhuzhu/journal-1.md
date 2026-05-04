@@ -177,3 +177,38 @@ Convert vocabulary batch translation from synchronous while-loop to async Backgr
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: Bootstrap Guidelines: 填充项目开发规范 spec
+
+**Date**: 2026-05-04
+**Task**: Bootstrap Guidelines: 填充项目开发规范 spec
+**Branch**: `codex/vocab-progress-settings-deploy`
+
+### Summary
+
+扫描项目前后端真实代码模式，填充 13 个 spec 文件（后端 6 个 + 前端 7 个），内容均基于实际代码而非理想状态，包含真实文件路径和行号引用。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `882f1dc` | (see git log) |
+| `ed5460f` | (see git log) |
+| `9670f82` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

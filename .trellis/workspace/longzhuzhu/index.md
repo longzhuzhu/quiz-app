@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 5
+- **Total Sessions**: 6
 - **Last Active**: 2026-05-04
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~179 | Active |
+| `journal-1.md` | ~214 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 6 | 2026-05-04 | Bootstrap Guidelines: 填充项目开发规范 spec | `882f1dc`, `ed5460f`, `9670f82` | `codex/vocab-progress-settings-deploy` |
 | 5 | 2026-05-04 | 智能导入去重与准确率提升 | `057b9ac`, `13b0cc3` | `codex/vocab-progress-settings-deploy` |
 | 4 | 2026-05-04 | 智能导入核心闭环实现 | `deba9e4`, `8c0a96d`, `64a88b6`, `59b3696` | `codex/vocab-progress-settings-deploy` |
 | 3 | 2026-05-04 | Fix quiz translate options + vocab auto-translate | `45d0e5b` | `codex/vocab-progress-settings-deploy` |
