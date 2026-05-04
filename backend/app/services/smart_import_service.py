@@ -162,6 +162,16 @@ def _normalize_qno(qno: str | None) -> str | None:
     return cleaned or None
 
 
+def _qno_sort_key(qno: str) -> tuple[int, int, str]:
+    """题号排序键：纯数字按 int 升序（数字桶在前），非数字按字典序兜底。
+
+    返回三元组以保证类型一致（避免 (0, int) vs (1, str) 直接比较 TypeError）。
+    """
+    if qno.isdigit():
+        return (0, int(qno), "")
+    return (1, 0, qno)
+
+
 # ─── 创建导入任务 ──────────────────────────────────
 
 
@@ -336,11 +346,22 @@ def run_smart_import(db: Session, background_job: BackgroundJob) -> None:
 
     import_job.total_chunks = len(chunks_data)
 
-    # 将 answer_key_text 持久化到 config_json，供 _process_chunk 引用
+    # PR-4: 计算并存储 expected_qnos —— reconciliation 的"应入库题号"基线。
+    # 在切完 chunk 后一次性写入；reparse 路径不重写该字段（保证可重复对账）。
+    expected_qnos: set[str] = set()
+    for chunk_data in chunks_data:
+        for seg in _split_by_single_question(chunk_data["chunk_text"]):
+            norm = _normalize_qno(seg.get("source_question_no"))
+            if norm is not None:
+                expected_qnos.add(norm)
+
+    # 将 answer_key_text 与 expected_qnos 一并持久化到 config_json
+    config = import_job.config_json or {}
     if answer_key_text:
-        config = import_job.config_json or {}
         config["answer_key_text"] = answer_key_text
-        import_job.config_json = config
+    config["expected_qnos"] = sorted(expected_qnos, key=_qno_sort_key)
+    # 重新赋值触发 SQLAlchemy JSONB dirty 检测（与 PR-3 等位姿势一致）
+    import_job.config_json = config
 
     db.commit()
 
@@ -706,6 +727,10 @@ def _call_llm_with_l1_retry(
         except RETRYABLE_HTTP_EXC as exc:
             last_exc = exc
         if attempt < max_retries:
+            logger.warning(
+                "[smart_import] L1 retry attempt=%d/%d sleep=%ss reason=%s",
+                attempt + 1, max_retries, backoff, type(last_exc).__name__,
+            )
             time.sleep(backoff)
     # 用尽重试次数；last_exc 必非 None
     assert last_exc is not None
@@ -745,9 +770,17 @@ def _run_per_question_fallback(
         }]
 
     total_segments = len(segments)
+    logger.warning(
+        "[smart_import] chunk_no=%s entering L2 per-question fallback (segments=%d)",
+        chunk.chunk_no, total_segments,
+    )
     for idx, seg in enumerate(segments, start=1):
         # 总耗时预算 kill switch（含已耗费的 L1 时间）
         if time.monotonic() - started_at > CHUNK_TOTAL_BUDGET_SECONDS:
+            logger.warning(
+                "[smart_import] chunk_no=%s L2 budget %ss exceeded, dropped=%d",
+                chunk.chunk_no, CHUNK_TOTAL_BUDGET_SECONDS, len(segments) - idx + 1,
+            )
             for rem in segments[idx - 1:]:
                 failures.append({
                     "source_question_no": rem.get("source_question_no"),
@@ -786,9 +819,12 @@ def _run_per_question_fallback(
                         f"Chunk {chunk.chunk_no} L2 fallback {idx}/{total_segments}"
                     ),
                 )
-            except Exception:
+            except Exception as exc:
                 # heartbeat 失败不应中断 fallback；继续下一段
-                pass
+                logger.warning(
+                    "[smart_import] chunk_no=%s heartbeat failed at segment %d/%d: %s",
+                    chunk.chunk_no, idx, total_segments, exc,
+                )
 
     return merged, failures
 
@@ -853,6 +889,10 @@ def _persist_duplicate_parsed_question(
         },
         review_status="duplicate",
         import_status="skipped",
+    )
+    logger.info(
+        "[smart_import] duplicate parsed question reason=%s source_qno=%s",
+        reason, parsed_q.source_question_no,
     )
     db.add(parsed_question)
     import_job.parsed_questions = (import_job.parsed_questions or 0) + 1
@@ -1195,6 +1235,11 @@ def run_reparse(db: Session, background_job: BackgroundJob) -> None:
 
     # 更新题库统计
     _update_bank_stats(db, import_job.bank_id)
+
+    # PR-4：reparse 后也刷新 reconciliation。
+    # 注意：reparse **不**走 _finalize_import（避免覆盖 status 状态机），
+    # 只复用 _compute_reconciliation 重新计算对账数据 —— 满足 PRD AC3。
+    _write_reconciliation(db, import_job)
 
 
 # ─── 复核操作 ──────────────────────────────────
@@ -1788,6 +1833,85 @@ def _fail_import_job(db: Session, import_job: ImportJob, error_message: str) -> 
         db.commit()
 
 
+def _compute_reconciliation(db: Session, import_job: ImportJob) -> dict:
+    """汇总 expected / imported_unique / missing_qnos / duplicates_in_db。
+
+    数据来源（PR-2/PR-3 已写入字段）：
+      - expected_qnos       : import_job.config_json["expected_qnos"]
+                              （run_smart_import 切完 chunk 后写入；reparse 不变）
+      - imported_unique     : ImportParsedQuestion.source_question_no
+                              WHERE import_status='imported'
+      - duplicates_in_db    : ImportParsedQuestion.source_question_no
+                              WHERE import_status='skipped'
+                              AND issues_json.details[0].reason == 'qno' (PR-3 接口)
+      - per_question_failures :
+                              ImportChunk.issues_json["per_question_failures"][*].source_question_no
+                              （PR-2 L2 fallback 写入）
+
+    missing_qnos = (expected - imported_unique) ∪ per_question_failures
+    （合集语义保护"LLM 输出题号格式漂移让 expected_qnos 漏题号"的极端情况）
+    """
+    config = import_job.config_json or {}
+    expected_set: set[str] = set(config.get("expected_qnos") or [])
+
+    imported_set: set[str] = set()
+    for pq in (
+        db.query(ImportParsedQuestion)
+        .filter_by(import_job_id=import_job.id, import_status="imported")
+        .all()
+    ):
+        norm = _normalize_qno(pq.source_question_no)
+        if norm is not None:
+            imported_set.add(norm)
+
+    duplicates_set: set[str] = set()
+    for pq in (
+        db.query(ImportParsedQuestion)
+        .filter_by(import_job_id=import_job.id, import_status="skipped")
+        .all()
+    ):
+        details = (pq.issues_json or {}).get("details") or []
+        if any(d.get("reason") == "qno" for d in details):
+            norm = _normalize_qno(pq.source_question_no)
+            if norm is not None:
+                duplicates_set.add(norm)
+
+    per_q_failures_set: set[str] = set()
+    for chunk in (
+        db.query(ImportChunk).filter_by(import_job_id=import_job.id).all()
+    ):
+        failures = (chunk.issues_json or {}).get("per_question_failures") or []
+        for f in failures:
+            norm = _normalize_qno(f.get("source_question_no"))
+            if norm is not None:
+                per_q_failures_set.add(norm)
+
+    missing_set = (expected_set - imported_set) | per_q_failures_set
+
+    return {
+        "expected": sorted(expected_set, key=_qno_sort_key),
+        "imported_unique": sorted(imported_set, key=_qno_sort_key),
+        "missing_qnos": sorted(missing_set, key=_qno_sort_key),
+        "duplicates_in_db": sorted(duplicates_set, key=_qno_sort_key),
+        "per_question_failures_count": len(per_q_failures_set),
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _write_reconciliation(db: Session, import_job: ImportJob) -> None:
+    """计算 reconciliation 报告并写入 import_job.config_json。
+
+    用 dict 重赋值触发 SQLAlchemy JSONB dirty 检测；不依赖 flag_modified。
+    与 run_smart_import / run_reparse 内现有 config_json 写入姿势一致。
+    """
+    recon = _compute_reconciliation(db, import_job)
+    import_job.config_json = {
+        **(import_job.config_json or {}),
+        "reconciliation": recon,
+    }
+    db.commit()
+
+
 def _finalize_import(db: Session, import_job: ImportJob) -> None:
     """导入完成后的汇总处理"""
     import_job = db.get(ImportJob, import_job.id)
@@ -1832,6 +1956,11 @@ def _finalize_import(db: Session, import_job: ImportJob) -> None:
     if bank:
         bank.source_filename = import_job.file_name
         db.commit()
+
+    # PR-4：写入 reconciliation 报告
+    # 放在 status / summary_json / bank stats 落盘之后；reconciliation 是独立的"对账"
+    # 元数据，不影响 ImportJob.status 的状态机决策。
+    _write_reconciliation(db, import_job)
 
 
 def _update_bank_stats(db: Session, bank_id: int) -> None:
@@ -1921,6 +2050,7 @@ def serialize_import_job(import_job: ImportJob) -> dict:
         "created_at": import_job.created_at.isoformat() if import_job.created_at else None,
         "updated_at": import_job.updated_at.isoformat() if import_job.updated_at else None,
         "background_job": bg_job,
+        "reconciliation": (import_job.config_json or {}).get("reconciliation"),
     }
 
 
