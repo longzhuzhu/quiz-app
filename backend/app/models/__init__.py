@@ -9,6 +9,12 @@ from app.models.vocabulary import Vocabulary, UserVocabProgress
 from app.models.bank_word import BankWordFrequency, UserBankWordProgress, BankWordExclusion
 from app.models.background_job import BackgroundJob
 from app.models.system_setting import SystemSetting
+from app.models.import_job import ImportJob
+from app.models.import_chunk import ImportChunk
+from app.models.import_parsed_question import ImportParsedQuestion
+from app.models.import_review_item import ImportReviewItem
+from app.models.llm_parse_cache import LlmParseCache
+from app.models.vector_index import VectorIndex
 
 __all__ = [
     "User",
@@ -25,4 +31,10 @@ __all__ = [
     "BankWordExclusion",
     "BackgroundJob",
     "SystemSetting",
+    "ImportJob",
+    "ImportChunk",
+    "ImportParsedQuestion",
+    "ImportReviewItem",
+    "LlmParseCache",
+    "VectorIndex",
 ]
