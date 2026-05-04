@@ -10,13 +10,13 @@ class Settings(BaseSettings):
     """应用配置，从环境变量和 .env 文件读取"""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
 
     # 数据库
-    DATABASE_URL: str = "postgresql+psycopg://quiz_user:quiz_pass@localhost:5432/quiz_app"
+    DATABASE_URL: str = "postgresql+psycopg://user:pass@localhost:5432/quiz"
 
     # JWT
     JWT_SECRET_KEY: str = "jwt-secret-key-change-in-production"

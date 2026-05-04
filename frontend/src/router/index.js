@@ -14,6 +14,9 @@ const routes = [
   { path: '/admin/banks/:bankId', name: 'AdminQuestions', component: () => import('../views/AdminQuestionsView.vue'), meta: { auth: true, admin: true } },
   { path: '/admin/settings', name: 'AdminSettings', component: () => import('../views/AdminSettingsView.vue'), meta: { auth: true, admin: true } },
   { path: '/admin/users', name: 'AdminUsers', component: () => import('../views/AdminUsersView.vue'), meta: { auth: true, admin: true } },
+  { path: '/import-jobs', name: 'ImportJobs', component: () => import('../views/ImportJobsView.vue'), meta: { auth: true, admin: true } },
+  { path: '/import-jobs/:jobId', name: 'ImportJobDetail', component: () => import('../views/ImportJobDetailView.vue'), meta: { auth: true, admin: true } },
+  { path: '/import-jobs/:jobId/review', name: 'ImportReview', component: () => import('../views/ImportReviewView.vue'), meta: { auth: true, admin: true } },
 ]
 
 const router = createRouter({

@@ -1,0 +1,14 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端 Flask→FastAPI 双套并存索引，本任务仅改 FastAPI 一侧需先确认风格归属"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "确认 smart_import_service 在 backend/app/services/ 的位置与命名规范，避免新增辅助函数时放错目录"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "FastAPI 端必须带 type hints + Depends 注入；新增 timeout 参数与 imported_qnos 集合需符合该风格"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "L4 重试链路涉及自定义异常 / try-catch 模式；reconciliation 写错时不能让 ImportJob 整体失败，要按规范决定 401/500 不适用、内部失败用 logger 记录"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "L4 chunk 重试与单题降级必须 logger 记录，否则后续运维不可观测；本规范说明项目当前 logging 现状与推荐写法"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "L6 改 run_reparse 涉及 ImportParsedQuestion 查询、commit/flush 顺序；需符合 FastAPI 端 SQLAlchemy 2.x 风格"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "重试与 reconciliation 涉及多处共用逻辑（题号集计算、单题切分），先思考是否复用 _split_by_question_markers 而非新写"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "reconciliation 数据要从 service 层穿到 ImportJob 表 → API 序列化（serialize_import_job）→ 前端展示，跨 3 层；改任一层都要核对其他层"}
+{"file": ".trellis/tasks/05-04-smart-import-cipt-283-pdf/prd.md", "reason": "本任务 PRD：Goal / Requirements / AC / Technical Approach 全部在此，实施 sub-agent 必读"}
+{"file": ".trellis/tasks/05-04-smart-import-cipt-283-pdf/research/diagnosis-step0.md", "reason": "Step 0 诊断报告：失血点分布、chunk 27 详情、reparse 虚胖证据；改造任何一段代码前必须对照报告锁定根因，避免空想"}
+{"file": ".trellis/tasks/05-04-smart-import-cipt-283-pdf/research/pr1-design-call-ai-api-timeout.md", "reason": "PR-1 细化设计：最终签名、4 个调用方耐受度、最小变更面、测试 case 清单与不做事项；PR-1 实施 sub-agent 必读"}
+{"file": ".trellis/tasks/05-04-smart-import-cipt-283-pdf/research/pr2-design-process-chunk-retry.md", "reason": "PR-2 细化设计：_process_chunk 状态机、L1/L2 重试与降级、heartbeat 与 480s 总耗时预算、chunk.issues_json schema、12 个 TC 与伪代码骨架；PR-2 实施 sub-agent 必读"}
+{"file": ".trellis/tasks/05-04-smart-import-cipt-283-pdf/research/pr3-design-reparse-hygiene.md", "reason": "PR-3 细化设计：imported_qnos 来源/归一化、_save_parsed_question 签名扩展、DUPLICATE_QNO vs DUPLICATE_CONTENT 区分接口、_persist_duplicate_parsed_question helper 抽取、8 个 TC；PR-3 实施 sub-agent 必读"}
+{"file": ".trellis/tasks/05-04-smart-import-cipt-283-pdf/research/pr4-design-reconciliation.md", "reason": "PR-4 细化设计：expected_qnos 存储、reconciliation schema 与计算、5 处 logger 插入点、集成测试方案 c（纯 chunk fixture）、7 个 TC、伪代码骨架；PR-4 实施 sub-agent 必读"}

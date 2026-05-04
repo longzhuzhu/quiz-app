@@ -1,0 +1,45 @@
+# 占位符默认值（非真实凭据）
+.env.example:postgresql-connection-string:6
+backend/app/core/config.py:postgresql-connection-string:19
+backend/alembic.ini:postgresql-connection-string:8
+docs/trellis/quiz-app-fastapi-postgresql-smart-import-design.md:postgresql-connection-string:1049
+
+# 已修复的归档脚本（REDACTED_DB_PASSWORD 占位符 + 当前占位符 DSN）
+.trellis/tasks/archive/2026-05/05-04-smart-import-cipt-283-pdf/research/scripts/db_diag.py:postgresql-connection-string:13
+7e77fadd30505d08c5b540be67684f8fd235c15b:.trellis/tasks/archive/2026-05/05-04-smart-import-cipt-283-pdf/research/scripts/db_diag.py:postgresql-connection-string:12
+
+# 研究报告引用了泄漏历史（非新泄漏）
+.trellis/tasks/05-04-security-hardening/research/secret-scanning-tools.md:postgresql-connection-string:121
+
+# 文档/测试中的示例值
+docs/superpowers/plans/2026-04-08-ai-model-scene-split-implementation.md:generic-api-key:57
+.trellis/spec/backend/quality-guidelines.md:generic-api-key:61
+cc071922e5bfc16f4eb4d2462501925e19a5af9c:.trellis/spec/backend/quality-guidelines.md:generic-api-key:61
+backend/tests/test_settings_ai_api_key.py:generic-api-key:64
+backend/tests/test_settings_ai_api_key.py:generic-api-key:119
+a6b9389c0600eaa141835affbf072f944f28a9a8:backend/tests/test_settings_ai_api_key.py:generic-api-key:64
+0416bd092e1905bf082ea8cefe3ff73232128e2d:backend/tests/test_settings_ai_api_key.py:generic-api-key:119
+
+# 历史中的 Algolia key（已从主分支修复）
+2885d96c750f0b693a21467246ee63b50650ea1d:backend/scripts/import_iapp_glossary.py:algolia-api-key:17
+
+# __pycache__ 二进制
+backend/app/core/__pycache__/config.cpython-312.pyc:postgresql-connection-string:4
+
+# backend/.env 被 .gitignore 排除
+backend/.env:postgresql-connection-string:1
+backend/.env:algolia-api-key:8
+
+# worktree 副本
+.worktrees/cached-ai-payloads/backend/scripts/import_iapp_glossary.py:algolia-api-key:17
+.worktrees/cached-ai-payloads/backend/tests/test_settings_ai_api_key.py:generic-api-key:64
+.worktrees/cached-ai-payloads/backend/tests/test_settings_ai_api_key.py:generic-api-key:119
+.worktrees/cached-ai-payloads/docs/superpowers/plans/2026-04-08-ai-model-scene-split-implementation.md:generic-api-key:57
+.worktrees/deploy-acceptance/backend/scripts/import_iapp_glossary.py:algolia-api-key:17
+.worktrees/deploy-acceptance/backend/tests/test_settings_ai_api_key.py:generic-api-key:64
+.worktrees/deploy-acceptance/backend/tests/test_settings_ai_api_key.py:generic-api-key:119
+.worktrees/deploy-acceptance/docs/superpowers/plans/2026-04-08-ai-model-scene-split-implementation.md:generic-api-key:57
+.worktrees/frontend-refactor/backend/scripts/import_iapp_glossary.py:algolia-api-key:17
+.worktrees/frontend-refactor/backend/tests/test_settings_ai_api_key.py:generic-api-key:64
+.worktrees/frontend-refactor/backend/tests/test_settings_ai_api_key.py:generic-api-key:119
+.worktrees/frontend-refactor/docs/superpowers/plans/2026-04-08-ai-model-scene-split-implementation.md:generic-api-key:57

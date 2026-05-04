@@ -12,11 +12,18 @@ from app.core.database import get_db
 from app.models.question_bank import QuestionBank
 from app.models.question import Question
 from app.models.quiz import QuizSession, QuizAnswer
-from app.models.wrong import WrongAnswer
+from app.models.wrong import WrongAnswer, UserQuestionStat
 from app.models.bank_word import BankWordFrequency, UserBankWordProgress, BankWordExclusion
+from app.models.background_job import BackgroundJob
+from app.models.import_job import ImportJob
+from app.models.import_chunk import ImportChunk
+from app.models.import_parsed_question import ImportParsedQuestion
+from app.models.import_review_item import ImportReviewItem
+from app.models.vector_index import VectorIndex
 from app.models.user import User
 from app.schemas.bank import BankCreateRequest, BankUpdateRequest
-from app.services.import_service import parse_file, build_bank_word_frequencies
+from app.services.import_service import build_bank_word_frequencies
+from app.services.smart_import_service import create_smart_import_job
 from app.services.ai_service import batch_translate_terms
 from app.services.job_service import (
     JOB_TYPE_BANK_FREQUENT_TRANSLATE,
@@ -153,12 +160,37 @@ def delete_bank(
         db.query(WrongAnswer).filter(
             WrongAnswer.question_id.in_(question_ids_subquery)
         ).delete(synchronize_session=False)
+        db.query(UserQuestionStat).filter(
+            UserQuestionStat.question_id.in_(question_ids_subquery)
+        ).delete(synchronize_session=False)
 
         db.query(QuizSession).filter_by(bank_id=bank.id).delete(synchronize_session=False)
         db.query(BankWordFrequency).filter_by(bank_id=bank.id).delete(synchronize_session=False)
         db.query(UserBankWordProgress).filter_by(bank_id=bank.id).delete(synchronize_session=False)
         db.query(BankWordExclusion).filter_by(bank_id=bank.id).delete(synchronize_session=False)
+        db.query(VectorIndex).filter_by(bank_id=bank.id).delete(synchronize_session=False)
         db.query(Question).filter_by(bank_id=bank.id).delete(synchronize_session=False)
+
+        # 清理 import_jobs 链：按 FK 依赖从叶子到根删除
+        import_job_ids_subquery = db.query(ImportJob.id).filter(ImportJob.bank_id == bank.id)
+        db.query(ImportReviewItem).filter(
+            ImportReviewItem.import_job_id.in_(import_job_ids_subquery)
+        ).delete(synchronize_session=False)
+        db.query(ImportParsedQuestion).filter(
+            ImportParsedQuestion.import_job_id.in_(import_job_ids_subquery)
+        ).delete(synchronize_session=False)
+        db.query(ImportChunk).filter(
+            ImportChunk.import_job_id.in_(import_job_ids_subquery)
+        ).delete(synchronize_session=False)
+        # 断开 ImportJob -> BackgroundJob FK，再删除关联的 BackgroundJob
+        import_jobs = db.query(ImportJob).filter(ImportJob.bank_id == bank.id).all()
+        bg_job_ids = [ij.background_job_id for ij in import_jobs if ij.background_job_id]
+        for ij in import_jobs:
+            ij.background_job_id = None
+        db.flush()
+        if bg_job_ids:
+            db.query(BackgroundJob).filter(BackgroundJob.id.in_(bg_job_ids)).delete(synchronize_session=False)
+        db.query(ImportJob).filter_by(bank_id=bank.id).delete(synchronize_session=False)
 
         db.delete(bank)
         db.commit()
@@ -173,14 +205,14 @@ def delete_bank(
 def import_questions(
     bank_id: int,
     file: UploadFile = File(...),
+    force: str = Form("false"),
     _admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    """智能导入：创建异步 ImportJob + BackgroundJob，立即返回任务 ID"""
     bank = db.get(QuestionBank, bank_id)
     if not bank:
         raise HTTPException(status_code=404, detail="题库不存在")
-
-    filename = (file.filename or "").lower()
 
     # 读取文件内容并校验大小
     file_bytes = file.file.read()
@@ -190,117 +222,22 @@ def import_questions(
             detail=f"文件大小超过限制（最大 {app_settings.MAX_UPLOAD_SIZE_MB}MB）",
         )
 
-    # 创建 SpooledTemporaryFile 兼容的类文件对象供 parse_file 使用
-    import io
-    file_storage = io.BytesIO(file_bytes)
-
-    try:
-        questions_data = parse_file(file_storage, filename)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"文件解析失败: {str(e)}")
-
-    existing_questions = db.query(Question).filter_by(bank_id=bank.id).order_by(
-        Question.order_index.asc(),
-        Question.id.asc(),
-    ).all()
-
-    seen_signatures = {
-        _question_signature(
-            q.question_type,
-            q.content,
-            q.options if isinstance(q.options, list) else json.loads(q.options),
-            q.correct_answer,
-        )
-        for q in existing_questions
-    }
-    next_order_index = max((q.order_index or 0 for q in existing_questions), default=-1) + 1
-
-    count = 0
-    missing_answer_count = 0
-    skipped_duplicate_count = 0
-
-    for q in questions_data:
-        signature = _question_signature(
-            q["question_type"],
-            q["content"],
-            q["options"],
-            q["correct_answer"],
-        )
-        if signature in seen_signatures:
-            skipped_duplicate_count += 1
-            continue
-
-        seen_signatures.add(signature)
-        if q.get("answer_missing"):
-            missing_answer_count += 1
-
-        question = Question(
-            bank_id=bank.id,
-            question_type=q["question_type"],
-            content=q["content"],
-            options=q["options"],  # JSONB 直接存储列表
-            correct_answer=q["correct_answer"],
-            order_index=next_order_index,
-        )
-        db.add(question)
-        next_order_index += 1
-        count += 1
-
-    db.flush()
-
-    full_bank_questions = db.query(Question).filter_by(bank_id=bank.id).order_by(
-        Question.order_index.asc(), Question.id.asc()
-    ).all()
-
-    frequency_items = build_bank_word_frequencies([
-        {
-            "content": question.content,
-            "options": question.options if isinstance(question.options, list) else json.loads(question.options),
-        }
-        for question in full_bank_questions
-    ])
-    translated_frequency_items = translate_bank_word_frequencies(frequency_items)
-    excluded_terms = {
-        row.term
-        for row in db.query(BankWordExclusion).filter_by(bank_id=bank.id).all()
-    }
-    db.query(BankWordFrequency).filter_by(bank_id=bank.id).delete()
-    for item in translated_frequency_items:
-        if item["term"] in excluded_terms:
-            continue
-        db.add(BankWordFrequency(
-            bank_id=bank.id,
-            term=item["term"],
-            term_zh=item.get("term_zh"),
-            frequency=item["frequency"],
-        ))
-
-    bank.question_count = len(full_bank_questions)
-    bank.source_filename = file.filename
-    invalidate_active_scope(
-        db,
-        build_scope_key(JOB_TYPE_BANK_FREQUENT_TRANSLATE, {"bank_id": bank.id}),
-        "题库已重新导入，旧高频词翻译任务已失效",
+    force = force.lower() == "true"
+    result = create_smart_import_job(
+        db=db,
+        bank_id=bank_id,
+        file_bytes=file_bytes,
+        filename=file.filename or "unknown",
+        user_id=_admin.id,
+        force=force,
     )
-    db.commit()
 
-    frequency_count = sum(
-        1
-        for item in translated_frequency_items
-        if item["term"] not in excluded_terms and not item.get("term_zh")
-    )
-    msg = f"成功导入 {count} 道题目"
-    if skipped_duplicate_count:
-        msg += f"，跳过 {skipped_duplicate_count} 道重复题"
-    if missing_answer_count:
-        msg += f"，其中 {missing_answer_count} 道未找到正确答案（需手动补充）"
-    return {
-        "message": msg,
-        "count": count,
-        "missing_answer_count": missing_answer_count,
-        "skipped_duplicate_count": skipped_duplicate_count,
-        "frequency_count": frequency_count,
-    }
+    if "error" in result:
+        # 同文件重复导入返回 409 Conflict
+        status_code = 409 if result.get("duplicate_of") else 400
+        raise HTTPException(status_code=status_code, detail=result)
+
+    return result
 
 
 @router.post("/{bank_id}/translate-frequencies")

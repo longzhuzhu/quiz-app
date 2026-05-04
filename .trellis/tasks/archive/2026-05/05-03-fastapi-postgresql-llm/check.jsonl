@@ -1,0 +1,14 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend spec index for compliance review"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Review SQLAlchemy 2.x models, JSONB usage, Alembic migration safety, and downgrade behavior"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Review FastAPI module placement and service/route separation"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Review API error semantics, auth/admin boundaries, and worker failure handling"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Review backend maintainability, schemas, forbidden patterns, and regression risk"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Review import/worker diagnostics and operational visibility"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend spec index for compliance review"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Review new route/view organization for import jobs"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Review Vue component quality for list/detail/review flows"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Review polling/state handling for async job progress"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Review loading, error, empty, responsive states and frontend build quality"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Review consistency across API responses, database state, worker progress, and frontend UX"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Review reuse of existing extraction, AI, job, and UI patterns"}
+{"file": "docs/trellis/quiz-app-fastapi-postgresql-smart-import-design.md", "reason": "Review implementation against the smart import design while respecting the PRD-scoped MVP decisions"}

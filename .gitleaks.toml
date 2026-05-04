@@ -1,0 +1,8 @@
+[extend]
+useDefault = true
+
+[[rules]]
+id = "postgresql-connection-string"
+description = "PostgreSQL connection string with credentials"
+regex = '''postgresql(?:\+[a-z]+)?://[^\s]+:[^\s]+@[^\s]+'''
+tags = ["database", "credential"]

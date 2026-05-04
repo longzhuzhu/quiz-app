@@ -11,6 +11,8 @@ from app.services.ai_service import batch_translate_terms, batch_translate_vocab
 from app.services.job_service import (
     JOB_TYPE_BANK_FREQUENT_TRANSLATE,
     JOB_TYPE_PROFESSIONAL_VOCAB_TRANSLATE,
+    JOB_TYPE_QUESTION_IMPORT_LLM,
+    JOB_TYPE_QUESTION_IMPORT_LLM_REPARSE,
     deserialize_job_payload,
     heartbeat_job,
     list_bank_frequent_terms,
@@ -30,6 +32,10 @@ def run_job(db: Session, job) -> None:
         return handle_professional_vocab_translate(db, job)
     if job.job_type == JOB_TYPE_BANK_FREQUENT_TRANSLATE:
         return handle_bank_frequent_translate(db, job)
+    if job.job_type == JOB_TYPE_QUESTION_IMPORT_LLM:
+        return handle_question_import_llm(db, job)
+    if job.job_type == JOB_TYPE_QUESTION_IMPORT_LLM_REPARSE:
+        return handle_question_import_llm_reparse(db, job)
     raise ValueError(f"不支持的任务类型: {job.job_type}")
 
 
@@ -89,6 +95,21 @@ def handle_bank_frequent_translate(db: Session, job) -> None:
             status_message=f"高频词翻译中，已处理 {next_done}/{job.progress_total}",
         )
         job = db.get(type(job), job.id)
+
+
+# ─── 智能导入任务处理 ──────────────────────────────────
+
+
+def handle_question_import_llm(db: Session, job) -> None:
+    """处理智能导入任务"""
+    from app.services.smart_import_service import run_smart_import
+    run_smart_import(db, job)
+
+
+def handle_question_import_llm_reparse(db: Session, job) -> None:
+    """处理单个 chunk 的重新解析"""
+    from app.services.smart_import_service import run_reparse
+    run_reparse(db, job)
 
 
 # ─── 内部辅助 ──────────────────────────────────────

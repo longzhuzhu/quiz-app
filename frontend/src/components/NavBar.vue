@@ -60,6 +60,15 @@
                 </MenuItem>
                 <MenuItem v-slot="{ active }">
                   <router-link
+                    to="/import-jobs"
+                    :class="[
+                      'block w-full text-left px-4 py-2 text-sm',
+                      active ? 'bg-gray-100 dark:bg-slate-700 text-gray-900 dark:text-white' : 'text-gray-700 dark:text-gray-300'
+                    ]"
+                  >导入任务</router-link>
+                </MenuItem>
+                <MenuItem v-slot="{ active }">
+                  <router-link
                     to="/admin/settings"
                     :class="[
                       'block w-full text-left px-4 py-2 text-sm',

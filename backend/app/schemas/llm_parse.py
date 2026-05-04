@@ -19,9 +19,9 @@ class ParsedQuestion(BaseModel):
     explanation: str = ""
     references: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-    issues: list[str] = Field(default_factory=list)
+    issues: list[str | dict] = Field(default_factory=list)
 
 
 class LlmParseResult(BaseModel):
     questions: list[ParsedQuestion]
-    chunk_issues: list[str] = Field(default_factory=list)
+    chunk_issues: list[str | dict] = Field(default_factory=list)

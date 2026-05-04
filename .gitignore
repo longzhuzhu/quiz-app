@@ -13,3 +13,4 @@ logs/
 plugins/
 .venv/
 .worktrees/
+backend/storage/

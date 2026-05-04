@@ -1,222 +1,169 @@
-# Quality Guidelines
+# 代码质量
 
-> Code quality standards for backend development.
-
----
-
-## Overview
-
-项目没有配置 lint 工具和测试框架。质量保障主要依赖代码审查和手动验证。
+> Flask 版无类型注解、依赖 Flask 上下文；FastAPI 版完整类型注解、通过 Depends 注入。两套风格共存。
 
 ---
 
-## Required Patterns
+## 类型注解对比
 
-### 1. 使用 Pydantic schema 校验请求体
-
-所有 API 路由的请求体必须使用对应的 Pydantic schema，不允许用 `dict`。
+### Flask 版：无类型注解，依赖 Flask 上下文
 
 ```python
-# Correct
-@router.post("/banks")
-def create_bank(data: BankCreateRequest, db: Session = Depends(get_db), user: User = Depends(require_admin)):
+# backend/routes/auth.py 行10-17
+@auth_bp.route('/register', methods=['POST'])
+def register():
+    data = request.get_json()          # request 是 Flask 全局上下文
+    try:
+        user = register_user(data['username'], data['email'], data['password'])
+        return jsonify({'message': '注册成功', 'user': user_to_dict(user)}), 201
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+```
+
+- 函数签名无类型注解
+- `request`、`get_jwt_identity()` 来自 Flask 全局上下文，非参数传入
+- import 用相对路径：`from models import db, User`
+
+### FastAPI 版：完整类型注解，通过 Depends 注入
+
+```python
+# backend/app/api/deps.py 行14-57
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db),
+) -> User:
     ...
-
-# Wrong - 绕过 FastAPI 自动校验
-@router.post("/banks")
-def create_bank(data: dict, ...):
+    if payload is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="...")
+    ...
+    user = db.get(User, user_id)
+    return user
 ```
 
-### 2. 文件上传必须校验大小
-
-```python
-content = await file.read()
-if len(content) > settings.upload_max_size_bytes:
-    raise HTTPException(status_code=413, detail="File too large")
-```
-
-### 3. 权限检查使用依赖注入
-
-```python
-# 普通用户接口
-def endpoint(user: User = Depends(get_current_user)):
-
-# 管理员接口
-def endpoint(admin: User = Depends(require_admin)):
-```
-
-### 4. 数据库会话通过依赖注入
-
-```python
-def endpoint(db: Session = Depends(get_db)):
-```
-
-不要在路由或 service 中创建自己的数据库会话。
+- 函数签名带 type hints + Depends
+- `db`、`credentials` 通过参数传入，不依赖全局状态
+- import 用绝对路径：`from app.models.user import User`
 
 ---
 
-## Forbidden Patterns
+## 返回格式
 
-### 1. 死代码条件
+项目无统一 envelope，直接返回 dict/列表：
 
-```python
-# Wrong - 条件永远为 False
-if mastered_value is not None and mastered_value is None:
-```
-
-检查条件逻辑时必须确认条件可以达到期望的分支。
-
-### 2. 参数顺序与函数签名不匹配
+- 成功：返回业务数据 dict 或列表
+- 错误：`{'error': '...'}`（Flask）或 `HTTPException(detail='...')`（FastAPI）
+- 操作确认：`{'message': '...'}`
 
 ```python
-# Wrong - 位置参数传错
-create_or_reuse_job(job_type, payload, admin_id, db)
-# 当函数签名是 create_or_reuse_job(db, job_type, payload, created_by)
+# 成功 - 业务数据
+return jsonify([bank_to_dict(b) for b in banks])
 
-# Correct
-create_or_reuse_job(db, job_type, payload, admin_id)
-```
+# 成功 - 操作确认
+return jsonify({'message': '题库已删除'})
 
-### 3. 返回类型注解与实际返回值不一致
+# 错误 - Flask
+return jsonify({'error': '需要管理员权限'}), 403
 
-```python
-# Wrong - 声明返回 dict | None 但下游要求非 None
-def _build_payload(...) -> dict | None:
-    if error:
-        return None, error_msg
-    return payload, None
-
-# Correct - 使用元组明确错误路径
-def _build_payload(...) -> tuple[dict, str | None]:
-    if error:
-        return {}, error_msg
-    return payload, None
+# 错误 - FastAPI
+raise HTTPException(status_code=403, detail="需要管理员权限")
 ```
 
 ---
 
-## BackgroundJob Async Pattern
+## 服务层风格对比
 
-长时间运行的操作（如批量翻译）必须使用 BackgroundJob 异步模式，不允许同步阻塞。
-
-### 架构
-
-```
-Frontend: POST /jobs → 200 OK → poll GET /jobs/active
-Backend:  JobService.create_or_reuse_job() → Worker claims → heartbeat → complete/fail
-Worker:   job_worker.py (独立进程, cd backend && python3 -m app.workers.job_worker)
-```
-
-### 关键约定
-
-1. **防重复提交**: `create_or_reuse_job()` 返回 `result="existing"` 当同 scope 有活跃任务
-2. **进度更新**: Worker 通过 `heartbeat_job()` 上报 progress_done / progress_total
-3. **Worker 必须从 backend/ 目录启动** (模块路径依赖 `app.*`)
-4. **Job scope**: `professional_vocab_translate` (全局) vs `bank_frequent_translate` (需 bank_id)
+### Flask 版：用全局 `db.session`
 
 ```python
-# 创建任务
-job, result, message = create_or_reuse_job(db, job_type, payload, created_by)
-
-# Worker 心跳更新进度
-heartbeat_job(db, job, success_increment=10, status_message="已处理 40/662")
-
-# 前端查询活跃任务
-GET /api/jobs/active?job_type=professional_vocab_translate
-GET /api/jobs/active?job_type=bank_frequent_translate&bank_id=1
+# backend/routes/banks.py 行102-111
+user = db.session.get(User, int(get_jwt_identity()))
+db.session.add(bank)
+db.session.commit()
 ```
 
-### Don't: 同步循环批量操作
+Service 函数也直接用全局 `db.session`，不需要传参。
+
+### FastAPI 版：显式接收 `db: Session`
 
 ```python
-# Wrong - 阻塞请求直到完成
-while True:
-    result = translate_batch()
-    if result.remaining <= 0:
-        break
+# backend/app/services/job_service.py 行66
+def list_bank_frequent_terms(db: Session, bank_id: int) -> list:
+    excluded_terms = {row.term for row in db.query(BankWordExclusion).filter_by(bank_id=bank_id).all()}
+    ...
 ```
 
-### Do: 异步后台任务
-
-```python
-# Correct - 立即返回，Worker 后台处理
-job, result, message = create_or_reuse_job(db, job_type, payload, user_id)
-return {"result": result, "job": _job_to_dict(job), "message": message}
-```
+所有 service 函数的第一个参数是 `db: Session`，不自己创建数据库会话。
 
 ---
 
-## API Compatibility Checklist
+## 序列化：手工 `*_to_dict()`
 
-迁移 Flask → FastAPI 时，对每个 API 必须验证：
+项目不使用 Pydantic `from_attributes` 自动转换。主流做法是手工编写序列化函数：
 
-- [ ] URL 路径完全一致（`/api/auth/login` 而非 `/auth/login`）
-- [ ] HTTP 方法一致（GET/POST/PUT/DELETE）
-- [ ] 请求参数位置一致（query/body/form/path）
-- [ ] 响应 JSON 字段名和结构一致
-- [ ] 认证方式一致（Bearer token）
-- [ ] 错误状态码一致（特别是 401 vs 403）
-- [ ] 文件上传接口使用 `multipart/form-data`
+```python
+# Flask 版 - backend/routes/banks.py 行81-89
+def bank_to_dict(bank):
+    return {
+        'id': bank.id,
+        'name': bank.name,
+        'created_at': bank.created_at.isoformat(),
+    }
+
+# FastAPI 版 - backend/app/services/smart_import_service.py 行1418-1451
+def serialize_import_job(import_job: ImportJob) -> dict:
+    return {
+        "id": import_job.id,
+        "created_at": import_job.created_at.isoformat() if import_job.created_at else None,
+        ...
+    }
+```
+
+日期统一用 `.isoformat()`。部分 FastAPI endpoint 使用 `response_model`，但不是主流。
 
 ---
 
-## JWT Compatibility
+## 配置方式对比
 
-FastAPI JWT 实现必须与 Flask-JWT-Extended 保持兼容：
-
-- 相同 `JWT_SECRET_KEY` 和 `JWT_ALGORITHM`（HS256）
-- Token payload 中 `sub` 字段存储字符串形式的用户 ID
-- 默认过期时间 7 天（1440 分钟）
-- 新旧系统使用同一密钥时，Flask 生成的 token 可在 FastAPI 端验证
-
-### 密码兼容
-
-新系统使用 passlib `pbkdf2_sha256` 格式。旧 Flask 系统使用 Werkzeug 格式 `pbkdf2:sha256:iterations$salt$hex_checksum`。`verify_password()` 必须兼容两种格式：
+### Flask 版：class Config + os.environ
 
 ```python
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    # 1. 先尝试 passlib 格式
-    # 2. 再尝试 Werkzeug 格式
-    # 3. 都不匹配返回 False
+# backend/config.py
+class Config:
+    SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL', f'sqlite:///{os.path.join(basedir, "quiz.db")}')
+    JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'jwt-secret-key-change-in-production')
+    AI_API_KEY = os.environ.get('AI_API_KEY', '')
 ```
+
+运行时通过 `_apply_runtime_env_overrides()` 再次覆盖（`backend/app.py` 行19-43）。
+
+### FastAPI 版：pydantic-settings BaseSettings + .env
+
+```python
+# backend/app/core/config.py
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+    DATABASE_URL: str = "postgresql+psycopg://quiz:..."
+    JWT_SECRET_KEY: str = "jwt-secret-key-change-in-production"
+    AI_API_KEY: str = ""
+```
+
+- 自动读取 `.env` 文件（注意 env_file 必须用绝对路径）
+- 类型自动校验（如 `MAX_UPLOAD_SIZE_MB: int`）
+- 计算属性：`upload_max_size_bytes` 属性方法
 
 ---
 
-## Common Mistakes
+## 常见问题
 
-### 条件分支逻辑错误
+### Flask 服务层返回 `{"error": "..."}` dict 让路由猜测状态码
 
-在质量检查中发现 `vocab.py` 的 `is_mastered` 过滤条件写成 `if mastered_value is not None and mastered_value is None`，导致过滤永远不生效。编写条件时需仔细检查逻辑含义。
+部分 Flask service 返回包含 error 键的 dict，路由层需要自行判断返回什么状态码。FastAPI 版推荐 service 抛异常或返回明确结果，由路由层决定 HTTP 状态码。
 
-### FastAPI redirect_slashes 与 catch-all 路由冲突
+### 序列化函数分散在路由和 service 中
 
-FastAPI 默认 `redirect_slashes=True`，会将 `/api/banks/` 重定向到 `/api/banks`。但 `/{full_path:path}` catch-all SPA fallback 会吞掉未匹配的 API 请求并返回 200 + HTML 而非 404。
-
-```python
-# Wrong - API 404 请求返回 HTML
-@app.get("/{full_path:path}")
-async def serve_frontend(request: Request, full_path: str):
-    # /api/nonexistent 走到这里，返回 index.html (200)
-
-# Correct - 排除 /api 前缀
-app = FastAPI(redirect_slashes=False)
-
-@app.get("/{full_path:path}")
-async def serve_frontend(request: Request, full_path: str):
-    if full_path.startswith("api"):
-        raise HTTPException(status_code=404)
-```
-
-### 路由尾部斜杠
-
-FastAPI 路由装饰器用 `""` 而非 `"/"` 注册根路径，避免 redirect_slashes 导致双重重定向：
-
-```python
-# Preferred
-@router.get("")
-def list_banks(...):
-
-# Avoid (causes 307 redirect when redirect_slashes is on)
-@router.get("/")
-def list_banks(...):
-```
+Flask 版的 `*_to_dict()` 定义在各路由文件中（如 `bank_to_dict` 在 `banks.py`，`_word_to_dict` 在 `vocab.py`）。FastAPI 版的 `serialize_*()` 定义在对应 service 文件中。

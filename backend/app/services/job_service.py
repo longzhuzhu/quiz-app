@@ -21,6 +21,8 @@ from app.services.import_service import TOP_FREQUENT_TERMS_LIMIT
 
 JOB_TYPE_PROFESSIONAL_VOCAB_TRANSLATE = "professional_vocab_translate"
 JOB_TYPE_BANK_FREQUENT_TRANSLATE = "bank_frequent_translate"
+JOB_TYPE_QUESTION_IMPORT_LLM = "question_import_llm"
+JOB_TYPE_QUESTION_IMPORT_LLM_REPARSE = "question_import_llm_reparse"
 ACTIVE_STATUSES = {"queued", "running"}
 DEFAULT_JOB_LEASE_SECONDS = 180
 DEFAULT_REQUEUE_DELAY_SECONDS = 15
@@ -54,7 +56,11 @@ def build_scope_key(job_type: str, payload: dict) -> str:
         return "professional_vocab"
     if job_type == JOB_TYPE_BANK_FREQUENT_TRANSLATE:
         return f"bank_frequent:{payload['bank_id']}"
-    raise ValueError("不支持的任务类型")
+    if job_type == JOB_TYPE_QUESTION_IMPORT_LLM:
+        return f"import_llm:{payload.get('import_job_id', 'unknown')}"
+    if job_type == JOB_TYPE_QUESTION_IMPORT_LLM_REPARSE:
+        return f"import_reparse:{payload.get('chunk_id', 'unknown')}"
+    raise ValueError(f"不支持的任务类型: {job_type}")
 
 
 def list_bank_frequent_terms(db: Session, bank_id: int) -> list:
@@ -80,13 +86,20 @@ def count_pending_items(db: Session, job_type: str, payload: dict) -> int:
             if vocabulary_needs_translation(word)
         )
 
-    bank_id = payload["bank_id"]
-    bank = db.get(QuestionBank, bank_id)
-    if not bank:
-        raise JobServiceError("题库不存在", status_code=404)
+    if job_type == JOB_TYPE_BANK_FREQUENT_TRANSLATE:
+        bank_id = payload["bank_id"]
+        bank = db.get(QuestionBank, bank_id)
+        if not bank:
+            raise JobServiceError("题库不存在", status_code=404)
 
-    items = list_bank_frequent_terms(db, bank_id)
-    return sum(1 for item in items if text_missing(item.term_zh))
+        items = list_bank_frequent_terms(db, bank_id)
+        return sum(1 for item in items if text_missing(item.term_zh))
+
+    if job_type in (JOB_TYPE_QUESTION_IMPORT_LLM, JOB_TYPE_QUESTION_IMPORT_LLM_REPARSE):
+        # 智能导入任务始终需要执行
+        return 1
+
+    raise ValueError(f"不支持的任务类型: {job_type}")
 
 
 def deserialize_job_payload(job: BackgroundJob) -> dict:

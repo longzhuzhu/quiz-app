@@ -61,7 +61,7 @@ def create_app() -> FastAPI:
     app.include_router(settings_router, prefix="/api/settings", tags=["settings"])
     app.include_router(vocab_router, prefix="/api/vocab", tags=["vocab"])
     app.include_router(import_jobs_router, prefix="/api/import-jobs", tags=["import-jobs"])
-    app.include_router(import_review_router, prefix="/api/import-review", tags=["import-review"])
+    app.include_router(import_review_router, prefix="/api/import-jobs", tags=["import-review"])
     app.include_router(background_jobs_router, prefix="/api/background-jobs", tags=["background-jobs"])
 
     # 前端 SPA 回退
