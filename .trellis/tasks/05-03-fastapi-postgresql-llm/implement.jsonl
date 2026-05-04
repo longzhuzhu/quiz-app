@@ -1,1 +1,14 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend spec index for FastAPI/PostgreSQL conventions"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "SQLAlchemy 2.x, PostgreSQL JSONB, Alembic migration, model relationship conventions for smart import tables"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "FastAPI app layout for new models, schemas, routes, services, and worker integration"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "HTTP error, auth/admin boundary, and API failure response conventions for import/review endpoints"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Pydantic schema, service-layer boundary, and backend maintainability rules"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Worker/import diagnostics and failure observability conventions"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend spec index for Vue import-job pages"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "Placement and routing conventions for new import job list/detail/review views"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Vue component patterns for upload, task detail, and review UI"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Client state and polling patterns for import job status updates"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend robustness, loading/error states, and build-quality expectations"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer API, worker, database, and frontend consistency for async import flow"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse existing import extraction, AI, job, and UI patterns without unnecessary duplication"}
+{"file": "docs/trellis/quiz-app-fastapi-postgresql-smart-import-design.md", "reason": "Detailed smart import architecture, tables, APIs, worker flow, prompts, and quality scoring reference"}

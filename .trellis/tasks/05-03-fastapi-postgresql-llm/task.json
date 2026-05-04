@@ -3,7 +3,7 @@
   "name": "fastapi-postgresql-llm",
   "title": "重构题库导入：FastAPI + PostgreSQL + LLM 智能导入",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
