@@ -33,7 +33,7 @@
         <h2 class="text-lg font-semibold text-gray-800 dark:text-white">专业词汇</h2>
         <div class="flex items-center gap-2">
           <BaseButton v-if="isAdmin && professionalUntranslatedCount > 0" @click="batchTranslate" :disabled="translating" size="sm">
-            {{ translating ? '翻译中...' : `批量翻译（${professionalUntranslatedCount}）` }}
+            {{ translating ? `翻译中... ${professionalJobState.progressDone}/${professionalJobState.progressTotal}` : `批量翻译（${professionalUntranslatedCount}）` }}
           </BaseButton>
           <BaseButton v-if="isAdmin" @click="importIAPP" :disabled="importing" variant="secondary" size="sm">
             {{ importing ? '导入中...' : '从 IAPP 导入' }}
@@ -46,7 +46,10 @@
 
       <!-- 翻译进度 -->
       <div v-if="translating" class="mb-4 rounded-card bg-teal-50 dark:bg-teal-900/20 px-4 py-3 text-sm text-teal-700 dark:text-teal-300">
-        正在批量翻译，每次 10 个... 剩余 {{ translateRemaining }} 个未翻译
+        正在翻译... 已完成 {{ professionalJobState.progressDone }} / 共 {{ professionalJobState.progressTotal }} 个
+      </div>
+      <div v-if="professionalJobError" class="mb-4 rounded-card bg-red-50 dark:bg-red-900/20 px-4 py-3 text-sm text-red-700 dark:text-red-300">
+        翻译失败：{{ professionalJobError }}
       </div>
 
       <!-- 搜索框 -->
@@ -293,7 +296,7 @@
             :disabled="translatingFrequent || loadingFrequent"
             @click="batchTranslateFrequent"
           >
-            {{ translatingFrequent ? '翻译中...' : `批量翻译（${frequentUntranslatedCount}）` }}
+            {{ translatingFrequent ? `翻译中... ${frequentJobState.progressDone}/${frequentJobState.progressTotal}` : `批量翻译（${frequentUntranslatedCount}）` }}
           </BaseButton>
           <select
             v-model="selectedBankId"
@@ -309,7 +312,10 @@
         v-if="translatingFrequent"
         class="mb-4 rounded-card bg-amber-50 dark:bg-amber-900/20 px-4 py-3 text-sm text-amber-700 dark:text-amber-300"
       >
-        正在批量翻译高频词汇，每次 100 个... 剩余 {{ frequentTranslateRemaining }} 个未翻译
+        正在翻译... 已完成 {{ frequentJobState.progressDone }} / 共 {{ frequentJobState.progressTotal }} 个
+      </div>
+      <div v-if="frequentJobError" class="mb-4 rounded-card bg-red-50 dark:bg-red-900/20 px-4 py-3 text-sm text-red-700 dark:text-red-300">
+        翻译失败：{{ frequentJobError }}
       </div>
 
       <div v-if="banks.length === 0" class="py-12 text-center text-gray-400 dark:text-gray-500">暂无题库，请先导入题库</div>
@@ -492,9 +498,13 @@ const frequentUntranslatedCount = ref(0)
 const showAddForm = ref(false)
 const importing = ref(false)
 const translating = ref(false)
-const translateRemaining = ref(0)
+const professionalJobState = reactive({ progressDone: 0, progressTotal: 0 })
+const professionalJobError = ref('')
+let professionalPollTimer = null
 const translatingFrequent = ref(false)
-const frequentTranslateRemaining = ref(0)
+const frequentJobState = reactive({ progressDone: 0, progressTotal: 0 })
+const frequentJobError = ref('')
+let frequentPollTimer = null
 const searchQuery = ref('')
 const expandedIds = reactive(new Set())
 const newWord = reactive({ term: '', term_zh: '', definition: '', definition_zh: '' })
@@ -859,46 +869,224 @@ async function doImportIAPP() {
   }
 }
 
+// ─── 异步批量翻译：专业词汇 ───
+
+const JOB_TYPE_PROFESSIONAL = 'professional_vocab_translate'
+const JOB_TYPE_FREQUENT = 'bank_frequent_translate'
+const JOB_POLL_INTERVAL = 3000
+
 async function batchTranslate() {
+  if (translating.value) return
   translating.value = true
-  translateRemaining.value = professionalUntranslatedCount.value
+  professionalJobError.value = ''
+  professionalJobState.progressDone = 0
+  professionalJobState.progressTotal = professionalUntranslatedCount.value
+
   try {
-    while (true) {
-      const res = await client.post('/vocab/professional/batch-translate')
-      translateRemaining.value = res.data.remaining
-      if (res.data.remaining <= 0) break
+    const res = await client.post('/jobs', { job_type: JOB_TYPE_PROFESSIONAL })
+    const { result, job, message } = res.data
+
+    if (result === 'no_work') {
+      toast.info(message)
+      translating.value = false
+      return
     }
-    toast.success('批量翻译完成')
-    await fetchProfessional()
-    await refreshProfessionalTranslationCount()
+
+    if (job) {
+      professionalJobState.progressTotal = job.progress_total || professionalJobState.progressTotal
+      professionalJobState.progressDone = job.progress_done || 0
+    }
+
+    if (result === 'existing') {
+      toast.info(message)
+    } else {
+      toast.success(message)
+    }
+
+    startProfessionalPolling()
   } catch (e) {
-    toast.error(e.response?.data?.error || '翻译出错，已保存已完成部分')
-    await fetchProfessional()
-    await refreshProfessionalTranslationCount()
-  } finally {
+    professionalJobError.value = e.response?.data?.detail || e.response?.data?.error || '创建翻译任务失败'
     translating.value = false
   }
 }
 
+function startProfessionalPolling() {
+  stopProfessionalPolling()
+  professionalPollTimer = setInterval(pollProfessionalJob, JOB_POLL_INTERVAL)
+  pollProfessionalJob()
+}
+
+function stopProfessionalPolling() {
+  if (professionalPollTimer) {
+    clearInterval(professionalPollTimer)
+    professionalPollTimer = null
+  }
+}
+
+async function pollProfessionalJob() {
+  try {
+    const res = await client.get('/jobs/active', {
+      params: { job_type: JOB_TYPE_PROFESSIONAL },
+    })
+    const job = res.data.job
+    if (!job) {
+      stopProfessionalPolling()
+      translating.value = false
+      await fetchProfessional()
+      await refreshProfessionalTranslationCount()
+      return
+    }
+
+    professionalJobState.progressDone = job.progress_done || 0
+    professionalJobState.progressTotal = job.progress_total || professionalJobState.progressTotal
+
+    if (job.status === 'completed') {
+      stopProfessionalPolling()
+      translating.value = false
+      toast.success('批量翻译完成')
+      await fetchProfessional()
+      await refreshProfessionalTranslationCount()
+    } else if (job.status === 'failed') {
+      stopProfessionalPolling()
+      translating.value = false
+      professionalJobError.value = job.last_error || '翻译任务失败'
+      toast.error(professionalJobError.value)
+      await fetchProfessional()
+      await refreshProfessionalTranslationCount()
+    }
+  } catch (e) {
+    stopProfessionalPolling()
+    translating.value = false
+    professionalJobError.value = e.response?.data?.detail || '查询任务状态失败'
+  }
+}
+
+async function checkProfessionalJobOnLoad() {
+  if (!isAdmin) return
+  try {
+    const res = await client.get('/jobs/active', {
+      params: { job_type: JOB_TYPE_PROFESSIONAL },
+    })
+    const job = res.data.job
+    if (job && (job.status === 'queued' || job.status === 'running')) {
+      translating.value = true
+      professionalJobState.progressDone = job.progress_done || 0
+      professionalJobState.progressTotal = job.progress_total || 0
+      professionalJobError.value = ''
+      startProfessionalPolling()
+    }
+  } catch {}
+}
+
+// ─── 异步批量翻译：高频词汇 ───
+
 async function batchTranslateFrequent() {
-  if (!selectedBankId.value) return
+  if (!selectedBankId.value || translatingFrequent.value) return
 
   translatingFrequent.value = true
-  frequentTranslateRemaining.value = frequentUntranslatedCount.value
+  frequentJobError.value = ''
+  frequentJobState.progressDone = 0
+  frequentJobState.progressTotal = frequentUntranslatedCount.value
+
   try {
-    while (true) {
-      const res = await client.post(`/banks/${selectedBankId.value}/translate-frequencies`)
-      frequentTranslateRemaining.value = res.data.remaining
-      if (res.data.remaining <= 0) break
+    const res = await client.post('/jobs', {
+      job_type: JOB_TYPE_FREQUENT,
+      bank_id: selectedBankId.value,
+    })
+    const { result, job, message } = res.data
+
+    if (result === 'no_work') {
+      toast.info(message)
+      translatingFrequent.value = false
+      return
     }
-    toast.success('高频词汇翻译完成')
-    await fetchFrequent()
+
+    if (job) {
+      frequentJobState.progressTotal = job.progress_total || frequentJobState.progressTotal
+      frequentJobState.progressDone = job.progress_done || 0
+    }
+
+    if (result === 'existing') {
+      toast.info(message)
+    } else {
+      toast.success(message)
+    }
+
+    startFrequentPolling()
   } catch (e) {
-    toast.error(e.response?.data?.error || '高频词汇翻译出错，已保存已完成部分')
-    await fetchFrequent()
-  } finally {
+    frequentJobError.value = e.response?.data?.detail || e.response?.data?.error || '创建翻译任务失败'
     translatingFrequent.value = false
   }
+}
+
+function startFrequentPolling() {
+  stopFrequentPolling()
+  frequentPollTimer = setInterval(pollFrequentJob, JOB_POLL_INTERVAL)
+  pollFrequentJob()
+}
+
+function stopFrequentPolling() {
+  if (frequentPollTimer) {
+    clearInterval(frequentPollTimer)
+    frequentPollTimer = null
+  }
+}
+
+async function pollFrequentJob() {
+  if (!selectedBankId.value) {
+    stopFrequentPolling()
+    translatingFrequent.value = false
+    return
+  }
+  try {
+    const res = await client.get('/jobs/active', {
+      params: { job_type: JOB_TYPE_FREQUENT, bank_id: selectedBankId.value },
+    })
+    const job = res.data.job
+    if (!job) {
+      stopFrequentPolling()
+      translatingFrequent.value = false
+      await fetchFrequent()
+      return
+    }
+
+    frequentJobState.progressDone = job.progress_done || 0
+    frequentJobState.progressTotal = job.progress_total || frequentJobState.progressTotal
+
+    if (job.status === 'completed') {
+      stopFrequentPolling()
+      translatingFrequent.value = false
+      toast.success('高频词汇翻译完成')
+      await fetchFrequent()
+    } else if (job.status === 'failed') {
+      stopFrequentPolling()
+      translatingFrequent.value = false
+      frequentJobError.value = job.last_error || '翻译任务失败'
+      toast.error(frequentJobError.value)
+      await fetchFrequent()
+    }
+  } catch (e) {
+    stopFrequentPolling()
+    translatingFrequent.value = false
+    frequentJobError.value = e.response?.data?.detail || '查询任务状态失败'
+  }
+}
+
+async function checkFrequentJobOnLoad() {
+  if (!isAdmin || !selectedBankId.value) return
+  try {
+    const res = await client.get('/jobs/active', {
+      params: { job_type: JOB_TYPE_FREQUENT, bank_id: selectedBankId.value },
+    })
+    const job = res.data.job
+    if (job && (job.status === 'queued' || job.status === 'running')) {
+      translatingFrequent.value = true
+      frequentJobState.progressDone = job.progress_done || 0
+      frequentJobState.progressTotal = job.progress_total || 0
+      frequentJobError.value = ''
+      startFrequentPolling()
+    }
+  } catch {}
 }
 
 watch(activeTab, () => {
@@ -932,11 +1120,15 @@ onMounted(async () => {
   fetchProfessional()
   refreshProfessionalTranslationCount()
   fetchPersonal()
+  checkProfessionalJobOnLoad()
+  checkFrequentJobOnLoad()
   window.addEventListener('scroll', onScroll, { passive: true })
 })
 
 onUnmounted(() => {
   window.removeEventListener('scroll', onScroll)
+  stopProfessionalPolling()
+  stopFrequentPolling()
 })
 
 function buildMasteredFilterParams(filterValue) {

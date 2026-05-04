@@ -70,7 +70,7 @@ def list_questions(
     }
 
 
-@router.post("/", status_code=201)
+@router.post("", status_code=201)
 def create_question(
     data: QuestionCreateRequest,
     _admin: User = Depends(require_admin),

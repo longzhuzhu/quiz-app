@@ -95,6 +95,57 @@ def _build_payload(...) -> tuple[dict, str | None]:
 
 ---
 
+## BackgroundJob Async Pattern
+
+长时间运行的操作（如批量翻译）必须使用 BackgroundJob 异步模式，不允许同步阻塞。
+
+### 架构
+
+```
+Frontend: POST /jobs → 200 OK → poll GET /jobs/active
+Backend:  JobService.create_or_reuse_job() → Worker claims → heartbeat → complete/fail
+Worker:   job_worker.py (独立进程, cd backend && python3 -m app.workers.job_worker)
+```
+
+### 关键约定
+
+1. **防重复提交**: `create_or_reuse_job()` 返回 `result="existing"` 当同 scope 有活跃任务
+2. **进度更新**: Worker 通过 `heartbeat_job()` 上报 progress_done / progress_total
+3. **Worker 必须从 backend/ 目录启动** (模块路径依赖 `app.*`)
+4. **Job scope**: `professional_vocab_translate` (全局) vs `bank_frequent_translate` (需 bank_id)
+
+```python
+# 创建任务
+job, result, message = create_or_reuse_job(db, job_type, payload, created_by)
+
+# Worker 心跳更新进度
+heartbeat_job(db, job, success_increment=10, status_message="已处理 40/662")
+
+# 前端查询活跃任务
+GET /api/jobs/active?job_type=professional_vocab_translate
+GET /api/jobs/active?job_type=bank_frequent_translate&bank_id=1
+```
+
+### Don't: 同步循环批量操作
+
+```python
+# Wrong - 阻塞请求直到完成
+while True:
+    result = translate_batch()
+    if result.remaining <= 0:
+        break
+```
+
+### Do: 异步后台任务
+
+```python
+# Correct - 立即返回，Worker 后台处理
+job, result, message = create_or_reuse_job(db, job_type, payload, user_id)
+return {"result": result, "job": _job_to_dict(job), "message": message}
+```
+
+---
+
 ## API Compatibility Checklist
 
 迁移 Flask → FastAPI 时，对每个 API 必须验证：
@@ -136,3 +187,36 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 ### 条件分支逻辑错误
 
 在质量检查中发现 `vocab.py` 的 `is_mastered` 过滤条件写成 `if mastered_value is not None and mastered_value is None`，导致过滤永远不生效。编写条件时需仔细检查逻辑含义。
+
+### FastAPI redirect_slashes 与 catch-all 路由冲突
+
+FastAPI 默认 `redirect_slashes=True`，会将 `/api/banks/` 重定向到 `/api/banks`。但 `/{full_path:path}` catch-all SPA fallback 会吞掉未匹配的 API 请求并返回 200 + HTML 而非 404。
+
+```python
+# Wrong - API 404 请求返回 HTML
+@app.get("/{full_path:path}")
+async def serve_frontend(request: Request, full_path: str):
+    # /api/nonexistent 走到这里，返回 index.html (200)
+
+# Correct - 排除 /api 前缀
+app = FastAPI(redirect_slashes=False)
+
+@app.get("/{full_path:path}")
+async def serve_frontend(request: Request, full_path: str):
+    if full_path.startswith("api"):
+        raise HTTPException(status_code=404)
+```
+
+### 路由尾部斜杠
+
+FastAPI 路由装饰器用 `""` 而非 `"/"` 注册根路径，避免 redirect_slashes 导致双重重定向：
+
+```python
+# Preferred
+@router.get("")
+def list_banks(...):
+
+# Avoid (causes 307 redirect when redirect_slashes is on)
+@router.get("/")
+def list_banks(...):
+```

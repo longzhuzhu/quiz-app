@@ -34,7 +34,7 @@ def _load_options(question: Question) -> list | dict:
     return options
 
 
-@router.get("/")
+@router.get("")
 def list_wrong(
     bank_id: int | None = Query(None),
     current_user: User = Depends(get_current_user),

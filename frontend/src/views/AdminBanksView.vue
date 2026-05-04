@@ -135,7 +135,7 @@ async function fetchBanks() {
 
 async function createBank() {
   try {
-    await client.post('/banks/', newBank.value)
+    await client.post('/banks', newBank.value)
     newBank.value = { name: '', description: '' }
     showCreate.value = false
     toast.success('题库创建成功')

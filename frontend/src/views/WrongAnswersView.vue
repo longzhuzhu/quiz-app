@@ -231,7 +231,7 @@ async function fetchWrongs() {
   expandedId.value = null
   try {
     const params = selectedBankId.value ? { bank_id: selectedBankId.value } : {}
-    const res = await client.get('/wrong/', { params })
+    const res = await client.get('/wrong', { params })
     wrongs.value = res.data
   } finally {
     loading.value = false
