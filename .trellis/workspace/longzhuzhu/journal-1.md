@@ -143,3 +143,37 @@ Convert vocabulary batch translation from synchronous while-loop to async Backgr
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: 智能导入去重与准确率提升
+
+**Date**: 2026-05-04
+**Task**: 智能导入去重与准确率提升
+**Branch**: `codex/vocab-progress-settings-deploy`
+
+### Summary
+
+实现智能导入题内/跨导入去重签名(_question_signature)、同文件重复导入检测(file_hash+409)、LLM幻视抑制(Prompt规则11/12+无题号降分)、答案参考表优化(移除chunk拼接)、删除题库FK级联修复、LlmParseResult issues字段兼容dict。实测257→275题入库，唯一率94.7%，同文件重导入409拦截，删除题库正常。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `057b9ac` | (see git log) |
+| `13b0cc3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
