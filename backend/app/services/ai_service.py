@@ -24,7 +24,10 @@ def _strip_code_fence(text: str) -> str:
 
 
 def has_question_translation(question: Question) -> bool:
-    return bool(question.content_zh)
+    if not question.content_zh:
+        return False
+    options = _load_options(question)
+    return all(opt.get("text_zh") for opt in options)
 
 
 def has_question_explanation(question: Question) -> bool:
@@ -100,6 +103,8 @@ def call_ai_api(messages, db, scene="default"):
 
 
 def translate_question(db, question: Question) -> dict:
+    from sqlalchemy.orm.attributes import flag_modified
+
     options = _load_options(question)
     options_text = "\n".join([f"{o['key']}. {o['text']}" for o in options])
 
@@ -129,19 +134,25 @@ def translate_question(db, question: Question) -> dict:
                 opt["text_zh"] = opt_zh["text_zh"]
                 break
     question.options = options  # JSONB 直接赋值
+    flag_modified(question, "options")
     db.commit()
 
     return build_question_translation_payload(question)
 
 
-def translate_term(term: str) -> dict:
-    """翻译单个术语（不需要 db，使用全局配置回退）"""
-    # 翻译术语为轻量调用，直接使用环境变量配置
-    from app.core.config import settings
+def translate_term(term: str, db=None) -> dict:
+    """翻译单个术语"""
+    if db:
+        ai = get_effective_ai_settings(db, scene="translate")
+        base_url = ai["base_url"]
+        api_key = ai["api_key"]
+        model = ai["model"]
+    else:
+        from app.core.config import settings
 
-    base_url = settings.AI_API_BASE_URL
-    api_key = settings.AI_API_KEY
-    model = settings.AI_MODEL
+        base_url = settings.AI_API_BASE_URL
+        api_key = settings.AI_API_KEY
+        model = settings.AI_MODEL
 
     if not api_key:
         raise ValueError("AI API Key 未配置")

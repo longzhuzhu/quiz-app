@@ -134,7 +134,7 @@ def add_personal(
     if data.auto_translate and not term_zh:
         try:
             from app.services.ai_service import translate_term
-            result = translate_term(term)
+            result = translate_term(term, db)
             term_zh = result.get("term_zh") or term_zh
             definition_zh = result.get("definition_zh") or definition_zh
         except Exception:

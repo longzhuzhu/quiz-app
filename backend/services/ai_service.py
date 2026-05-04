@@ -24,7 +24,10 @@ def _strip_code_fence(text: str) -> str:
 
 
 def has_question_translation(question: Question) -> bool:
-    return bool(question.content_zh)
+    if not question.content_zh:
+        return False
+    options = _load_options(question)
+    return all(opt.get('text_zh') for opt in options)
 
 
 def has_question_explanation(question: Question) -> bool:
