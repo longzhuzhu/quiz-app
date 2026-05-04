@@ -58,7 +58,7 @@ def clear_question_translation(db, question: Question):
     options = _load_options(question)
     for option in options:
         option.pop("text_zh", None)
-    question.options = options  # JSONB 直接赋值
+    question.options = options  # JSONB 整字段重赋值，触发 dirty 检测
 
 
 def clear_question_explanation(db, question: Question):
@@ -124,8 +124,6 @@ def call_ai_api(messages, db, scene: str = "default", timeout: float = 60.0):
 
 
 def translate_question(db, question: Question) -> dict:
-    from sqlalchemy.orm.attributes import flag_modified
-
     options = _load_options(question)
     options_text = "\n".join([f"{o['key']}. {o['text']}" for o in options])
 
@@ -154,8 +152,7 @@ def translate_question(db, question: Question) -> dict:
             if opt["key"] == opt_zh["key"]:
                 opt["text_zh"] = opt_zh["text_zh"]
                 break
-    question.options = options  # JSONB 直接赋值
-    flag_modified(question, "options")
+    question.options = options  # JSONB 整字段重赋值，触发 dirty 检测
     db.commit()
 
     return build_question_translation_payload(question)
