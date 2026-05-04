@@ -50,7 +50,7 @@
 
     <!-- AI 按钮区 -->
     <div class="mt-4 flex flex-wrap items-center gap-2">
-      <TranslateButton :question-id="question.id" :has-translation="!!question.content_zh" :show="showTranslation"
+      <TranslateButton :question-id="question.id" :has-translation="hasFullTranslation" :show="showTranslation"
         @translated="(e) => { $emit('translated', e); showTranslation = true }"
         @toggle="showTranslation = !showTranslation" />
       <ExplainButton
@@ -60,7 +60,7 @@
         :initial-explanation="initialExplanation"
         @explained="(e) => explainData = e"
       />
-      <AddVocabButton />
+      <AddVocabButton :initial-term="question.content" />
     </div>
 
     <!-- AI 解析内容（独立于按钮行） -->
@@ -140,6 +140,11 @@ const initialExplanation = computed(() => {
   const { explanation, explanation_zh } = props.question
   if (!explanation && !explanation_zh) return null
   return { explanation, explanation_zh }
+})
+
+const hasFullTranslation = computed(() => {
+  if (!props.question?.content_zh) return false
+  return (props.question.options || []).every(opt => opt.text_zh)
 })
 
 watch(
