@@ -4,12 +4,13 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections import Counter
 
 import psycopg
 
-DSN = "postgresql://quiz:REDACTED_DB_PASSWORD@localhost:5433/quiz"
+DSN = os.environ.get("DATABASE_URL", "postgresql://user:pass@localhost:5432/quiz")
 JOB_ID = 7  # 通过 file_name LIKE '%CIPT%283%' 锁定，见报告 C 节
 EXPECTED = set(range(1, 284))
 

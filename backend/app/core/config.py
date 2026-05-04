@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     )
 
     # 数据库
-    DATABASE_URL: str = "postgresql+psycopg://quiz:REDACTED_DB_PASSWORD@localhost:5433/quiz"
+    DATABASE_URL: str = "postgresql+psycopg://user:pass@localhost:5432/quiz"
 
     # JWT
     JWT_SECRET_KEY: str = "jwt-secret-key-change-in-production"
