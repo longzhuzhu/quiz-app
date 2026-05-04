@@ -162,17 +162,26 @@ def test_call_ai_api_propagates_timeout_exception(
 
 
 def test_smart_import_chunk_calls_ai_api_with_120s_timeout():
-    """smart_import_service 在调用 call_ai_api 时必须显式传 timeout=120.0。
+    """smart_import_service 在调用 LLM 时必须显式传 timeout=120.0。
 
     采用静态正则断言：避开真正运行 _process_chunk 的高重链路（DB / chunking /
     LLM 全栈），同时锁定 PR-1 的字面契约。命中点至少 1 处。
+
+    PR-2 重构后，timeout=120.0 字面值同时出现在两处任一即可：
+      (a) call_ai_api(..., timeout=120.0)  —— PR-1 实现
+      (b) _call_llm_with_l1_retry(..., timeout=120.0)  —— PR-2 重构后入口
+    两者语义等价（前者由后者透传），TC 同时接受两种形式的字面证据。
     """
     src = (
         BACKEND_ROOT / "app" / "services" / "smart_import_service.py"
     ).read_text(encoding="utf-8")
 
-    matches = re.findall(r"call_ai_api\([^)]*timeout=120(?:\.0)?[^)]*\)", src)
+    matches = re.findall(
+        r"(?:call_ai_api|_call_llm_with_l1_retry)\([^)]*timeout=120(?:\.0)?[^)]*\)",
+        src,
+    )
     assert len(matches) >= 1, (
-        "smart_import_service.py 中未找到 call_ai_api(..., timeout=120[.0]) 的调用；"
-        "PR-1 要求 _process_chunk 调用 LLM 时显式传 timeout=120.0"
+        "smart_import_service.py 中未找到 call_ai_api(..., timeout=120[.0]) "
+        "或 _call_llm_with_l1_retry(..., timeout=120[.0]) 的调用；"
+        "smart_import 路径必须显式将 LLM 调用 timeout 设为 120.0"
     )

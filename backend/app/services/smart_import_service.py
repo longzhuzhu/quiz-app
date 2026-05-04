@@ -10,9 +10,12 @@ import hashlib
 import json
 import logging
 import re
+import time
 from datetime import datetime, timezone
 from decimal import Decimal
 
+import httpx
+from pydantic import ValidationError
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -47,6 +50,34 @@ PROMPT_VERSION = "v1"
 CHUNK_MAX_CHARS = 12000
 CHUNK_MIN_CHARS = 500
 AUTO_ACCEPT_CONFIDENCE = Decimal("0.90")
+
+# ─── PR-2: 重试 / 降级常量 ─────────────────────
+# L1 整 chunk 重试：首次调用 + L1_MAX_RETRIES 次重试 = 共 (L1_MAX_RETRIES + 1) 次。
+# 重试前固定 sleep L1_RETRY_BACKOFF_SECONDS。
+# RETRY_BASE_SECONDS / RETRY_CAP_SECONDS 为未来扩展"多次重试 + 指数退避"预留，
+# PR-2 暂不消费。
+L1_MAX_RETRIES = 1
+L1_RETRY_BACKOFF_SECONDS = 2.0
+RETRY_BASE_SECONDS = 2.0
+RETRY_CAP_SECONDS = 10.0
+
+# L2 单题降级：每段单独 LLM 调用使用更短的 timeout，
+# 因为单题输入文本远小于 chunk 级别。
+L2_PER_QUESTION_TIMEOUT = 60.0
+
+# 单 chunk 总耗时上限（含 L1 + L2）。超出后剩余单题写入
+# per_question_failures.stage="L2_fallback_budget_exceeded" 后跳出 L2 循环。
+# 480s 约 2.7 个 worker lease 周期（DEFAULT_JOB_LEASE_SECONDS=180s），
+# 配合 L2 循环内的 heartbeat_job 续约。
+CHUNK_TOTAL_BUDGET_SECONDS = 480.0
+
+# L2 循环内每 N 段调一次 heartbeat 续约 lease。
+HEARTBEAT_EVERY_N_SEGMENTS = 3
+
+# L1 重试候选异常类型。
+# - httpx.TimeoutException 是 httpx.HTTPError 的子类；显式列出仅为可读性。
+# - ValueError("AI API 错误 (5xx)") 走 _is_retryable_value_error 路径。
+RETRYABLE_HTTP_EXC = (httpx.TimeoutException, httpx.HTTPError)
 
 # 题号分割模式（优先级从高到低）
 QUESTION_SPLIT_PATTERNS = [
@@ -107,6 +138,15 @@ def _question_signature(
         normalized_options,
         normalized_answer,
     )
+
+
+def _is_retryable_value_error(exc: ValueError) -> bool:
+    """判断 call_ai_api 抛出的 ValueError 是否可重试。
+
+    仅服务端 5xx 视为瞬时；4xx / "API Key 未配置" 等不重试。
+    依赖 ai_service.call_ai_api 现有的错误消息格式："AI API 错误 (5xx): ..."。
+    """
+    return "AI API 错误 (5" in str(exc)
 
 
 # ─── 创建导入任务 ──────────────────────────────────
@@ -328,6 +368,7 @@ def run_smart_import(db: Session, background_job: BackgroundJob) -> None:
                 auto_import=auto_import,
                 use_llm_cache=use_llm_cache,
                 seen_signatures=seen_signatures,
+                bg_job=bg_job,
             )
         except Exception as exc:
             logger.error("Chunk %d 解析失败: %s", chunk.chunk_no, exc)
@@ -358,78 +399,201 @@ def _process_chunk(
     auto_import: bool,
     use_llm_cache: bool,
     seen_signatures: set | None = None,
+    bg_job: BackgroundJob | None = None,
 ) -> None:
-    """处理单个 chunk：LLM 解析 → 质量评分 → 自动入库或人工复核"""
+    """处理单个 chunk：缓存 → L1 整 chunk LLM → L1 重试 → L2 单题降级 → 入库。
+
+    状态机（chunk.status）：
+        pending → parsing → {parsed_cached | parsed | parsed_retry |
+                              parsed_fallback | parsed_partial | failed |
+                              llm_failed | parse_failed}
+
+    PR-2 新增取值（无 schema 迁移成本，String(32) 无 enum 约束）：
+        parsed_retry      : L1 重试 1 次后成功
+        parsed_fallback   : L1 失败 → L2 单题降级**全部成功**
+        parsed_partial    : L2 单题降级**部分失败**（含 per_question_failures）
+
+    chunk.issues_json 在 PR-2 后的 schema：
+        {
+          "chunk_issues": [...],         # LLM 返回的 chunk 级 issues（可能缺失）
+          "retry_count": int,            # L1 实际重试次数（0 或 L1_MAX_RETRIES）
+          "fallback_used": bool,         # L2 是否触发
+          "per_question_failures": [
+            {"source_question_no": str|None, "stage": str, "error": str}
+          ],
+          "fallback_meta": {...}         # 仅 fallback_used=True 时出现
+        }
+
+    LlmParseCache 写入策略：
+        - 一次性成功 / L1 重试后成功 → 写缓存（PROMPT_VERSION + chunk_hash 为键）。
+        - L2 单题降级（无论成功与否） → **不写缓存**。理由：缓存键按整 chunk hash，
+          单题响应拼装出的 chunk 级响应不能代表真实 LLM 的 chunk 级一致性。
+        - 任何 hard-fail（4xx / API Key 未配置 / parse_failed / L2 全部失败） → 不写。
+
+    异常处理：
+        - 不可重试错误（4xx ValueError / API Key 未配置 / Pydantic ValidationError /
+          json.JSONDecodeError）：写 chunk.status="llm_failed"/"parse_failed" + raise，
+          由 run_smart_import 外层 except 兜底标 failed 并 failed_chunks++。
+        - 可重试错误（httpx.TimeoutException / 5xx ValueError / httpx.HTTPError）：
+          走 L2 fallback；如 L2 全部失败 → status="failed", failed_chunks++,
+          **不再 raise**（已显式记账）。
+    """
     chunk.status = "parsing"
     db.commit()
 
     chunk_text = chunk.chunk_text
     config = import_job.config_json or {}
     answer_key_text = config.get("answer_key_text", "")
+    chunk_started_at = time.monotonic()
 
-    # 查找 LLM 缓存
+    # 1) 查缓存（仅一次，L1 重试不会再触发缓存查找）
     cache_key = _build_cache_key(chunk.chunk_hash)
-    cached = None
-    if use_llm_cache:
-        cached = _lookup_llm_cache(db, cache_key)
+    cached = _lookup_llm_cache(db, cache_key) if use_llm_cache else None
 
     if cached:
-        response_text = cached.get("response_text", "")
-        chunk.llm_request_json = cached.get("request_json")
-        chunk.llm_response_json = json.loads(response_text) if response_text else None
-        chunk.status = "parsed_cached"
-    else:
-        # 构建 prompt 并调用 LLM
-        messages = _build_llm_prompt(chunk_text, answer_key_text)
-        chunk.llm_request_json = {"messages": messages}
-        db.commit()
+        _process_chunk_cached(
+            db=db,
+            chunk=chunk,
+            cached=cached,
+            import_job=import_job,
+            chunk_text=chunk_text,
+            auto_import=auto_import,
+            seen_signatures=seen_signatures,
+        )
+        return
 
-        try:
-            response_text = call_ai_api(messages, db, scene="smart_import", timeout=120.0)
-        except Exception as exc:
+    # 2) 构建 prompt + 持久化 llm_request_json（便于事后审计）
+    messages = _build_llm_prompt(chunk_text, answer_key_text)
+    chunk.llm_request_json = {"messages": messages}
+    db.commit()
+
+    # 3) L1 整 chunk 调用（含最多 1 次重试）
+    retry_count = 0
+    fallback_used = False
+    per_question_failures: list[dict] = []
+    merged_questions: list[dict] = []
+    response_text: str | None = None
+
+    try:
+        response_text, retry_count = _call_llm_with_l1_retry(messages, db, timeout=120.0)
+    except RETRYABLE_HTTP_EXC:
+        # httpx.TimeoutException / httpx.HTTPError：L1 用尽 → 进 L2
+        fallback_used = True
+        retry_count = L1_MAX_RETRIES
+    except ValueError as exc:
+        if _is_retryable_value_error(exc):
+            # 5xx ValueError：L1 用尽 → 进 L2
+            fallback_used = True
+            retry_count = L1_MAX_RETRIES
+        else:
+            # 4xx / API Key 缺失：硬失败，不进 L2
             chunk.status = "llm_failed"
-            chunk.issues_json = {"error": f"LLM 调用失败: {exc}"}
+            chunk.issues_json = {
+                **(chunk.issues_json or {}),
+                "error": f"LLM 调用失败: {exc}",
+                "retry_count": 0,
+                "fallback_used": False,
+                "per_question_failures": [],
+            }
             db.commit()
             raise
 
-        # 解析 LLM 响应
-        try:
-            llm_result = _parse_llm_response(response_text)
-        except Exception as exc:
-            chunk.status = "parse_failed"
-            chunk.issues_json = {"error": f"LLM 响应解析失败: {exc}", "raw_response": response_text[:500]}
-            chunk.llm_response_json = {"raw": response_text[:2000]}
-            db.commit()
-            raise
+    # 4) L2 单题降级（仅 fallback_used 时执行）
+    if fallback_used:
+        merged_questions, per_question_failures = _run_per_question_fallback(
+            chunk_text=chunk_text,
+            answer_key_text=answer_key_text,
+            db=db,
+            bg_job=bg_job,
+            chunk=chunk,
+            started_at=chunk_started_at,
+        )
+        # 拼装 chunk 级伪响应，便于下游 _parse_llm_response 复用解析逻辑
+        response_text = json.dumps(
+            {
+                "questions": merged_questions,
+                "chunk_issues": [],
+                "_fallback_meta": {
+                    "total_segments": len(merged_questions) + len(per_question_failures),
+                    "succeeded": len(merged_questions),
+                    "failed": len(per_question_failures),
+                },
+            },
+            ensure_ascii=False,
+        )
 
+    # 5) 解析 LLM 响应（L1 路径可能失败；L2 路径自构造，保证可解析）
+    try:
+        llm_result = _parse_llm_response(response_text or "")
+    except Exception as exc:
+        chunk.status = "parse_failed"
+        chunk.issues_json = {
+            **(chunk.issues_json or {}),
+            "error": f"LLM 响应解析失败: {exc}",
+            "raw_response": (response_text or "")[:500],
+            "retry_count": retry_count,
+            "fallback_used": fallback_used,
+            "per_question_failures": per_question_failures,
+        }
+        chunk.llm_response_json = {"raw": (response_text or "")[:2000]}
+        db.commit()
+        raise
+
+    # 6) 写 llm_response_json（结构化便于排查）
+    try:
         chunk.llm_response_json = json.loads(response_text) if response_text else None
+    except json.JSONDecodeError:
+        chunk.llm_response_json = {"raw": (response_text or "")[:2000]}
+
+    # 7) 计算最终 chunk.status
+    if fallback_used and not merged_questions:
+        # L2 全部失败 / 无法切段
+        chunk.status = "failed"
+        import_job.failed_chunks = (import_job.failed_chunks or 0) + 1
+    elif fallback_used and per_question_failures:
+        # L2 部分成功
+        chunk.status = "parsed_partial"
+        import_job.failed_chunks = (import_job.failed_chunks or 0) + 1
+    elif fallback_used:
+        # L2 全部成功
+        chunk.status = "parsed_fallback"
+    elif retry_count > 0:
+        chunk.status = "parsed_retry"
+    else:
         chunk.status = "parsed"
 
-        # 存入缓存
-        if use_llm_cache:
-            _store_llm_cache(
-                db, cache_key, chunk.chunk_hash,
-                request_json=chunk.llm_request_json,
-                response_text=response_text,
-            )
-
-    # 如果是从缓存加载的，需要重新解析
-    if cached:
-        try:
-            llm_result = _parse_llm_response(response_text)
-        except Exception as exc:
-            chunk.status = "parse_failed"
-            chunk.issues_json = {"error": f"缓存响应解析失败: {exc}"}
-            db.commit()
-            raise
-
-    # 保存 chunk issues
+    # 8) 写 issues_json（PR-2 schema）
+    issues_payload: dict = {
+        **(chunk.issues_json or {}),
+        "retry_count": retry_count,
+        "fallback_used": fallback_used,
+        "per_question_failures": per_question_failures,
+    }
+    if fallback_used:
+        issues_payload["fallback_meta"] = {
+            "total_segments": len(merged_questions) + len(per_question_failures),
+            "succeeded": len(merged_questions),
+            "failed": len(per_question_failures),
+            "elapsed_seconds": round(time.monotonic() - chunk_started_at, 2),
+        }
     if llm_result.chunk_issues:
-        chunk.issues_json = {"chunk_issues": llm_result.chunk_issues}
+        issues_payload["chunk_issues"] = llm_result.chunk_issues
+    chunk.issues_json = issues_payload
+
+    # 9) 缓存写入（仅 L1 路径成功 / L1 重试成功；L2 路径与失败路径都不写）
+    if use_llm_cache and not fallback_used and chunk.status not in ("failed", "llm_failed", "parse_failed"):
+        _store_llm_cache(
+            db, cache_key, chunk.chunk_hash,
+            request_json=chunk.llm_request_json,
+            response_text=response_text or "",
+        )
 
     db.commit()
 
-    # 保存解析结果
+    # 10) 入库（status="failed" 时 questions 必为空，但显式跳过更稳健）
+    if chunk.status == "failed":
+        return
+
     for parsed_q in llm_result.questions:
         _save_parsed_question(
             db=db,
@@ -440,6 +604,175 @@ def _process_chunk(
             auto_import=auto_import,
             seen_signatures=seen_signatures,
         )
+
+
+def _process_chunk_cached(
+    db: Session,
+    chunk: ImportChunk,
+    cached: dict,
+    import_job: ImportJob,
+    chunk_text: str,
+    auto_import: bool,
+    seen_signatures: set | None,
+) -> None:
+    """处理 LlmParseCache 命中的 chunk：直接复用历史响应，跳过 LLM 调用。"""
+    response_text = cached.get("response_text", "")
+    chunk.llm_request_json = cached.get("request_json")
+    try:
+        chunk.llm_response_json = json.loads(response_text) if response_text else None
+    except json.JSONDecodeError:
+        chunk.llm_response_json = {"raw": response_text[:2000]}
+
+    try:
+        llm_result = _parse_llm_response(response_text)
+    except Exception as exc:
+        chunk.status = "parse_failed"
+        chunk.issues_json = {
+            **(chunk.issues_json or {}),
+            "error": f"缓存响应解析失败: {exc}",
+        }
+        db.commit()
+        raise
+
+    chunk.status = "parsed_cached"
+    if llm_result.chunk_issues:
+        chunk.issues_json = {
+            **(chunk.issues_json or {}),
+            "chunk_issues": llm_result.chunk_issues,
+        }
+    db.commit()
+
+    for parsed_q in llm_result.questions:
+        _save_parsed_question(
+            db=db,
+            parsed_q=parsed_q,
+            import_job=import_job,
+            chunk=chunk,
+            chunk_text=chunk_text,
+            auto_import=auto_import,
+            seen_signatures=seen_signatures,
+        )
+
+
+def _call_llm_with_l1_retry(
+    messages: list[dict],
+    db: Session,
+    *,
+    timeout: float,
+    max_retries: int = L1_MAX_RETRIES,
+    backoff: float = L1_RETRY_BACKOFF_SECONDS,
+) -> tuple[str, int]:
+    """整 chunk 调用 LLM；遇可重试异常自动重试 max_retries 次。
+
+    返回:
+        (response_text, attempts_after_first)：attempts_after_first=0 表示首次成功，
+        attempts_after_first=N 表示重试 N 次后成功。
+
+    抛出:
+        最后一次失败的异常（httpx.HTTPError / httpx.TimeoutException / 5xx ValueError）；
+        非可重试的 ValueError（4xx / API Key 缺失）直接首次抛出，不重试。
+
+    决策记录（详见 PR-2 design 文档 D.1）：
+        当前 max_retries=L1_MAX_RETRIES=1，固定 sleep backoff（不指数）。
+        指数退避常量 RETRY_BASE_SECONDS / RETRY_CAP_SECONDS 为未来扩展预留。
+    """
+    last_exc: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            text = call_ai_api(messages, db, scene="smart_import", timeout=timeout)
+            return text, attempt
+        except ValueError as exc:
+            if not _is_retryable_value_error(exc):
+                raise
+            last_exc = exc
+        except RETRYABLE_HTTP_EXC as exc:
+            last_exc = exc
+        if attempt < max_retries:
+            time.sleep(backoff)
+    # 用尽重试次数；last_exc 必非 None
+    assert last_exc is not None
+    raise last_exc
+
+
+def _run_per_question_fallback(
+    chunk_text: str,
+    answer_key_text: str,
+    db: Session,
+    bg_job: BackgroundJob | None,
+    chunk: ImportChunk,
+    started_at: float,
+) -> tuple[list[dict], list[dict]]:
+    """L2 单题降级。把 chunk_text 切分成"每题一段"，每段单独发起 LLM 调用。
+
+    返回:
+        (merged_questions, per_question_failures)
+        - merged_questions: 成功解析的题目 dict 列表（与 ParsedQuestion.model_dump() 同构）
+        - per_question_failures: [{"source_question_no", "stage", "error"}]
+
+    时间预算 / heartbeat：
+        - 总耗时上限 CHUNK_TOTAL_BUDGET_SECONDS 由 started_at 推算。
+          超时把剩余段标 stage="L2_fallback_budget_exceeded" 并跳出循环。
+        - 每 HEARTBEAT_EVERY_N_SEGMENTS 段调一次 heartbeat_job 续约 lease；
+          heartbeat 失败本身不应中断 fallback。
+    """
+    segments = _split_by_single_question(chunk_text)
+    merged: list[dict] = []
+    failures: list[dict] = []
+
+    if not segments:
+        return merged, [{
+            "source_question_no": None,
+            "stage": "L2_fallback_skipped",
+            "error": "no_question_markers",
+        }]
+
+    total_segments = len(segments)
+    for idx, seg in enumerate(segments, start=1):
+        # 总耗时预算 kill switch（含已耗费的 L1 时间）
+        if time.monotonic() - started_at > CHUNK_TOTAL_BUDGET_SECONDS:
+            for rem in segments[idx - 1:]:
+                failures.append({
+                    "source_question_no": rem.get("source_question_no"),
+                    "stage": "L2_fallback_budget_exceeded",
+                    "error": f"chunk total budget {CHUNK_TOTAL_BUDGET_SECONDS}s exceeded",
+                })
+            break
+
+        msgs = _build_llm_prompt(seg["text"], answer_key_text)
+        try:
+            txt = call_ai_api(
+                msgs, db, scene="smart_import", timeout=L2_PER_QUESTION_TIMEOUT,
+            )
+            parsed = _parse_llm_response(txt)
+            for q in parsed.questions:
+                merged.append(q.model_dump())
+        except (
+            ValueError,
+            httpx.HTTPError,
+            json.JSONDecodeError,
+            ValidationError,
+        ) as exc:
+            failures.append({
+                "source_question_no": seg.get("source_question_no"),
+                "stage": "L2_fallback",
+                "error": f"{type(exc).__name__}: {exc}",
+            })
+
+        # heartbeat 续约（每 N 段一次；失败不中断 fallback）
+        if bg_job is not None and idx % HEARTBEAT_EVERY_N_SEGMENTS == 0:
+            try:
+                heartbeat_job(
+                    db, bg_job,
+                    success_increment=0,
+                    status_message=(
+                        f"Chunk {chunk.chunk_no} L2 fallback {idx}/{total_segments}"
+                    ),
+                )
+            except Exception:
+                # heartbeat 失败不应中断 fallback；继续下一段
+                pass
+
+    return merged, failures
 
 
 def _save_parsed_question(
@@ -1015,6 +1348,42 @@ def _split_by_question_markers(text: str) -> list[dict]:
         merged.append({"text": buffer_text, "start_page": None, "end_page": None})
 
     return merged if merged else segments
+
+
+def _split_by_single_question(text: str) -> list[dict]:
+    """与 _split_by_question_markers 类似，但每段恰含 1 道题（不合并短片段）。
+
+    用途：L2 单题降级路径下，把整 chunk 文本切成"每题一段"，每段独立调 LLM。
+
+    返回:
+        [{"text": str, "source_question_no": str | None}, ...]
+        若文本无任何题号正则命中，返回空列表。
+    """
+    best_pattern = None
+    best_count = 0
+    for pattern in QUESTION_SPLIT_PATTERNS:
+        matches = list(pattern.finditer(text))
+        if len(matches) > best_count:
+            best_count = len(matches)
+            best_pattern = pattern
+
+    if best_count == 0 or not best_pattern:
+        return []
+
+    matches = list(best_pattern.finditer(text))
+    out: list[dict] = []
+    for i, m in enumerate(matches):
+        start = m.start()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        seg_text = text[start:end].strip()
+        if not seg_text:
+            continue
+        qno_match = re.search(r"(\d+)", m.group(0))
+        out.append({
+            "text": seg_text,
+            "source_question_no": qno_match.group(1) if qno_match else None,
+        })
+    return out
 
 
 def _split_by_char_count(text: str, max_chars: int = CHUNK_MAX_CHARS) -> list[dict]:
