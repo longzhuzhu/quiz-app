@@ -1,0 +1,8 @@
+{"step":1,"title":"验证去重签名函数","file":"backend/app/services/smart_import_service.py","check":"_question_signature 返回稳定 tuple，同内容不同空白仍匹配，options 顺序不同仍匹配"}
+{"step":2,"title":"验证 seen_signatures 贯穿导入流程","file":"backend/app/services/smart_import_service.py","check":"run_smart_import 构建 seen_signatures → _process_chunk 传递 → _save_parsed_question 使用"}
+{"step":3,"title":"验证重复题目标记和计数","file":"backend/app/services/smart_import_service.py","check":"重复题 review_status=duplicate，ImportJob.imported_questions 不计重复"}
+{"step":4,"title":"验证 Prompt 幻视抑制","file":"backend/app/services/smart_import_service.py","check":"system_content 包含题号约束和讲解内容排除规则"}
+{"step":5,"title":"验证答案参考表不再拼入 chunk_text","file":"backend/app/services/smart_import_service.py","check":"_split_into_chunks 返回的 chunk_text 不含 '--- 答案参考表 ---'"}
+{"step":6,"title":"验证同文件重复导入检测","file":"backend/app/services/smart_import_service.py","check":"create_smart_import_job 查询 file_hash，重复时返回 error；force=True 可覆盖"}
+{"step":7,"title":"验证 _quality_check 无题号降分","file":"backend/app/services/smart_import_service.py","check":"无 source_question_no 时 duplicate_safety_score=0.5 且有 MEDIUM issue"}
+{"step":8,"title":"验证 _write_question_to_bank 去重","file":"backend/app/services/smart_import_service.py","check":"写入前查询同 bank_id 下相同 content+question_type，存在则跳过"}
