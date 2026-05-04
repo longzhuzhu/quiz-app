@@ -158,7 +158,7 @@ def patch_io(monkeypatch):
     )
 
     def _fake_save_parsed(*, db, parsed_q, import_job, chunk, chunk_text,
-                          auto_import, seen_signatures=None):
+                          auto_import, seen_signatures=None, imported_qnos=None):
         counters["save_parsed"].append(parsed_q.source_question_no)
         import_job.parsed_questions = (import_job.parsed_questions or 0) + 1
 

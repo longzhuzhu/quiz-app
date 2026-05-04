@@ -149,6 +149,19 @@ def _is_retryable_value_error(exc: ValueError) -> bool:
     return "AI API 错误 (5" in str(exc)
 
 
+def _normalize_qno(qno: str | None) -> str | None:
+    """归一化题号：去前后空白 + 去 '#' 前缀 + 再去前后空白；空串返回 None。
+
+    用于 imported_qnos 集合构建与 _save_parsed_question 入口比对，
+    处理 LLM 输出 ``"#222"`` / ``" #222 "`` / ``"222"`` 等格式漂移。
+    保持 ``str`` 而非 ``int`` —— 通用性考虑（如 ``"5a"`` / ``"5-1"`` 等非纯数字题号）。
+    """
+    if qno is None:
+        return None
+    cleaned = qno.strip().lstrip("#").strip()
+    return cleaned or None
+
+
 # ─── 创建导入任务 ──────────────────────────────────
 
 
@@ -400,6 +413,7 @@ def _process_chunk(
     use_llm_cache: bool,
     seen_signatures: set | None = None,
     bg_job: BackgroundJob | None = None,
+    imported_qnos: set[str] | None = None,
 ) -> None:
     """处理单个 chunk：缓存 → L1 整 chunk LLM → L1 重试 → L2 单题降级 → 入库。
 
@@ -459,6 +473,7 @@ def _process_chunk(
             chunk_text=chunk_text,
             auto_import=auto_import,
             seen_signatures=seen_signatures,
+            imported_qnos=imported_qnos,
         )
         return
 
@@ -603,6 +618,7 @@ def _process_chunk(
             chunk_text=chunk_text,
             auto_import=auto_import,
             seen_signatures=seen_signatures,
+            imported_qnos=imported_qnos,
         )
 
 
@@ -614,6 +630,7 @@ def _process_chunk_cached(
     chunk_text: str,
     auto_import: bool,
     seen_signatures: set | None,
+    imported_qnos: set[str] | None = None,
 ) -> None:
     """处理 LlmParseCache 命中的 chunk：直接复用历史响应，跳过 LLM 调用。"""
     response_text = cached.get("response_text", "")
@@ -651,6 +668,7 @@ def _process_chunk_cached(
             chunk_text=chunk_text,
             auto_import=auto_import,
             seen_signatures=seen_signatures,
+            imported_qnos=imported_qnos,
         )
 
 
@@ -775,6 +793,72 @@ def _run_per_question_fallback(
     return merged, failures
 
 
+def _persist_duplicate_parsed_question(
+    db: Session,
+    parsed_q: ParsedQuestion,
+    import_job: ImportJob,
+    chunk: ImportChunk,
+    *,
+    reason: str,
+) -> None:
+    """统一处理 DUPLICATE 路径：把 ImportParsedQuestion 写为 ``review_status='duplicate'``,
+    ``import_status='skipped'``，**不**写入 Question 表，**不**更新 ``seen_signatures``。
+
+    PR-3 起两条 DUPLICATE 路径（题号去重 + 内容签名）走同一 helper，杜绝双写漂移。
+
+    issues_json 规约：
+        - 主 ``code`` 保持 ``"DUPLICATE"`` —— 前端 / serialize_parsed_question 零兼容代价。
+        - ``details[0].reason`` ∈ {"qno", "content"} —— PR-4 reconciliation 的稳定 lookup key。
+    """
+    if reason not in ("qno", "content"):
+        raise ValueError(f"_persist_duplicate_parsed_question: unsupported reason={reason!r}")
+
+    correct_answer_list = parsed_q.correct_answer or []
+    question_type = parsed_q.question_type
+    if question_type == "unknown":
+        question_type = "single"
+
+    options_for_storage = [
+        {"key": opt.label, "text": opt.text} for opt in parsed_q.options
+    ]
+    correct_answer_str = ",".join(correct_answer_list) if correct_answer_list else ""
+
+    detail = (
+        f"题号 {_normalize_qno(parsed_q.source_question_no)} 已入库（reparse 跳过）"
+        if reason == "qno"
+        else "与已有题目重复"
+    )
+
+    parsed_question = ImportParsedQuestion(
+        import_job_id=import_job.id,
+        chunk_id=chunk.id,
+        source_question_no=parsed_q.source_question_no,
+        question_type=question_type,
+        scenario_text=parsed_q.scenario,
+        content=parsed_q.content,
+        options_json=options_for_storage,
+        correct_answer=correct_answer_str.split(",") if correct_answer_str else [],
+        explanation=parsed_q.explanation or None,
+        references_json=parsed_q.references if parsed_q.references else None,
+        llm_confidence=Decimal(str(round(parsed_q.confidence, 4))),
+        final_confidence=Decimal("0"),
+        issues_json={
+            "issues": ["DUPLICATE"],
+            "details": [{
+                "code": "DUPLICATE",
+                "severity": "LOW",
+                "reason": reason,
+                "detail": detail,
+            }],
+        },
+        review_status="duplicate",
+        import_status="skipped",
+    )
+    db.add(parsed_question)
+    import_job.parsed_questions = (import_job.parsed_questions or 0) + 1
+    db.commit()
+
+
 def _save_parsed_question(
     db: Session,
     parsed_q: ParsedQuestion,
@@ -783,9 +867,31 @@ def _save_parsed_question(
     chunk_text: str,
     auto_import: bool,
     seen_signatures: set | None = None,
+    imported_qnos: set[str] | None = None,
 ) -> None:
-    """保存单个解析题目，执行质量评分并决定自动入库或人工复核"""
-    # 去重签名检查
+    """保存单个解析题目，执行质量评分并决定自动入库或人工复核。
+
+    去重优先级（自上而下）：
+        1. **DUPLICATE_QNO**（PR-3 引入，仅 reparse 路径生效）：
+           ``imported_qnos`` 不为 None 时，若归一化后题号命中集合 → 走 DUPLICATE 路径；
+           不更新 ``seen_signatures`` / ``imported_qnos``。
+        2. **DUPLICATE_CONTENT**（既有内容签名）：
+           ``seen_signatures`` 命中 → 走 DUPLICATE 路径；不更新 ``seen_signatures``。
+        3. 否则：执行质量评分 → ``_auto_accept_check`` → 自动入库 / 创建 ReviewItem。
+
+    初次导入路径（``run_smart_import``）传 ``imported_qnos=None``，DUPLICATE_QNO 永不触发，
+    happy path 等价于 PR-3 之前的行为。
+    """
+    # PR-3：题号去重（reparse 路径）—— 优先于内容签名
+    if imported_qnos is not None:
+        norm_qno = _normalize_qno(parsed_q.source_question_no)
+        if norm_qno is not None and norm_qno in imported_qnos:
+            _persist_duplicate_parsed_question(
+                db, parsed_q, import_job, chunk, reason="qno",
+            )
+            return
+
+    # 内容签名去重（保留现有路径，PR-3 仅给 issues_json 加 reason="content"）
     correct_answer_list = parsed_q.correct_answer or []
     question_type = parsed_q.question_type
     if question_type == "unknown":
@@ -794,29 +900,9 @@ def _save_parsed_question(
     options_for_sig = [{"label": opt.label, "text": opt.text} for opt in parsed_q.options]
     sig = _question_signature(question_type, parsed_q.content, options_for_sig, correct_answer_list)
     if seen_signatures is not None and sig in seen_signatures:
-        # 转换 options 格式用于存储
-        options_for_storage = [{"key": opt.label, "text": opt.text} for opt in parsed_q.options]
-        correct_answer_str = ",".join(correct_answer_list) if correct_answer_list else ""
-        parsed_question = ImportParsedQuestion(
-            import_job_id=import_job.id,
-            chunk_id=chunk.id,
-            source_question_no=parsed_q.source_question_no,
-            question_type=question_type,
-            scenario_text=parsed_q.scenario,
-            content=parsed_q.content,
-            options_json=options_for_storage,
-            correct_answer=correct_answer_str.split(",") if correct_answer_str else [],
-            explanation=parsed_q.explanation or None,
-            references_json=parsed_q.references if parsed_q.references else None,
-            llm_confidence=Decimal(str(round(parsed_q.confidence, 4))),
-            final_confidence=Decimal("0"),
-            issues_json={"issues": ["DUPLICATE"], "details": [{"code": "DUPLICATE", "severity": "LOW", "detail": "与已有题目重复"}]},
-            review_status="duplicate",
-            import_status="skipped",
+        _persist_duplicate_parsed_question(
+            db, parsed_q, import_job, chunk, reason="content",
         )
-        db.add(parsed_question)
-        import_job.parsed_questions = (import_job.parsed_questions or 0) + 1
-        db.commit()
         return
 
     if seen_signatures is not None:
@@ -1074,6 +1160,22 @@ def run_reparse(db: Session, background_job: BackgroundJob) -> None:
         eq_answer = [a.strip() for a in (eq.correct_answer or "").split(",")] if eq.correct_answer else []
         seen_signatures.add(_question_signature(eq.question_type, eq.content, eq_options, eq_answer))
 
+    # PR-3：构建本 ImportJob 已入库的题号集合（reparse 卫生）。
+    # 来源 = ImportParsedQuestion 表（按 import_job_id == this_job AND import_status == 'imported'）。
+    # 选用 ImportParsedQuestion 而非反查 Question 表的理由：
+    #   - source_question_no 字段直接，无需 join；
+    #   - 仅本 job 范围，避免与同 bank 的其他来源题（手工导入等）混淆；
+    #   - 与 PR-4 reconciliation 的同表切片保持 schema 一致。
+    imported_qnos: set[str] = set()
+    for pq in (
+        db.query(ImportParsedQuestion)
+        .filter_by(import_job_id=import_job.id, import_status="imported")
+        .all()
+    ):
+        normalized = _normalize_qno(pq.source_question_no)
+        if normalized is not None:
+            imported_qnos.add(normalized)
+
     _process_chunk(
         db=db,
         chunk=chunk,
@@ -1081,6 +1183,8 @@ def run_reparse(db: Session, background_job: BackgroundJob) -> None:
         auto_import=auto_import,
         use_llm_cache=use_llm_cache,
         seen_signatures=seen_signatures,
+        bg_job=background_job,
+        imported_qnos=imported_qnos,
     )
 
     # 更新 import_job 状态
