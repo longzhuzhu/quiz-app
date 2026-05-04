@@ -234,7 +234,7 @@ async function addQuestion() {
     return
   }
   try {
-    await client.post('/questions/', {
+    await client.post('/questions', {
       bank_id: parseInt(bankId),
       ...newQ.value,
       options,
@@ -295,7 +295,7 @@ async function batchTranslate() {
 }
 
 onMounted(async () => {
-  const banks = await client.get('/banks/')
+  const banks = await client.get('/banks')
   const bank = banks.data.find(b => b.id === parseInt(bankId))
   bankName.value = bank?.name || `题库 #${bankId}`
   fetchQuestions()
