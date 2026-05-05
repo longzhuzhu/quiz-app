@@ -1,8 +1,13 @@
 import axios from 'axios'
 import router from '../router'
 
+// 优先使用环境变量配置的后端地址；本地开发未配置时走 Vite 代理（/api）
+const baseURL = import.meta.env.VITE_API_BASE_URL
+  ? `${import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')}/api`
+  : '/api'
+
 const client = axios.create({
-  baseURL: '/api',
+  baseURL,
 })
 
 client.interceptors.request.use((config) => {
