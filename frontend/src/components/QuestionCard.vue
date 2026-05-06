@@ -50,7 +50,7 @@
 
     <!-- AI 按钮区 -->
     <div class="mt-4 flex flex-wrap items-center gap-2">
-      <TranslateButton :question-id="question.id" :has-translation="hasFullTranslation" :show="showTranslation"
+      <TranslateButton :key="question.id" :question-id="question.id" :has-translation="hasFullTranslation" :show="showTranslation"
         @translated="(e) => { $emit('translated', e); showTranslation = true }"
         @toggle="showTranslation = !showTranslation" />
       <ExplainButton

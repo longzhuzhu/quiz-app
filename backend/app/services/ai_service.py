@@ -4,6 +4,8 @@ import json
 
 import httpx
 
+from sqlalchemy.orm.attributes import flag_modified
+
 from app.models.question import Question
 from app.services.settings_service import get_effective_ai_settings
 
@@ -58,7 +60,8 @@ def clear_question_translation(db, question: Question):
     options = _load_options(question)
     for option in options:
         option.pop("text_zh", None)
-    question.options = options  # JSONB 整字段重赋值，触发 dirty 检测
+    question.options = options  # JSONB 整字段重赋值
+    flag_modified(question, "options")  # PostgreSQL JSONB 需显式标记脏
 
 
 def clear_question_explanation(db, question: Question):
@@ -152,7 +155,8 @@ def translate_question(db, question: Question) -> dict:
             if opt["key"] == opt_zh["key"]:
                 opt["text_zh"] = opt_zh["text_zh"]
                 break
-    question.options = options  # JSONB 整字段重赋值，触发 dirty 检测
+    question.options = options  # JSONB 整字段重赋值
+    flag_modified(question, "options")  # PostgreSQL JSONB 需显式标记脏
     db.commit()
 
     return build_question_translation_payload(question)
