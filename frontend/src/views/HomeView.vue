@@ -41,8 +41,8 @@
             <CheckBadgeIcon class="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
           </div>
           <div>
-            <div class="text-2xl font-bold text-gray-900 dark:text-white">{{ overallAccuracy }}%</div>
-            <div class="text-sm text-gray-500 dark:text-gray-400">正确率</div>
+            <div class="text-2xl font-bold text-gray-900 dark:text-white">{{ recentTotal > 0 ? recentAccuracy : 0 }}%</div>
+            <div class="text-sm text-gray-500 dark:text-gray-400">正确率<span v-if="recentTotal > 0" class="text-xs text-gray-400 dark:text-gray-500 ml-1">(近{{ recentTotal }}题)</span></div>
           </div>
         </div>
       </div>
@@ -134,6 +134,8 @@ const quizStore = useQuizStore()
 const router = useRouter()
 const toast = useToast()
 const wrongStats = ref({})
+const recentAccuracy = ref(0)
+const recentTotal = ref(0)
 const showExamModal = ref(false)
 const examBank = ref(null)
 const examQuestionCount = ref(90)
@@ -141,19 +143,15 @@ const examQuestionCount = ref(90)
 const banks = computed(() => bankStore.banks)
 const loading = computed(() => bankStore.loading)
 const totalQuestions = computed(() => banks.value.reduce((s, b) => s + b.question_count, 0))
-const overallAccuracy = computed(() => {
-  const total = wrongStats.value.total || 0
-  const resolved = wrongStats.value.resolved || 0
-  if (total === 0) return 0
-  return Math.round((resolved / total) * 100)
-})
 
 onMounted(async () => {
   bankStore.fetchBanks()
-  try {
-    const res = await client.get('/wrong/stats')
-    wrongStats.value = res.data
-  } catch {}
+  const wrongP = client.get('/wrong/stats').then(r => { wrongStats.value = r.data }).catch(() => {})
+  const accP = client.get('/quiz/recent-accuracy').then(r => {
+    recentAccuracy.value = r.data.accuracy
+    recentTotal.value = r.data.total
+  }).catch(() => {})
+  await Promise.allSettled([wrongP, accP])
 })
 
 async function startQuiz(bank, mode) {

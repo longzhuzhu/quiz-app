@@ -321,6 +321,43 @@ def clear_history(
     return {"message": "已清空答题历史"}
 
 
+@router.get("/recent-accuracy")
+def recent_accuracy(
+    limit: int = Query(100, ge=10, le=500, description="统计最近答题数"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    user_id = current_user.id
+    # 子查询：按答题时间降序取最近 limit 条记录
+    sub = (
+        db.query(QuizAnswer.id, QuizAnswer.is_correct)
+        .join(QuizSession, QuizAnswer.session_id == QuizSession.id)
+        .filter(
+            QuizSession.user_id == user_id,
+            QuizAnswer.answered_at.isnot(None),
+            QuizAnswer.is_correct.isnot(None),
+        )
+        .order_by(QuizAnswer.answered_at.desc(), QuizAnswer.id.desc())
+        .limit(limit)
+        .subquery()
+    )
+    # 条件聚合：一次查询同时算 total 和 correct
+    total, correct = db.query(
+        func.count(),
+        func.count().filter(sub.c.is_correct.is_(True)),
+    ).select_from(sub).one()
+    total = total or 0
+    correct = correct or 0
+    accuracy = round(correct / max(total, 1) * 100, 1)
+
+    return {
+        "total": total,
+        "correct": correct,
+        "accuracy": accuracy,
+        "limit": limit,
+    }
+
+
 @router.get("/session/{session_id}")
 def session_detail(
     session_id: int,
