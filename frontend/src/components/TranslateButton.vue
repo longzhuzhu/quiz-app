@@ -26,6 +26,12 @@ const emit = defineEmits(['translated', 'toggle'])
 const loading = ref(false)
 
 async function handleClick() {
+  // 翻译已展示时，点击始终切换隐藏
+  if (props.show) {
+    emit('toggle')
+    return
+  }
+  // 翻译未展示时：有缓存则直接切换显示，无缓存则调 API
   if (props.hasTranslation) {
     emit('toggle')
     return
