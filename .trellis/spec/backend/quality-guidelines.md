@@ -158,6 +158,82 @@ class Settings(BaseSettings):
 
 ---
 
+## FastAPI 路由注册顺序
+
+> **Warning**: 静态路径必须定义在动态参数路径之前，否则 FastAPI 会把静态字符串匹配为参数值。
+
+```python
+# 正确：静态路由在前
+@router.get("/recent-accuracy")
+def recent_accuracy(): ...
+
+@router.get("/session/{session_id}")
+def session_detail(session_id: int): ...
+
+# 错误：动态路由在前会吞掉 /recent-accuracy（当作 session_id="recent-accuracy"）
+@router.get("/session/{session_id}")
+def session_detail(session_id: int): ...
+
+@router.get("/recent-accuracy")  # 永远匹配不到
+def recent_accuracy(): ...
+```
+
+**Why**: FastAPI 按定义顺序匹配路由，`{session_id}` 能匹配任何字符串包括 `recent-accuracy`。
+
+---
+
+## 聚合查询模式：条件计数
+
+使用 `func.count().filter()` 在一次查询中同时计算 total 和 correct，避免两次 DB 往返：
+
+```python
+total, correct = db.query(
+    func.count(),
+    func.count().filter(sub.c.is_correct.is_(True)),
+).select_from(sub).one()
+```
+
+**Why**: 两次独立 `db.query(func.count())` 意味着两次子查询执行；条件聚合只需一次。
+
+---
+
+## 子查询排序稳定性
+
+当业务排序字段可能存在重复值时，必须加 tie-breaker 保证结果确定性：
+
+```python
+# 正确：id 作为 tie-breaker
+.order_by(QuizAnswer.answered_at.desc(), QuizAnswer.id.desc())
+
+# 错误：时间相同的记录顺序不稳定，可能导致不同请求返回不同子集
+.order_by(QuizAnswer.answered_at.desc())
+```
+
+---
+
+## 部署验证必检项
+
+新增 API 路由后，部署前必须执行以下验证：
+
+1. **后端重启确认**：uvicorn 不开 `--reload` 时，代码修改后必须手动重启进程，否则新路由不存在
+2. **API 可达性验证**：用 curl 或 httpie 实际调用新端点，不能只检查 `import` 成功
+3. **前端构建**：`npm run build` 通过仅验证语法/打包，不验证运行时 API 调用
+
+```bash
+# 部署后验证脚本模板
+TOKEN=$(curl -s -X POST http://localhost:5003/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"testuser","password":"testpass"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))")
+
+curl -s http://localhost:5003/api/quiz/recent-accuracy \
+  -H "Authorization: Bearer $TOKEN" | python3 -m json.tool
+```
+
+**Why**: 本次首页正确率修复在开发时未发现 404，因为旧 uvicorn 进程仍在运行旧代码。没有集成测试覆盖新端点，构建通过不等于功能可用。
+
+---
+
 ## 常见问题
 
 ### Flask 服务层返回 `{"error": "..."}` dict 让路由猜测状态码

@@ -82,6 +82,8 @@ After implementation:
 - [ ] Tested with edge cases (null, empty, invalid)
 - [ ] Verified error handling at each boundary
 - [ ] Checked data survives round-trip
+- [ ] **New API route**: curl 验证端点可达（不只是 import 成功）
+- [ ] **New API route**: 确认后端进程已重启加载新路由
 
 ---
 
@@ -92,6 +94,41 @@ Create detailed flow docs when:
 - Multiple teams are involved
 - Data format is complex
 - Feature has caused bugs before
+
+---
+
+## Homepage Accuracy — Cross-Layer Flow
+
+### Data Flow
+
+```
+HomeView.vue onMounted()
+  → GET /api/quiz/recent-accuracy?limit=100
+  → quiz.py: recent_accuracy()
+    → QuizAnswer JOIN QuizSession (filter user_id + non-null)
+    → ORDER BY answered_at DESC, id DESC (tie-breaker)
+    → LIMIT 100 → subquery
+    → conditional aggregate: func.count() + func.count().filter(is_correct)
+    → { total, correct, accuracy, limit }
+
+  → GET /api/wrong/stats
+  → wrong.py: wrong_stats()
+    → { unresolved, resolved, total }
+
+HomeView.vue display:
+  → accuracy card: recentTotal > 0 ? recentAccuracy : 0 + "(近N题)"
+  → wrong card: unresolved count
+```
+
+### Critical Consistency Points
+
+| Checkpoint | Risk | Mitigation |
+|-----------|------|-----------|
+| 语义对齐 | "正确率"标签实际计算错题掌握率 | 统一用 QuizAnswer 正确率，不混用 wrong/stats |
+| API 失败隔离 | Promise.all 单点失败拖垮全页 | 各自独立 catch + Promise.allSettled |
+| FastAPI 路由顺序 | `/session/{id}` 吞掉 `/recent-accuracy` | 静态路由必须在动态参数路由之前定义 |
+| 排序确定性 | `answered_at` 相同记录顺序不稳定 | 加 `id DESC` 作为 tie-breaker |
+| 部署验证 | uvicorn 未重启导致新路由 404 | 部署后必须 curl 验证新端点可达 |
 
 ---
 

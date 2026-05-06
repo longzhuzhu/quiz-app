@@ -112,6 +112,28 @@ try {
 
 ## 静默处理变体
 
+### 独立 catch + Promise.allSettled
+
+多个独立 API 调用不应使用 `Promise.all`，避免一个失败导致全部丢失：
+
+```javascript
+// 正确：各自独立 catch，互不干扰
+const wrongP = client.get('/wrong/stats').then(r => { wrongStats.value = r.data }).catch(() => {})
+const accP = client.get('/quiz/recent-accuracy').then(r => {
+  recentAccuracy.value = r.data.accuracy
+  recentTotal.value = r.data.total
+}).catch(() => {})
+await Promise.allSettled([wrongP, accP])
+
+// 错误：一个失败全部丢失
+const [wrongRes, accuracyRes] = await Promise.all([
+  client.get('/wrong/stats'),
+  client.get('/quiz/recent-accuracy'),
+])
+```
+
+**Why**: 首页聚合页有多个指标卡片，单个 API 失败不应拖垮其他指标。`Promise.all` 任一 reject 会导致整个 `catch` 分支执行，两个 API 的数据都无法写入。
+
 ### catch {} 空块
 
 部分非关键 API 调用使用空 catch 块静默忽略错误：
