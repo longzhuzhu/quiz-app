@@ -21,7 +21,16 @@ client.interceptors.request.use((config) => {
 client.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
+    const status = err.response?.status
+    const message = err.response?.data?.msg || ''
+    const isInvalidToken = status === 422 && (
+      message.includes('Invalid header') ||
+      message.includes('Not enough segments') ||
+      message.includes('Signature verification failed') ||
+      message.includes('Subject must be a string')
+    )
+
+    if (status === 401 || isInvalidToken) {
       localStorage.removeItem('token')
       localStorage.removeItem('user')
       router.push('/login')

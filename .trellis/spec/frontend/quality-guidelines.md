@@ -39,13 +39,22 @@ client.interceptors.request.use((config) => {
 
 真实示例：`frontend/src/api/client.js` 行8-14
 
-- 响应拦截器：401 清理 + 跳转登录页
+- 响应拦截器：认证失效清理 + 跳转登录页
 
 ```javascript
 client.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
+    const status = err.response?.status
+    const message = err.response?.data?.msg || ''
+    const isInvalidToken = status === 422 && (
+      message.includes('Invalid header') ||
+      message.includes('Not enough segments') ||
+      message.includes('Signature verification failed') ||
+      message.includes('Subject must be a string')
+    )
+
+    if (status === 401 || isInvalidToken) {
       localStorage.removeItem('token')
       localStorage.removeItem('user')
       router.push('/login')
@@ -55,15 +64,17 @@ client.interceptors.response.use(
 )
 ```
 
-真实示例：`frontend/src/api/client.js` 行16-26
+真实示例：`frontend/src/api/client.js` 行21-38
+
+**Why**: Flask-JWT-Extended 对缺失/过期 token 返回 401，但对 malformed/旧密钥 token 可能返回 422 + `msg`。全局拦截器只能把明确的 JWT 无效类 422 当作登录失效，不能把所有业务 422 都清登录态。
 
 ---
 
 ## 错误处理三级体系
 
-### 第 1 级：全局拦截器（401）
+### 第 1 级：全局拦截器（认证失效）
 
-Axios 响应拦截器处理 401，清理 token 并跳转登录。其他错误 `Promise.reject(err)` 继续传递。
+Axios 响应拦截器处理 401，以及明确 JWT malformed/invalid 的 422，清理 token 并跳转登录。其他错误 `Promise.reject(err)` 继续传递。
 
 ### 第 2 级：Store 层（不 catch）
 
