@@ -11,7 +11,7 @@ WorkingDirectory=/home/ubuntu/github/quiz-app
 Environment=APP_HOST=0.0.0.0
 Environment=APP_PORT=5003
 Environment=PYTHONUNBUFFERED=1
-EnvironmentFile=-/home/ubuntu/github/quiz-app/.env
+EnvironmentFile=-/home/ubuntu/github/quiz-app/backend/.env
 ExecStart=/home/ubuntu/github/quiz-app/scripts/start-prod.sh
 Restart=always
 RestartSec=5

@@ -54,18 +54,26 @@ wrong_answers = relationship("WrongAnswer", back_populates="user", lazy="dynamic
 
 ## JSON 字段存储对比
 
-### Flask 版：`db.Text` + `json.dumps/loads` 手动转换
+### Flask 版：`db.Text` + 兼容式 JSON 读取
 
 ```python
 # backend/models.py 行41
 options = db.Column(db.Text, nullable=False)  # JSON string
 
-# 写入时手动序列化（backend/routes/banks.py 行222）
+# 写入时手动序列化（backend/routes/banks.py）
 question = Question(options=json.dumps(q['options']), ...)
 
-# 读取时手动反序列化（backend/routes/quiz.py 行107）
-'options': json.loads(q.options),
+# 读取时兼容 SQLite Text 和 PostgreSQL JSON/JSONB 返回值
+
+def _loads_json_value(value):
+    if isinstance(value, str):
+        return json.loads(value)
+    return value
+
+'options': _loads_json_value(q.options),
 ```
+
+**Why**: Flask 旧模型声明仍是 `Text`，但迁移到 PostgreSQL 后实际列可能是 JSON/JSONB，驱动会直接返回 list/dict。路由里裸 `json.loads(q.options)` 会在继续答题等接口触发 `TypeError: the JSON object must be str, bytes or bytearray, not list`。
 
 ### FastAPI 版：`JSONB` 直接存储，无需手动序列化
 

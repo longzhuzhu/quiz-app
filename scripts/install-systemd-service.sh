@@ -32,7 +32,7 @@ WorkingDirectory=${ROOT_DIR}
 Environment=APP_HOST=${APP_HOST}
 Environment=APP_PORT=${APP_PORT}
 Environment=PYTHONUNBUFFERED=1
-EnvironmentFile=-${ROOT_DIR}/.env
+EnvironmentFile=-${ROOT_DIR}/backend/.env
 ExecStart=${ROOT_DIR}/scripts/start-prod.sh
 Restart=always
 RestartSec=5
@@ -53,7 +53,7 @@ User=${SERVICE_USER}
 Group=${SERVICE_GROUP}
 WorkingDirectory=${ROOT_DIR}
 Environment=PYTHONUNBUFFERED=1
-EnvironmentFile=-${ROOT_DIR}/.env
+EnvironmentFile=-${ROOT_DIR}/backend/.env
 ExecStart=${ROOT_DIR}/scripts/start-worker.sh
 Restart=always
 RestartSec=5

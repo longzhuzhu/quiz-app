@@ -11,6 +11,12 @@ from models import db, Question, QuizSession, QuizAnswer, WrongAnswer, UserQuest
 quiz_bp = Blueprint('quiz', __name__)
 
 
+def _loads_json_value(value):
+    if isinstance(value, str):
+        return json.loads(value)
+    return value
+
+
 def _get_user_question_counts(user_id, question_ids):
     if not question_ids:
         return {}
@@ -104,7 +110,7 @@ def start_quiz():
             'question_type': q.question_type,
             'content': q.content,
             'content_zh': q.content_zh,
-            'options': json.loads(q.options),
+            'options': _loads_json_value(q.options),
             'user_answer_count': counts.get(q.id, 0),
         }
         if not is_exam:
@@ -138,7 +144,7 @@ def submit_answer():
     if session.is_completed:
         return jsonify({'error': '答题已结束'}), 400
 
-    session_question_ids = json.loads(session.question_ids) if session.question_ids else []
+    session_question_ids = _loads_json_value(session.question_ids) if session.question_ids else []
     if question_id not in session_question_ids:
         return jsonify({'error': '题目不属于当前答题会话'}), 400
 
@@ -301,7 +307,7 @@ def session_detail(session_id):
             'question_content': q.content,
             'question_content_zh': q.content_zh,
             'question_type': q.question_type,
-            'options': json.loads(q.options),
+            'options': _loads_json_value(q.options),
             'user_answer': a.user_answer,
         }
         if not is_exam:
@@ -314,7 +320,7 @@ def session_detail(session_id):
     # 未完成的会话返回完整题目列表，用于页面刷新后恢复答题
     questions_out = []
     if not session.is_completed and session.question_ids:
-        q_ids = json.loads(session.question_ids)
+        q_ids = _loads_json_value(session.question_ids)
         counts = _get_user_question_counts(user_id, q_ids)
         answered_ids = {a.question_id for a in answers}
         all_questions = Question.query.filter(Question.id.in_(q_ids)).all()
@@ -327,7 +333,7 @@ def session_detail(session_id):
                     'question_type': q.question_type,
                     'content': q.content,
                     'content_zh': q.content_zh,
-                    'options': json.loads(q.options),
+                    'options': _loads_json_value(q.options),
                     'answered': qid in answered_ids,
                     'user_answer_count': counts.get(q.id, 0),
                 }

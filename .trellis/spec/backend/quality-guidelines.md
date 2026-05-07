@@ -46,6 +46,58 @@ def get_current_user(
 
 ---
 
+## Flask/FastAPI 密码哈希兼容
+
+### 1. Scope / Trigger
+- Trigger: Flask 旧登录接口与 FastAPI 新认证模块共用同一 `users.password_hash` 数据。
+- 风险：Flask 直接调用 `werkzeug.security.check_password_hash()` 时，遇到 FastAPI/passlib 生成的 `$pbkdf2-sha256$...` 会抛 `Invalid hash method ''`，导致登录 500。
+
+### 2. Signatures
+- 共享模块：`backend/services/password_security.py`
+- 生成密码：`get_password_hash(password: str) -> str`
+- 校验密码：`verify_password(plain_password: str, hashed_password: str) -> bool`
+- Flask service：`backend/services/auth_service.py` 必须使用共享模块，不直接导入 Werkzeug hash 函数。
+- FastAPI security：`backend/app/core/security.py` 必须复用同一共享模块。
+
+### 3. Contracts
+- 支持 passlib `pbkdf2_sha256`、bcrypt `$2a$/$2b$/$2y$`、Werkzeug `pbkdf2:sha256`。
+- 新密码统一通过 `get_password_hash()` 生成。
+- 任何校验失败、空 hash、异常格式都返回 `False`，不得抛到登录接口形成 500。
+- 不允许明文密码比较；日志和诊断不得输出完整 `password_hash`。
+
+### 4. Validation & Error Matrix
+- `$pbkdf2-sha256$...` + Werkzeug `check_password_hash()` -> `Invalid hash method ''`，必须避免。
+- 正确密码 + 支持格式 hash -> `verify_password(...) is True`。
+- 错误密码、空 hash、畸形 hash -> `False`，登录返回 401。
+- 缺少 `passlib` 或 `bcrypt` -> 部署依赖不完整，应在 `backend/requirements.txt` 声明。
+
+### 5. Good/Base/Bad Cases
+- Good: Flask 登录、注册、改密与 FastAPI security 都调用 `services.password_security`。
+- Base: 现有用户用错误密码登录返回 401 JSON，而不是 500。
+- Bad: 在任一路由或 service 中直接 `from werkzeug.security import check_password_hash`。
+
+### 6. Tests Required
+- Smoke: 生成 passlib hash 后 `verify_password()` 正确密码为 True、错误密码为 False。
+- Compatibility: Werkzeug pbkdf2 与 bcrypt 样例 hash 都能验证。
+- API: 对现有用户用错误密码 POST `/api/auth/login` 返回 401，不出现 `Invalid hash method`。
+- Import: `from app.core.security import get_password_hash, verify_password` 和旧 Flask `create_app()` 均可导入。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+```python
+from werkzeug.security import check_password_hash
+check_password_hash(user.password_hash, password)
+```
+
+#### Correct
+```python
+from services.password_security import verify_password
+verify_password(password, user.password_hash)
+```
+
+---
+
 ## 返回格式
 
 项目无统一 envelope，直接返回 dict/列表：
@@ -155,6 +207,139 @@ class Settings(BaseSettings):
 - 自动读取 `.env` 文件（注意 env_file 必须用绝对路径）
 - 类型自动校验（如 `MAX_UPLOAD_SIZE_MB: int`）
 - 计算属性：`upload_max_size_bytes` 属性方法
+
+### 部署环境文件必须对齐 backend/.env
+
+#### 1. Scope / Trigger
+- Trigger: Flask 旧服务、FastAPI 新服务与 systemd Web/Worker 共存，生产数据源和密钥由 `backend/.env` 提供。
+- 风险：systemd 或 Flask 只读取仓库根 `.env` 时，如果该文件不存在，会回退到 Flask 默认 SQLite `backend/quiz.db`，导致题库数量缺失、JWT/AI 配置错配或页面提示接口失败。
+
+#### 2. Signatures
+- Flask 配置入口：`backend/config.py` 必须在定义 `Config` 前执行 `load_dotenv(os.path.join(basedir, '.env'))`。
+- systemd Web：`deploy/systemd/quiz-app.service` 使用 `EnvironmentFile=-/home/ubuntu/github/quiz-app/backend/.env`。
+- systemd Worker：`deploy/systemd/quiz-app-worker.service` 使用 `EnvironmentFile=-/home/ubuntu/github/quiz-app/backend/.env`。
+- 安装脚本：`scripts/install-systemd-service.sh` 生成的两个 unit 必须使用 `EnvironmentFile=-${ROOT_DIR}/backend/.env`。
+
+#### 3. Contracts
+- `backend/.env` 是生产共享配置源，至少提供 `DATABASE_URL`、`JWT_SECRET_KEY`、`SECRET_KEY` 和 AI 相关键。
+- Flask 和 FastAPI 必须解析到同一 `DATABASE_URL`，不得一个连接 PostgreSQL、另一个回退 SQLite。
+- 不要求仓库根 `.env` 存在；不能把根 `.env` 当作生产必需文件。
+
+#### 4. Validation & Error Matrix
+- `systemctl show quiz-app -p EnvironmentFiles` 显示根 `.env` -> unit 模板或安装脚本未更新，重装后会回归。
+- Flask smoke test 的 `SQLALCHEMY_DATABASE_URI` 为 `sqlite:///.../backend/quiz.db` -> 未加载 `backend/.env`，生产数据源错误。
+- 首页提示“获取题库失败”或题库数量少于 PostgreSQL -> 优先检查 Flask/systemd 是否读取了错误 env 文件。
+- Web/Worker JWT 不一致 -> 页面可能保留 token 但接口返回 401。
+
+#### 5. Good/Base/Bad Cases
+- Good: `from app import create_app; app.config['SQLALCHEMY_DATABASE_URI']` 脱敏后与 `app.core.config.settings.DATABASE_URL` 指向同一 PostgreSQL。
+- Base: `systemctl restart quiz-app quiz-app-worker` 后两个服务均 `active`，`EnvironmentFiles` 均为 `backend/.env`。
+- Bad: 只修改 `serve.py` 或只修改已安装的 `/etc/systemd/system/*.service`，但没有更新仓库内 `deploy/systemd/*.service` 和 `scripts/install-systemd-service.sh`。
+
+#### 6. Tests Required
+- Flask config smoke test：插入 `backend/` 到 `sys.path` 后导入 `create_app()`，断言脱敏后的 DB scheme 不是 `sqlite`。
+- Data smoke test：在 app context 中查询 `QuestionBank.query.count()`，与预期生产库数量一致。
+- Deployment smoke test：`sudo systemctl restart quiz-app quiz-app-worker`，再断言 `systemctl show ... -p EnvironmentFiles` 指向 `backend/.env`。
+- API smoke test：使用有效 JWT 请求 `/api/banks/`，断言 HTTP 200 且返回题库数量正确。
+
+#### 7. Wrong vs Correct
+
+##### Wrong
+```ini
+EnvironmentFile=-/home/ubuntu/github/quiz-app/.env
+```
+
+```python
+# serve.py 只加载根 .env，backend/.env 不参与 Flask 配置
+load_dotenv(os.path.join(ROOT_DIR, '.env'))
+```
+
+##### Correct
+```ini
+EnvironmentFile=-/home/ubuntu/github/quiz-app/backend/.env
+```
+
+```python
+# backend/config.py
+basedir = os.path.abspath(os.path.dirname(__file__))
+load_dotenv(os.path.join(basedir, '.env'))
+```
+
+---
+
+## FastAPI 路由注册顺序
+
+> **Warning**: 静态路径必须定义在动态参数路径之前，否则 FastAPI 会把静态字符串匹配为参数值。
+
+```python
+# 正确：静态路由在前
+@router.get("/recent-accuracy")
+def recent_accuracy(): ...
+
+@router.get("/session/{session_id}")
+def session_detail(session_id: int): ...
+
+# 错误：动态路由在前会吞掉 /recent-accuracy（当作 session_id="recent-accuracy"）
+@router.get("/session/{session_id}")
+def session_detail(session_id: int): ...
+
+@router.get("/recent-accuracy")  # 永远匹配不到
+def recent_accuracy(): ...
+```
+
+**Why**: FastAPI 按定义顺序匹配路由，`{session_id}` 能匹配任何字符串包括 `recent-accuracy`。
+
+---
+
+## 聚合查询模式：条件计数
+
+使用 `func.count().filter()` 在一次查询中同时计算 total 和 correct，避免两次 DB 往返：
+
+```python
+total, correct = db.query(
+    func.count(),
+    func.count().filter(sub.c.is_correct.is_(True)),
+).select_from(sub).one()
+```
+
+**Why**: 两次独立 `db.query(func.count())` 意味着两次子查询执行；条件聚合只需一次。
+
+---
+
+## 子查询排序稳定性
+
+当业务排序字段可能存在重复值时，必须加 tie-breaker 保证结果确定性：
+
+```python
+# 正确：id 作为 tie-breaker
+.order_by(QuizAnswer.answered_at.desc(), QuizAnswer.id.desc())
+
+# 错误：时间相同的记录顺序不稳定，可能导致不同请求返回不同子集
+.order_by(QuizAnswer.answered_at.desc())
+```
+
+---
+
+## 部署验证必检项
+
+新增 API 路由后，部署前必须执行以下验证：
+
+1. **后端重启确认**：uvicorn 不开 `--reload` 时，代码修改后必须手动重启进程，否则新路由不存在
+2. **API 可达性验证**：用 curl 或 httpie 实际调用新端点，不能只检查 `import` 成功
+3. **前端构建**：`npm run build` 通过仅验证语法/打包，不验证运行时 API 调用
+
+```bash
+# 部署后验证脚本模板
+TOKEN=$(curl -s -X POST http://localhost:5003/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"testuser","password":"testpass"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))")
+
+curl -s http://localhost:5003/api/quiz/recent-accuracy \
+  -H "Authorization: Bearer $TOKEN" | python3 -m json.tool
+```
+
+**Why**: 本次首页正确率修复在开发时未发现 404，因为旧 uvicorn 进程仍在运行旧代码。没有集成测试覆盖新端点，构建通过不等于功能可用。
 
 ---
 
