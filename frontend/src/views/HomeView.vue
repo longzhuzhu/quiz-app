@@ -63,6 +63,26 @@
     </div>
 
     <!-- 题库列表 -->
+    <div v-if="lastIncompleteSession" class="mb-4 rounded-xl bg-white dark:bg-slate-800 shadow-card p-6">
+      <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div class="min-w-0">
+          <p class="text-sm font-medium text-primary-600 dark:text-primary-400">继续上次答题</p>
+          <h2 class="mt-1 text-lg font-semibold text-gray-900 dark:text-white truncate">
+            {{ lastIncompleteSession.bank_name || '未知题库' }}
+          </h2>
+          <div class="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-sm text-gray-500 dark:text-gray-400">
+            <span>{{ modeLabel(lastIncompleteSession.mode) }}</span>
+            <span>进度：{{ lastIncompleteSession.answered_count || 0 }}/{{ lastIncompleteSession.total_questions || 0 }}</span>
+            <span>正确率：{{ sessionAccuracy(lastIncompleteSession) }}%</span>
+            <span>开始：{{ formatSessionDate(lastIncompleteSession.created_at) }}</span>
+          </div>
+        </div>
+        <BaseButton variant="primary" size="sm" class="self-start md:self-center" @click="continueLastSession">
+          继续答题
+        </BaseButton>
+      </div>
+    </div>
+
     <div v-if="loading" class="space-y-4">
       <SkeletonLoader type="card" :count="2" />
     </div>
@@ -136,6 +156,7 @@ const toast = useToast()
 const wrongStats = ref({})
 const recentAccuracy = ref(0)
 const recentTotal = ref(0)
+const lastIncompleteSession = ref(null)
 const showExamModal = ref(false)
 const examBank = ref(null)
 const examQuestionCount = ref(90)
@@ -145,14 +166,55 @@ const loading = computed(() => bankStore.loading)
 const totalQuestions = computed(() => banks.value.reduce((s, b) => s + b.question_count, 0))
 
 onMounted(async () => {
-  bankStore.fetchBanks()
+  const bankP = bankStore.fetchBanks().catch((e) => {
+    toast.error(e.response?.data?.error || '获取题库失败')
+  })
   const wrongP = client.get('/wrong/stats').then(r => { wrongStats.value = r.data }).catch(() => {})
   const accP = client.get('/quiz/recent-accuracy').then(r => {
     recentAccuracy.value = r.data.accuracy
     recentTotal.value = r.data.total
   }).catch(() => {})
-  await Promise.allSettled([wrongP, accP])
+  const lastSessionP = client.get('/quiz/history', { params: { page: 1, per_page: 1 } }).then(r => {
+    const items = Array.isArray(r.data?.items) ? r.data.items : []
+    const lastSession = items[0]
+    lastIncompleteSession.value = lastSession?.is_completed === false ? lastSession : null
+  }).catch(() => {
+    lastIncompleteSession.value = null
+  })
+  await Promise.allSettled([bankP, wrongP, accP, lastSessionP])
 })
+
+function modeLabel(mode) {
+  const labels = {
+    sequential: '顺序练习',
+    random: '随机练习',
+    exam: '模拟考试',
+    wrong_practice: '错题练习',
+  }
+  return labels[mode] || '练习'
+}
+
+function sessionAccuracy(session) {
+  const explicitAccuracy = Number(session?.accuracy)
+  if (Number.isFinite(explicitAccuracy)) return explicitAccuracy
+
+  const correctCount = Number(session?.correct_count || 0)
+  const answeredCount = Number(session?.answered_count || 0)
+  if (answeredCount <= 0) return 0
+  return Math.round((correctCount / answeredCount) * 1000) / 10
+}
+
+function formatSessionDate(value) {
+  if (!value) return '未知时间'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '未知时间' : date.toLocaleString('zh-CN')
+}
+
+function continueLastSession() {
+  const sessionId = lastIncompleteSession.value?.id
+  if (sessionId == null) return
+  router.push(`/quiz/${sessionId}`)
+}
 
 async function startQuiz(bank, mode) {
   try {

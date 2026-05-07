@@ -134,6 +134,23 @@ const [wrongRes, accuracyRes] = await Promise.all([
 
 **Why**: 首页聚合页有多个指标卡片，单个 API 失败不应拖垮其他指标。`Promise.all` 任一 reject 会导致整个 `catch` 分支执行，两个 API 的数据都无法写入。
 
+Store action 返回的 Promise 也要按同样规则处理，不能裸调用后让失败变成未处理 Promise：
+
+```javascript
+const bankP = bankStore.fetchBanks().catch((e) => {
+  toast.error(e.response?.data?.error || '获取题库失败')
+})
+const lastSessionP = client.get('/quiz/history', { params: { page: 1, per_page: 1 } }).then(r => {
+  const items = Array.isArray(r.data?.items) ? r.data.items : []
+  lastIncompleteSession.value = items[0]?.is_completed === false ? items[0] : null
+}).catch(() => {
+  lastIncompleteSession.value = null
+})
+await Promise.allSettled([bankP, wrongP, accP, lastSessionP])
+```
+
+**Why**: View 层聚合 Store action 和直接 `client` 请求时，错误边界仍在 View；所有独立数据源都应显式降级，避免首页部分数据失败影响其它模块或产生未处理 Promise。
+
 ### catch {} 空块
 
 部分非关键 API 调用使用空 catch 块静默忽略错误：

@@ -112,6 +112,72 @@ backend/app/
 
 ---
 
+## Flask/FastAPI 同名入口兼容
+
+### 1. Scope / Trigger
+- Trigger: 后端处于 Flask -> FastAPI 迁移期，同时存在 `backend/app.py` 和 `backend/app/` 包目录。
+- 风险：当 `backend/` 被加入 `sys.path` 后，`from app import create_app` 会优先解析到 `backend/app/__init__.py` 包，而不是 `backend/app.py` 文件。
+
+### 2. Signatures
+- 旧 Flask 入口必须保持可导入：`from app import create_app`
+- 生产 Web 启动链路：`scripts/start-prod.sh` -> `python -m waitress --host "$APP_HOST" --port "$APP_PORT" serve:app` -> `serve.py` -> `from app import create_app`
+- Worker 启动链路：`scripts/start-worker.sh` -> `backend/workers/job_worker.py` -> `from app import create_app`
+
+### 3. Contracts
+- `backend/app/__init__.py` 必须兼容导出旧 Flask `create_app`。
+- 兼容层只负责从父级 `backend/app.py` 加载并导出 `create_app`，不得复制应用工厂代码。
+- 兼容层不得写 `from app import create_app`，否则会递归导入当前包。
+
+### 4. Validation & Error Matrix
+- `backend/app/__init__.py` 未导出 `create_app` -> systemd Web/Worker 日志出现 `ImportError: cannot import name 'create_app' from 'app' (/.../backend/app/__init__.py)`。
+- 兼容层路径错误或 loader 为空 -> 主动抛出 `ImportError('无法加载旧 Flask 应用入口: .../backend/app.py')`。
+- 5003 被手动进程占用 -> Web 日志出现 `OSError: [Errno 98] Address already in use`，需先确认并停止陈旧手动进程，再重启 systemd。
+
+### 5. Good/Base/Bad Cases
+- Good: `sys.path.insert(0, 'backend'); from app import create_app; app = create_app()` 成功返回 Flask app。
+- Base: `systemctl restart quiz-app quiz-app-worker` 后两个服务均为 `active`，`curl http://127.0.0.1:5003/` 返回 200 HTML。
+- Bad: 只验证 `python run.py` 或只检查 import 路径，不验证 systemd Web/Worker 重启。
+
+### 6. Tests Required
+- Import smoke test:
+  ```bash
+  python3 - <<'PY'
+  import sys
+  sys.path.insert(0, 'backend')
+  from app import create_app
+  app = create_app()
+  print(app.name)
+  PY
+  ```
+- Deployment smoke test:
+  ```bash
+  sudo systemctl restart quiz-app quiz-app-worker
+  systemctl is-active quiz-app quiz-app-worker
+  curl -sS -o /tmp/quiz-app-root.html -w '%{http_code} %{content_type}\n' http://127.0.0.1:5003/
+  ```
+
+### 7. Wrong vs Correct
+#### Wrong
+```python
+# backend/app/__init__.py
+from app import create_app
+```
+
+#### Correct
+```python
+# backend/app/__init__.py
+from importlib import util
+from pathlib import Path
+
+legacy_app_path = Path(__file__).resolve().parent.parent / 'app.py'
+spec = util.spec_from_file_location('_legacy_flask_app', legacy_app_path)
+legacy_app = util.module_from_spec(spec)
+spec.loader.exec_module(legacy_app)
+create_app = legacy_app.create_app
+```
+
+---
+
 ## 文件命名规则
 
 - 路由：按业务实体命名 -- auth, banks, quiz, ai, jobs, vocab, wrong, settings
