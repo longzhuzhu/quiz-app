@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class BankResponse(BaseModel):
-    """题库响应格式（与 Flask 版本保持一致）"""
+    """题库响应格式。"""
     id: int
     name: str
     description: str | None

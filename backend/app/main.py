@@ -4,7 +4,7 @@ import os
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
@@ -24,7 +24,7 @@ def create_app() -> FastAPI:
         redirect_slashes=False,
     )
 
-    # CORS 配置（与 Flask 版一致：仅 /api/* 允许跨域）
+    # CORS 配置：仅 /api/* 允许跨域
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -33,7 +33,17 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # 注册所有 API 路由（保持与 Flask 版相同的 URL 前缀）
+    @app.middleware("http")
+    async def add_no_cache_headers(request: Request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if path == "/api" or path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
+
+    # 注册所有 API 路由（保持现有 URL 前缀）
     from app.api.routes.auth import router as auth_router
     from app.api.routes.account import router as account_router
     from app.api.routes.admin_users import router as admin_users_router
@@ -72,15 +82,29 @@ def create_app() -> FastAPI:
         if os.path.isdir(assets_dir):
             app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
+        def _spa_index_response() -> FileResponse:
+            response = FileResponse(os.path.join(dist_dir, "index.html"))
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+            return response
+
         # SPA fallback：所有非 /api/* 且未匹配到静态文件的路径返回 index.html
         # 使用 APIRoute 检查排除 /api 前缀路径，避免 catch-all 路由吞掉 404 API 请求
         @app.get("/{full_path:path}")
+        @app.head("/{full_path:path}")
         async def serve_frontend(request: Request, full_path: str):
-            if full_path.startswith("api"):
+            if full_path == "api" or full_path.startswith("api/"):
                 raise HTTPException(status_code=404)
             file_path = os.path.join(dist_dir, full_path)
             if full_path and os.path.isfile(file_path):
                 return FileResponse(file_path)
-            return FileResponse(os.path.join(dist_dir, "index.html"))
+            if request.method == "HEAD":
+                response = Response(status_code=200)
+                response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+                response.headers["Pragma"] = "no-cache"
+                response.headers["Expires"] = "0"
+                return response
+            return _spa_index_response()
 
     return app

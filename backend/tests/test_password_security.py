@@ -3,7 +3,6 @@ import sys
 
 import bcrypt
 import pytest
-from werkzeug.security import generate_password_hash
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
@@ -23,7 +22,7 @@ def test_passlib_hash_verifies_correct_password_only():
     [
         (
             "werkzeug-password",
-            generate_password_hash("werkzeug-password", method="pbkdf2:sha256"),
+            "pbkdf2:sha256:1000$testsalt$eb234a32a38e7b76a2b0a1ed2401ec490628af22d6ebbdb5e11df987f6fc7064",
         ),
         (
             "bcrypt-password",

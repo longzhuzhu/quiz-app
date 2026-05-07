@@ -1,8 +1,4 @@
-"""密码哈希生成与校验。
-
-同时服务旧 Flask 路由和新版 FastAPI 路由，避免两套认证逻辑对
-password_hash 格式支持不一致。
-"""
+"""密码哈希生成与校验，兼容历史密码哈希格式。"""
 
 import hashlib
 import hmac
@@ -67,7 +63,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     兼容格式：
     - passlib pbkdf2_sha256（新版默认生成）
     - bcrypt $2a$/$2b$/$2y$（兼容历史/导入数据）
-    - Werkzeug pbkdf2:sha256（旧 Flask 生成）
+    - Werkzeug pbkdf2:sha256（历史兼容格式）
     """
     if not isinstance(plain_password, str) or not isinstance(hashed_password, str):
         return False

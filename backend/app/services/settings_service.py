@@ -18,7 +18,7 @@ SCENE_MODEL_SETTING_KEYS = {
 
 
 def get_key(db: Session, key: str, default: str = "") -> str:
-    """获取 SystemSetting 值（替代 Flask 版的 SystemSetting.get 类方法）"""
+    """获取 SystemSetting 值。"""
     row = db.query(SystemSetting).filter_by(key=key).first()
     if row and row.value is not None:
         return row.value
@@ -26,7 +26,7 @@ def get_key(db: Session, key: str, default: str = "") -> str:
 
 
 def set_key(db: Session, key: str, value: str) -> None:
-    """设置 SystemSetting 值（替代 Flask 版的 SystemSetting.set 类方法）"""
+    """设置 SystemSetting 值。"""
     row = db.query(SystemSetting).filter_by(key=key).first()
     if row:
         row.value = value

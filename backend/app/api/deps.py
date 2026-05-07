@@ -8,20 +8,25 @@ from app.core.database import get_db
 from app.core.security import decode_access_token
 from app.models.user import User
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
 def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: Session = Depends(get_db),
 ) -> User:
-    """获取当前认证用户
+    """获取当前认证用户。
 
-    兼容 Flask-JWT-Extended 的 token 格式：
     - 前端使用 Bearer token
     - JWT sub 字段存储用户 ID（字符串形式）
     - 401 触发前端登出
     """
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authorization credentials",
+        )
+
     token = credentials.credentials
     payload = decode_access_token(token)
 
@@ -31,7 +36,6 @@ def get_current_user(
             detail="Invalid or expired token",
         )
 
-    # Flask-JWT-Extended 使用 sub 字段存储 identity
     user_id_str = payload.get("sub")
     if user_id_str is None:
         raise HTTPException(

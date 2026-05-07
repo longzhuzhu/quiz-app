@@ -21,11 +21,10 @@ router = APIRouter()
 
 
 def question_to_dict(q: Question, include_answer: bool = True) -> dict:
-    """题目序列化（与 Flask 版本保持一致）
+    """题目序列化。
 
     options 字段：PostgreSQL JSONB 存储为列表/字典，直接返回。
-    Flask 版本使用 json.loads(q.options) 解析 JSON 字符串，
-    FastAPI 版本 JSONB 存储直接为 Python 对象，无需 json.loads。
+    历史数据也可能是 JSON 字符串，因此保留字符串解析兼容。
     """
     options = q.options
     if isinstance(options, str):

@@ -17,7 +17,7 @@ CIPT（Certified Information Privacy Technologist）认证信息隐私技术师�
 
 | 层级 | 技术 |
 |------|------|
-| 后端 | Python / Flask 3 + SQLAlchemy + SQLite + JWT |
+| 后端 | Python / FastAPI + SQLAlchemy 2.x + PostgreSQL + JWT |
 | 前端 | Vue 3 (`<script setup>`) + Vite + Pinia + Tailwind CSS 4 + Headless UI |
 | AI | OpenAI 兼容 API（可配置其他服务） |
 
@@ -39,10 +39,10 @@ cd quiz-app
 ### 2. 配置环境变量
 
 ```bash
-cp .env.example .env
+cp .env.example backend/.env
 ```
 
-编辑 `.env` 文件：
+编辑 `backend/.env` 文件：
 
 ```env
 SECRET_KEY=your-secret-key
@@ -62,7 +62,7 @@ pip install -r backend/requirements.txt
 python run.py
 ```
 
-后端默认运行在 `http://localhost:5003`，首次启动会自动创建数据库。
+后端默认运行在 `http://localhost:5003`，通过 `backend/.env` 中的 `DATABASE_URL` 连接数据库。
 
 ### 4. 启动后台任务 worker
 
@@ -111,7 +111,7 @@ bash scripts/start-worker.sh
 
 ## 后台任务说明
 
-- 当前后台任务由 `backend/workers/job_worker.py` 消费，启动方式：`bash scripts/start-worker.sh`
+- 当前后台任务由 `backend/app/workers/job_worker.py` 消费，启动方式：`bash scripts/start-worker.sh`
 - 典型场景包括：专业词汇批量翻译、按题库执行高频词翻译、题目导入成功后自动创建高频词翻译任务
 - 任务进度会写入数据库，前端轮询的是任务状态而不是直接长循环调用批量翻译接口
 - 任务失败会自动重试，最多 3 次；达到上限后进入失败终态，可在页面上再次触发，仅继续处理剩余未完成数据
@@ -153,7 +153,7 @@ sudo bash scripts/install-systemd-service.sh
 - Worker 服务名默认是 `quiz-app-worker.service`
 - 安装脚本会同时执行 `systemctl enable --now quiz-app.service` 和 `systemctl enable --now quiz-app-worker.service`
 - 默认监听 `0.0.0.0:5003`
-- 后端优先使用 `waitress` 启动，依赖已写入 `backend/requirements.txt`
+- 后端使用 `uvicorn` 启动 FastAPI，依赖已写入 `backend/requirements.txt`
 - 服务启动时会检查 `frontend/dist/`，缺失或过期时自动执行 `npm run build`
 - worker 默认以 2 个并发槽位运行；可通过 `JOB_WORKER_CONCURRENCY` 调整
 
@@ -179,26 +179,20 @@ sudo journalctl -u quiz-app-worker -f
 
 ```
 quiz-app/
-├── run.py                      # 应用入口
+├── run.py                      # FastAPI 开发入口
+├── serve.py                    # FastAPI ASGI app 对象
 ├── .env.example                # 环境变量模板
 ├── backend/
-│   ├── app.py                  # Flask 应用工厂
-│   ├── config.py               # 配置管理
-│   ├── models.py               # 数据模型（13 个表）
+│   ├── app/
+│   │   ├── main.py             # FastAPI 应用工厂与 SPA fallback
+│   │   ├── core/               # 配置、数据库、安全、存储
+│   │   ├── api/routes/         # API 路由
+│   │   ├── models/             # SQLAlchemy 2.x 数据模型
+│   │   ├── schemas/            # Pydantic schema
+│   │   ├── services/           # 业务逻辑
+│   │   └── workers/            # 后台任务 worker
+│   ├── services/password_security.py  # 密码哈希兼容工具
 │   ├── requirements.txt        # Python 依赖
-│   ├── routes/                 # API 蓝图
-│   │   ├── auth.py             #   认证（注册/登录）
-│   │   ├── banks.py            #   题库管理
-│   │   ├── questions.py        #   题目管理
-│   │   ├── quiz.py             #   答题会话
-│   │   ├── wrong.py            #   错题本
-│   │   ├── ai.py               #   AI 翻译/解析
-│   │   ├── vocab.py            #   词汇表
-│   │   └── settings.py         #   系统设置
-│   ├── services/               # 业务逻辑
-│   │   ├── ai_service.py       #   AI API 调用
-│   │   ├── auth_service.py     #   用户认证服务
-│   │   └── import_service.py   #   文件导入解析
 │   └── scripts/
 │       └── import_iapp_glossary.py  # IAPP 术语导入脚本
 ├── frontend/
@@ -252,7 +246,7 @@ quiz-app/
 
 应用支持任何 OpenAI 兼容的 API 服务。配置方式：
 
-1. **环境变量** — 在 `.env` 中设置 `AI_API_BASE_URL`、`AI_API_KEY`、`AI_MODEL`
+1. **环境变量** — 在 `backend/.env` 中设置 `AI_API_BASE_URL`、`AI_API_KEY`、`AI_MODEL`
 2. **管理后台** — 登录管理员账号，在「设置」页面配置（优先级高于环境变量）
 
 ## License

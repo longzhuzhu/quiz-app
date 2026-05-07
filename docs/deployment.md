@@ -27,7 +27,7 @@ sudo loginctl enable-linger $USER
 ```bash
 git clone https://github.com/longzhuzhu/quiz-app.git
 cd quiz-app
-cp .env.example .env
+cp .env.example backend/.env
 pip install -r backend/requirements.txt
 cd frontend && npm install && npm run build
 cd ..
@@ -55,7 +55,7 @@ WorkingDirectory=/path/to/quiz-app
 Environment=APP_HOST=0.0.0.0
 Environment=APP_PORT=5003
 Environment=PYTHONUNBUFFERED=1
-EnvironmentFile=-/path/to/quiz-app/.env
+EnvironmentFile=-/path/to/quiz-app/backend/.env
 ExecStart=/bin/bash -lc 'exec scripts/start-prod.sh'
 Restart=always
 RestartSec=5
@@ -77,7 +77,7 @@ Type=simple
 WorkingDirectory=/path/to/quiz-app
 Environment=PYTHONUNBUFFERED=1
 Environment=JOB_WORKER_CONCURRENCY=2
-EnvironmentFile=-/path/to/quiz-app/.env
+EnvironmentFile=-/path/to/quiz-app/backend/.env
 ExecStart=/bin/bash -lc 'exec scripts/start-worker.sh'
 Restart=always
 RestartSec=5

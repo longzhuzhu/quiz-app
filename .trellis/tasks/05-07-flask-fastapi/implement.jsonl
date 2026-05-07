@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend migration overview: Flask/FastAPI coexistence status and available backend guideline layers"}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"Defines legacy Flask vs new FastAPI layout, app import compatibility risks, route registration, and deployment smoke expectations"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"SQLAlchemy 2.x/FastAPI database patterns, JSONB handling, serialization, and migration constraints needed while removing Flask models"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"FastAPI HTTPException conventions and 401/403 behavior required for route compatibility with frontend auth"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"FastAPI type hints, Depends injection, shared password hashing, env_file absolute path, route ordering, and deployment verification rules"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Worker and service logging conventions to preserve during FastAPI worker switch"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Cross-layer API/frontend/deployment verification checklist for framework replacement"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Search-before-delete/reuse guidance to avoid deleting shared modules still used by FastAPI"}

@@ -1,8 +1,6 @@
 """任务处理器 - 后台任务的具体执行逻辑（适配 FastAPI + SQLAlchemy 2.x）
 
-与 Flask 版的核心区别：
-- 所有函数显式接收 db: Session 参数
-- 不依赖 db.session 全局
+所有函数显式接收 db: Session 参数。
 """
 
 from app.models.bank_word import BankWordFrequency
