@@ -46,6 +46,58 @@ def get_current_user(
 
 ---
 
+## Flask/FastAPI 密码哈希兼容
+
+### 1. Scope / Trigger
+- Trigger: Flask 旧登录接口与 FastAPI 新认证模块共用同一 `users.password_hash` 数据。
+- 风险：Flask 直接调用 `werkzeug.security.check_password_hash()` 时，遇到 FastAPI/passlib 生成的 `$pbkdf2-sha256$...` 会抛 `Invalid hash method ''`，导致登录 500。
+
+### 2. Signatures
+- 共享模块：`backend/services/password_security.py`
+- 生成密码：`get_password_hash(password: str) -> str`
+- 校验密码：`verify_password(plain_password: str, hashed_password: str) -> bool`
+- Flask service：`backend/services/auth_service.py` 必须使用共享模块，不直接导入 Werkzeug hash 函数。
+- FastAPI security：`backend/app/core/security.py` 必须复用同一共享模块。
+
+### 3. Contracts
+- 支持 passlib `pbkdf2_sha256`、bcrypt `$2a$/$2b$/$2y$`、Werkzeug `pbkdf2:sha256`。
+- 新密码统一通过 `get_password_hash()` 生成。
+- 任何校验失败、空 hash、异常格式都返回 `False`，不得抛到登录接口形成 500。
+- 不允许明文密码比较；日志和诊断不得输出完整 `password_hash`。
+
+### 4. Validation & Error Matrix
+- `$pbkdf2-sha256$...` + Werkzeug `check_password_hash()` -> `Invalid hash method ''`，必须避免。
+- 正确密码 + 支持格式 hash -> `verify_password(...) is True`。
+- 错误密码、空 hash、畸形 hash -> `False`，登录返回 401。
+- 缺少 `passlib` 或 `bcrypt` -> 部署依赖不完整，应在 `backend/requirements.txt` 声明。
+
+### 5. Good/Base/Bad Cases
+- Good: Flask 登录、注册、改密与 FastAPI security 都调用 `services.password_security`。
+- Base: 现有用户用错误密码登录返回 401 JSON，而不是 500。
+- Bad: 在任一路由或 service 中直接 `from werkzeug.security import check_password_hash`。
+
+### 6. Tests Required
+- Smoke: 生成 passlib hash 后 `verify_password()` 正确密码为 True、错误密码为 False。
+- Compatibility: Werkzeug pbkdf2 与 bcrypt 样例 hash 都能验证。
+- API: 对现有用户用错误密码 POST `/api/auth/login` 返回 401，不出现 `Invalid hash method`。
+- Import: `from app.core.security import get_password_hash, verify_password` 和旧 Flask `create_app()` 均可导入。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+```python
+from werkzeug.security import check_password_hash
+check_password_hash(user.password_hash, password)
+```
+
+#### Correct
+```python
+from services.password_security import verify_password
+verify_password(password, user.password_hash)
+```
+
+---
+
 ## 返回格式
 
 项目无统一 envelope，直接返回 dict/列表：

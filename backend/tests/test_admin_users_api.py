@@ -3,13 +3,14 @@ import sys
 
 import pytest
 from flask_jwt_extended import create_access_token
-from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.security import generate_password_hash
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
 from app import create_app
 from models import db, User
+from services.password_security import verify_password
 
 
 @pytest.fixture()
@@ -97,8 +98,8 @@ def test_admin_can_reset_target_user_password(app):
     with app.app_context():
         user = db.session.get(User, seeded["normal_id"])
         assert user is not None
-        assert check_password_hash(user.password_hash, "new-password")
-        assert not check_password_hash(user.password_hash, "old-password")
+        assert verify_password("new-password", user.password_hash)
+        assert not verify_password("old-password", user.password_hash)
 
 
 @pytest.mark.parametrize(

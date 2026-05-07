@@ -11,6 +11,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 from app import create_app
 from models import db, User
 from services.auth_service import login_user
+from services.password_security import get_password_hash
 
 
 @pytest.fixture()
@@ -49,6 +50,28 @@ def seed_user_and_token(app):
 
 def auth_headers(token):
     return {"Authorization": f"Bearer {token}"}
+
+
+def test_login_with_wrong_password_for_passlib_hash_returns_401_json(app):
+    with app.app_context():
+        user = User(
+            username="passlib-user",
+            email="passlib-user@test.com",
+            password_hash=get_password_hash("correct-password"),
+            is_admin=False,
+        )
+        db.session.add(user)
+        db.session.commit()
+
+    client = app.test_client()
+    res = client.post(
+        "/api/auth/login",
+        json={"username": "passlib-user", "password": "wrong-password"},
+    )
+
+    assert res.status_code == 401
+    assert res.is_json is True
+    assert res.get_json()["error"] == "用户名或密码错误"
 
 
 def test_get_account_returns_current_user_profile(app):

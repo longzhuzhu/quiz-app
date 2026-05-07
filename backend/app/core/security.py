@@ -1,65 +1,11 @@
-"""安全模块 - JWT 认证 + 密码哈希（兼容 Werkzeug pbkdf2 格式）"""
+"""安全模块 - JWT 认证 + 密码哈希。"""
 
-import hashlib
-import re
 from datetime import datetime, timedelta, timezone
 
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 from app.core.config import settings
-
-# 密码哈希上下文
-# 新密码使用 passlib pbkdf2_sha256 格式，旧 Werkzeug 格式通过 _verify_werkzeug_pbkdf2 兼容
-pwd_context = CryptContext(
-    schemes=["pbkdf2_sha256"],
-    deprecated="auto",
-)
-
-
-def _verify_werkzeug_pbkdf2(plain_password: str, hashed_password: str) -> bool | None:
-    """验证 Werkzeug 格式的 pbkdf2 哈希
-
-    Werkzeug 格式: pbkdf2:sha256:iterations$salt$hex_checksum
-    其中 salt 是明文 ASCII，checksum 是 hex 编码。
-    与 passlib 的 AB64 编码不同，需要单独处理。
-    """
-    m = re.match(r"pbkdf2:(\w+):(\d+)\$(.+)\$(.+)", hashed_password)
-    if not m:
-        return None
-    hash_name, iterations_str, salt, hex_checksum = m.groups()
-    iterations = int(iterations_str)
-    dk = hashlib.pbkdf2_hmac(
-        hash_name, plain_password.encode(), salt.encode(), iterations
-    )
-    return dk.hex() == hex_checksum
-
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """验证明文密码与哈希是否匹配
-
-    兼容两种格式：
-    - passlib pbkdf2_sha256 格式（新系统生成）
-    - Werkzeug pbkdf2:sha256 格式（Flask 时期遗留）
-    """
-    # 先尝试 passlib 格式
-    try:
-        if pwd_context.verify(plain_password, hashed_password):
-            return True
-    except Exception:
-        pass
-
-    # 再尝试 Werkzeug 格式
-    result = _verify_werkzeug_pbkdf2(plain_password, hashed_password)
-    if result is not None:
-        return result
-
-    return False
-
-
-def get_password_hash(password: str) -> str:
-    """生成密码哈希（passlib 格式）"""
-    return pwd_context.hash(password)
+from services.password_security import get_password_hash, verify_password
 
 
 def create_access_token(subject: str, expires_delta: timedelta | None = None) -> str:
