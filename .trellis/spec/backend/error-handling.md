@@ -126,3 +126,84 @@ except IntegrityError:
 - Token 缺失/无效/过期 -> **401**（触发前端登出）
 - Token 有效但用户不存在 -> **401**
 - Token 有效、用户存在但非管理员 -> **403**（不触发登出）
+
+---
+
+## FastAPI HTTPBearer 缺失凭证必须显式返回 401
+
+### 1. Scope / Trigger
+
+- Trigger: FastAPI 认证依赖使用 `HTTPBearer` 解析 `Authorization: Bearer <token>`。
+- 风险：`HTTPBearer()` 默认 `auto_error=True`，缺失 `Authorization` header 时会在 `get_current_user()` 执行前直接返回 **403**，绕过项目的 401 登出契约。
+- 适用范围：所有需要认证的 FastAPI 路由依赖，统一通过 `get_current_user()` / `require_admin()`。
+
+### 2. Signatures
+
+- 依赖定义：`security = HTTPBearer(auto_error=False)`
+- 当前用户依赖：
+  ```python
+  def get_current_user(
+      credentials: HTTPAuthorizationCredentials | None = Depends(security),
+      db: Session = Depends(get_db),
+  ) -> User:
+      ...
+  ```
+- 管理员依赖：`require_admin(current_user: User = Depends(get_current_user)) -> User`
+
+### 3. Contracts
+
+- 前端请求头：`Authorization: Bearer <jwt>`。
+- 缺失 header：返回 HTTP 401，`detail="Missing authorization credentials"`。
+- token 无效/过期/payload 缺失/用户不存在：返回 HTTP 401。
+- token 有效但用户非管理员：返回 HTTP 403，`detail="需要管理员权限"`。
+- 禁止让缺失 token 返回 403；否则前端不会按 401 逻辑自动登出。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+|------|------|
+| 无 `Authorization` header | 401 |
+| `Authorization` 非 Bearer 或 token 解码失败 | 401 |
+| token 缺少 `sub` 或 `sub` 不是 int | 401 |
+| token 对应用户不存在 | 401 |
+| 非管理员访问管理员端点 | 403 |
+
+### 5. Good/Base/Bad Cases
+
+- Good: `GET /api/auth/me` 不带 token 返回 401，Axios 触发登出。
+- Base: 带有效普通用户 token 请求普通认证端点返回 200。
+- Bad: 使用默认 `HTTPBearer()`，不带 token 请求认证端点返回 403，前端不会自动登出。
+
+### 6. Tests Required
+
+- Import smoke: `from app.api.deps import get_current_user, require_admin` 成功。
+- API smoke: 不带 token 请求任一认证端点（如 `/api/auth/me`）断言 HTTP 401。
+- API smoke: 错误 token 请求认证端点断言 HTTP 401。
+- API smoke: 普通用户 token 请求管理员端点断言 HTTP 403。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+security = HTTPBearer()
+
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> User:
+    ...
+```
+
+#### Correct
+
+```python
+security = HTTPBearer(auto_error=False)
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+    db: Session = Depends(get_db),
+) -> User:
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="Missing authorization credentials")
+    ...
+```

@@ -1,9 +1,7 @@
 """任务服务 - 后台任务生命周期管理（适配 FastAPI + SQLAlchemy 2.x）
 
-与 Flask 版的核心区别：
 - 所有函数显式接收 db: Session 参数
 - 使用 SQLAlchemy 2.x select()/update() 风格
-- 不依赖 db.session 全局
 """
 
 import json

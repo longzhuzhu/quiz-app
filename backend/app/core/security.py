@@ -9,10 +9,9 @@ from services.password_security import get_password_hash, verify_password
 
 
 def create_access_token(subject: str, expires_delta: timedelta | None = None) -> str:
-    """创建 JWT access token
+    """创建 JWT access token。
 
-    与 Flask-JWT-Extended 保持兼容：
-    - 使用同一个 JWT_SECRET_KEY 和算法
+    - 使用 JWT_SECRET_KEY 和算法
     - identity 存储为字符串形式的用户 ID
     - 默认过期时间 7 天
     """

@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/directory-structure.md","reason":"Check that old Flask entry compatibility assumptions are intentionally replaced and deployment smoke checks are updated"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Check FastAPI SQLAlchemy 2.x database access remains valid and no Flask-SQLAlchemy dependency remains in production code"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Check auth and admin failures retain required 401/403 semantics after Flask removal"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Check FastAPI dependency injection, password hash compatibility, env loading, route ordering, and deployment validation requirements"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check API, frontend, Worker, and deployment boundaries were smoke-tested rather than only imported"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check no shared FastAPI modules were duplicated or accidentally removed while deleting Flask code"}

@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class QuestionResponse(BaseModel):
-    """题目响应格式（与 Flask 版本保持一致）
+    """题目响应格式。
 
     options 字段返回原始列表（前端已按列表使用），
     correct_answer 仅在包含答案时返回。

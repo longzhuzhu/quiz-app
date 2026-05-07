@@ -1,14 +1,16 @@
-import sys
 import os
+import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
+import uvicorn
 
-from dotenv import load_dotenv
-load_dotenv()
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+BACKEND_DIR = os.path.join(ROOT_DIR, "backend")
 
-from app import create_app
+if BACKEND_DIR not in sys.path:
+    sys.path.insert(0, BACKEND_DIR)
 
-app = create_app()
 
-if __name__ == '__main__':
-    app.run(debug=True, port=5003)
+if __name__ == "__main__":
+    host = os.environ.get("APP_HOST", "0.0.0.0")
+    port = int(os.environ.get("APP_PORT", "5003"))
+    uvicorn.run("serve:app", host=host, port=port, reload=True)

@@ -1,8 +1,6 @@
 """后台任务 Worker（适配 FastAPI + SQLAlchemy 2.x）
 
-与 Flask 版的核心区别：
-- 不依赖 Flask app context，直接创建 SessionLocal 获取 db session
-- 使用 FastAPI 的 Settings 配置
+直接创建 SessionLocal 获取 db session，并使用 FastAPI 的 Settings 配置
 """
 
 import argparse

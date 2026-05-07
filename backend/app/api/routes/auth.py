@@ -23,7 +23,7 @@ router = APIRouter()
 
 
 def user_to_dict(user: User) -> dict:
-    """用户信息序列化（与 Flask 版本保持一致）"""
+    """用户信息序列化。"""
     return {
         "id": user.id,
         "username": user.username,

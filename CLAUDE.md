@@ -12,7 +12,7 @@ CIPT（认证信息隐私技术师）考试备考应用，前后端分离架构�
 
 ```bash
 pip install -r backend/requirements.txt   # 安装依赖
-python run.py                              # 启动 Flask（debug 模式，端口 5003）
+python run.py                              # 启动 FastAPI（uvicorn reload，端口 5003）
 ```
 
 ### 前端
@@ -30,25 +30,26 @@ npm run build      # 生产构建（输出到 frontend/dist/）
 
 ### 技术栈
 
-- **后端：** Python / Flask 3 + SQLAlchemy + SQLite（`backend/quiz.db`）+ JWT 认证
+- **后端：** Python / FastAPI + SQLAlchemy 2.x + PostgreSQL + JWT 认证
 - **前端：** Vue 3（`<script setup>` + JS）+ Vite + Pinia + Tailwind CSS 4 + Headless UI
 
 ### 前后端通信
 
 - 前端通过 Axios 调用 `/api/*` RESTful 接口
 - 开发模式：Vite 代理 `/api` → `http://127.0.0.1:5003`（`frontend/vite.config.js`）
-- 生产模式：Flask 直接托管 `frontend/dist/`，所有非 API 路由返回 `index.html`（`backend/app.py`）
+- 生产模式：FastAPI 直接托管 `frontend/dist/`，所有非 API 路由返回 `index.html`（`backend/app/main.py`）
 
 ### 后端结构
 
-- `run.py` — 入口，将 `backend/` 加入 sys.path 后启动 Flask
-- `backend/app.py` — 应用工厂 `create_app()`，注册蓝图和 SPA fallback
-- `backend/config.py` — 配置（DB、JWT 7天有效期、AI API、50MB 上传限制）
-- `backend/models.py` — 6 个 SQLAlchemy 模型：User、QuestionBank、Question、QuizSession、QuizAnswer、WrongAnswer
-- `backend/routes/` — API 蓝图：auth、banks、questions、quiz、wrong、ai
-- `backend/services/` — 业务逻辑：auth_service、ai_service、import_service
+- `run.py` — 开发入口，通过 uvicorn 启动 FastAPI
+- `serve.py` — 生产 ASGI app 对象，供 uvicorn 导入
+- `backend/app/main.py` — FastAPI 应用工厂 `create_app()`，注册路由和 SPA fallback
+- `backend/app/core/` — 配置、数据库、安全、存储
+- `backend/app/models/` — SQLAlchemy 2.x 模型，按实体拆分
+- `backend/app/api/routes/` — FastAPI 路由：auth、banks、questions、quiz、wrong、ai 等
+- `backend/app/services/` — 业务逻辑：ai_service、import_service、job_service、smart_import_service 等
 
-### API 蓝图前缀
+### API 路由前缀
 
 | 前缀 | 功能 |
 |------|------|
@@ -62,7 +63,7 @@ npm run build      # 生产构建（输出到 frontend/dist/）
 ### 权限模型
 
 - 公开：注册、登录
-- 认证用户（`@jwt_required()`）：答题、错题本、AI 功能
+- 认证用户（`Depends(get_current_user)`）：答题、错题本、AI 功能
 - 管理员（`User.is_admin`）：题库/题目管理、批量翻译。管理员校验仅在后端 API 层
 
 ### 前端结构

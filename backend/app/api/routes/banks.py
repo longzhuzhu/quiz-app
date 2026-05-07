@@ -100,6 +100,7 @@ def translate_bank_word_frequencies(items):
 
 
 @router.get("")
+@router.get("/")
 def list_banks(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -109,6 +110,7 @@ def list_banks(
 
 
 @router.post("", status_code=201)
+@router.post("/", status_code=201)
 def create_bank(
     data: BankCreateRequest,
     _admin: User = Depends(require_admin),
