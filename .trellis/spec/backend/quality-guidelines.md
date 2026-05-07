@@ -156,6 +156,63 @@ class Settings(BaseSettings):
 - 类型自动校验（如 `MAX_UPLOAD_SIZE_MB: int`）
 - 计算属性：`upload_max_size_bytes` 属性方法
 
+### 部署环境文件必须对齐 backend/.env
+
+#### 1. Scope / Trigger
+- Trigger: Flask 旧服务、FastAPI 新服务与 systemd Web/Worker 共存，生产数据源和密钥由 `backend/.env` 提供。
+- 风险：systemd 或 Flask 只读取仓库根 `.env` 时，如果该文件不存在，会回退到 Flask 默认 SQLite `backend/quiz.db`，导致题库数量缺失、JWT/AI 配置错配或页面提示接口失败。
+
+#### 2. Signatures
+- Flask 配置入口：`backend/config.py` 必须在定义 `Config` 前执行 `load_dotenv(os.path.join(basedir, '.env'))`。
+- systemd Web：`deploy/systemd/quiz-app.service` 使用 `EnvironmentFile=-/home/ubuntu/github/quiz-app/backend/.env`。
+- systemd Worker：`deploy/systemd/quiz-app-worker.service` 使用 `EnvironmentFile=-/home/ubuntu/github/quiz-app/backend/.env`。
+- 安装脚本：`scripts/install-systemd-service.sh` 生成的两个 unit 必须使用 `EnvironmentFile=-${ROOT_DIR}/backend/.env`。
+
+#### 3. Contracts
+- `backend/.env` 是生产共享配置源，至少提供 `DATABASE_URL`、`JWT_SECRET_KEY`、`SECRET_KEY` 和 AI 相关键。
+- Flask 和 FastAPI 必须解析到同一 `DATABASE_URL`，不得一个连接 PostgreSQL、另一个回退 SQLite。
+- 不要求仓库根 `.env` 存在；不能把根 `.env` 当作生产必需文件。
+
+#### 4. Validation & Error Matrix
+- `systemctl show quiz-app -p EnvironmentFiles` 显示根 `.env` -> unit 模板或安装脚本未更新，重装后会回归。
+- Flask smoke test 的 `SQLALCHEMY_DATABASE_URI` 为 `sqlite:///.../backend/quiz.db` -> 未加载 `backend/.env`，生产数据源错误。
+- 首页提示“获取题库失败”或题库数量少于 PostgreSQL -> 优先检查 Flask/systemd 是否读取了错误 env 文件。
+- Web/Worker JWT 不一致 -> 页面可能保留 token 但接口返回 401。
+
+#### 5. Good/Base/Bad Cases
+- Good: `from app import create_app; app.config['SQLALCHEMY_DATABASE_URI']` 脱敏后与 `app.core.config.settings.DATABASE_URL` 指向同一 PostgreSQL。
+- Base: `systemctl restart quiz-app quiz-app-worker` 后两个服务均 `active`，`EnvironmentFiles` 均为 `backend/.env`。
+- Bad: 只修改 `serve.py` 或只修改已安装的 `/etc/systemd/system/*.service`，但没有更新仓库内 `deploy/systemd/*.service` 和 `scripts/install-systemd-service.sh`。
+
+#### 6. Tests Required
+- Flask config smoke test：插入 `backend/` 到 `sys.path` 后导入 `create_app()`，断言脱敏后的 DB scheme 不是 `sqlite`。
+- Data smoke test：在 app context 中查询 `QuestionBank.query.count()`，与预期生产库数量一致。
+- Deployment smoke test：`sudo systemctl restart quiz-app quiz-app-worker`，再断言 `systemctl show ... -p EnvironmentFiles` 指向 `backend/.env`。
+- API smoke test：使用有效 JWT 请求 `/api/banks/`，断言 HTTP 200 且返回题库数量正确。
+
+#### 7. Wrong vs Correct
+
+##### Wrong
+```ini
+EnvironmentFile=-/home/ubuntu/github/quiz-app/.env
+```
+
+```python
+# serve.py 只加载根 .env，backend/.env 不参与 Flask 配置
+load_dotenv(os.path.join(ROOT_DIR, '.env'))
+```
+
+##### Correct
+```ini
+EnvironmentFile=-/home/ubuntu/github/quiz-app/backend/.env
+```
+
+```python
+# backend/config.py
+basedir = os.path.abspath(os.path.dirname(__file__))
+load_dotenv(os.path.join(basedir, '.env'))
+```
+
 ---
 
 ## FastAPI 路由注册顺序

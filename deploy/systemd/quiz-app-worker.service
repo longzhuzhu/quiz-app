@@ -9,7 +9,7 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/github/quiz-app
 Environment=PYTHONUNBUFFERED=1
-EnvironmentFile=-/home/ubuntu/github/quiz-app/.env
+EnvironmentFile=-/home/ubuntu/github/quiz-app/backend/.env
 ExecStart=/home/ubuntu/github/quiz-app/scripts/start-worker.sh
 Restart=always
 RestartSec=5
