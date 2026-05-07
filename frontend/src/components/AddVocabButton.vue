@@ -45,7 +45,7 @@ import { useToast } from '../composables/useToast'
 
 const toast = useToast()
 
-const props = defineProps({
+defineProps({
   initialTerm: { type: String, default: '' },
 })
 
@@ -58,7 +58,7 @@ const inputRef = ref(null)
 
 watch(open, (val) => {
   if (val) {
-    term.value = props.initialTerm || ''
+    term.value = ''
     message.value = ''
     nextTick(() => inputRef.value?.focus())
   }
