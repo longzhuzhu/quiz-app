@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"QuestionCard 组件改动需遵循 Vue script setup、props/emits、Tailwind 样式约定"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"前端为纯 JavaScript 项目，需遵循可选链和运行时 props 模式"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"UI 反馈和错误处理应遵循现有 View/Component toast 模式"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"新增复制逻辑前需确认是否已有可复用 clipboard 模式"}

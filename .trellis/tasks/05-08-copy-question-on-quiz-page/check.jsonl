@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"检查组件结构、props/emits、Tailwind 样式是否符合前端规范"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"检查纯 JavaScript 防护模式和 question/options 空值处理"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查用户反馈和错误处理是否符合 toast 模式"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"检查是否引入不必要抽象或重复逻辑"}
