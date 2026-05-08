@@ -1,0 +1,6 @@
+{"file":".trellis/spec/frontend/index.md","reason":"前端规范入口，确认 Vue/JS 项目约定与应读取的规范范围。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"本任务需要在 HomeView 中新增 UI 模块，需遵守组件与模板模式。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"本任务涉及 Pinia store 与页面级异步数据读取边界。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"本任务涉及 Axios 调用、错误处理和页面加载体验。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"项目使用纯 JavaScript，需按现有可选链与 Ref 初始值约定处理 nullable 数据。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"功能复用 quiz history API 与 QuizView 恢复逻辑，需检查跨层数据契约。"}
