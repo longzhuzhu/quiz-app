@@ -174,10 +174,9 @@ onMounted(async () => {
     recentAccuracy.value = r.data.accuracy
     recentTotal.value = r.data.total
   }).catch(() => {})
-  const lastSessionP = client.get('/quiz/history', { params: { page: 1, per_page: 1 } }).then(r => {
+  const lastSessionP = client.get('/quiz/history', { params: { page: 1, per_page: 20 } }).then(r => {
     const items = Array.isArray(r.data?.items) ? r.data.items : []
-    const lastSession = items[0]
-    lastIncompleteSession.value = lastSession?.is_completed === false ? lastSession : null
+    lastIncompleteSession.value = items.find(item => item.is_completed === false && item.mode !== 'wrong_practice') || null
   }).catch(() => {
     lastIncompleteSession.value = null
   })
