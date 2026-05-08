@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 9
-- **Last Active**: 2026-05-04
+- **Total Sessions**: 10
+- **Last Active**: 2026-05-08
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~322 | Active |
+| `journal-1.md` | ~358 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 10 | 2026-05-08 | Replace Flask runtime with FastAPI | `9211785`, `8aa2632`, `284d53e`, `6687e95` | `codex/vocab-progress-settings-deploy` |
 | 9 | 2026-05-04 | 移除硬编码数据库凭据 | `683c180` | `codex/vocab-progress-settings-deploy` |
 | 8 | 2026-05-04 | Deploy verify smart-import accuracy | `e358076`, `8063656`, `4fba0b7`, `5d7014e`, `41af6cf` | `codex/vocab-progress-settings-deploy` |
 | 7 | 2026-05-04 | smart-import 准确率优化(CIPT 283 PDF) — PR-0~PR-4 全部闭环 + spec 收尾 | `5ab8125`, `109c45b`, `4c5ca3e`, `41af6cf`, `5d7014e`, `4fba0b7` | `codex/vocab-progress-settings-deploy` |

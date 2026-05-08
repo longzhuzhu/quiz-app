@@ -61,6 +61,14 @@
         @explained="(e) => explainData = e"
       />
       <AddVocabButton :initial-term="question.content" />
+      <button @click="copyQuestion"
+        class="inline-flex items-center gap-1.5 rounded-button px-3 py-1.5 text-sm font-medium
+               bg-gray-100 text-gray-700 hover:bg-gray-200
+               dark:bg-slate-700 dark:text-gray-300 dark:hover:bg-slate-600
+               transition-colors">
+        <ClipboardDocumentIcon class="h-4 w-4" />
+        复制
+      </button>
     </div>
 
     <!-- AI 解析内容（独立于按钮行） -->
@@ -111,11 +119,12 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { CheckCircleIcon, XCircleIcon } from '@heroicons/vue/24/outline'
+import { CheckCircleIcon, ClipboardDocumentIcon, XCircleIcon } from '@heroicons/vue/24/outline'
 import TranslateButton from './TranslateButton.vue'
 import ExplainButton from './ExplainButton.vue'
 import AddVocabButton from './AddVocabButton.vue'
 import BaseButton from './BaseButton.vue'
+import { useToast } from '../composables/useToast'
 
 const props = defineProps({
   question: Object,
@@ -129,6 +138,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['submit', 'next', 'prev', 'finish', 'translated'])
+const toast = useToast()
 
 const selectedAnswers = ref([])
 const answered = ref(false)
@@ -178,6 +188,43 @@ function toggleOption(key) {
     }
   } else {
     selectedAnswers.value = [key]
+  }
+}
+
+function formatQuestionText() {
+  if (!props.question) return ''
+
+  const lines = []
+  if (props.question.content) lines.push(props.question.content)
+
+  const options = Array.isArray(props.question.options) ? props.question.options : []
+  if (options.length && lines.length) lines.push('')
+  options.forEach((option) => {
+    const key = option.key ? `${option.key}. ` : ''
+    const text = option.text || ''
+    if (key || text) lines.push(`${key}${text}`.trim())
+  })
+
+  return lines.join('\n')
+}
+
+async function copyQuestion() {
+  const text = formatQuestionText()
+  if (!text) {
+    toast.error('没有可复制的题目内容')
+    return
+  }
+  const clipboard = globalThis.navigator?.clipboard
+  if (!clipboard?.writeText) {
+    toast.error('当前浏览器不支持复制')
+    return
+  }
+
+  try {
+    await clipboard.writeText(text)
+    toast.success('题目已复制')
+  } catch {
+    toast.error('复制失败，请手动选择文本复制')
   }
 }
 

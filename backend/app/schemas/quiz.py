@@ -43,6 +43,7 @@ class QuizSessionOut(BaseModel):
     correct_count: int = 0
     is_completed: bool = False
     accuracy: float | None = None
+    resume_index: int | None = None
     created_at: str | None = None
     completed_at: str | None = None
 

@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/index.md","reason":"质量检查需从前端规范入口确认适用规范。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"检查新增首页 UI 是否符合组件和模板模式。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查 API 调用、错误处理、加载失败降级和构建要求。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"检查纯 JS nullable 数据、可选链与格式化逻辑是否稳健。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查首页历史摘要、路由跳转和 QuizView 恢复逻辑的数据契约一致性。"}

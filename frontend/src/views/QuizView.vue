@@ -200,6 +200,14 @@ function restoreSessionState(sessionData) {
     }
   })
 
+  const questionCount = (sessionData.questions || []).length
+  const rawResumeIndex = sessionData.session?.resume_index
+  const resumeIndex = typeof rawResumeIndex === 'number' ? rawResumeIndex : Number(rawResumeIndex)
+  if (rawResumeIndex !== null && rawResumeIndex !== undefined && Number.isInteger(resumeIndex) && questionCount > 0) {
+    quizStore.currentIndex = Math.min(Math.max(resumeIndex, 0), questionCount - 1)
+    return
+  }
+
   const firstUnanswered = (sessionData.questions || []).findIndex(q => !questionResultMap[q.id])
   quizStore.currentIndex = firstUnanswered >= 0 ? firstUnanswered : 0
 }

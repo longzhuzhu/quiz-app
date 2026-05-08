@@ -17,9 +17,11 @@ CIPT（Certified Information Privacy Technologist）认证信息隐私技术师�
 
 | 层级 | 技术 |
 |------|------|
-| 后端 | Python / FastAPI + SQLAlchemy 2.x + PostgreSQL + JWT |
+| 后端 | Python / FastAPI + uvicorn + SQLAlchemy 2.x + PostgreSQL + JWT |
 | 前端 | Vue 3 (`<script setup>`) + Vite + Pinia + Tailwind CSS 4 + Headless UI |
 | AI | OpenAI 兼容 API（可配置其他服务） |
+
+后端统一使用 ASGI 链路：`serve.py` 导出 `app = create_app()`，`backend/app/main.py` 注册 `/api/*` 路由并托管 `frontend/dist/` 的 SPA fallback。
 
 ## 快速开始
 
@@ -42,9 +44,10 @@ cd quiz-app
 cp .env.example backend/.env
 ```
 
-编辑 `backend/.env` 文件：
+编辑 `backend/.env` 文件。后端配置统一从该文件读取：
 
 ```env
+DATABASE_URL=your-postgresql-sqlalchemy-url
 SECRET_KEY=your-secret-key
 JWT_SECRET_KEY=your-jwt-secret-key
 AI_API_BASE_URL=https://api.openai.com/v1
@@ -62,7 +65,7 @@ pip install -r backend/requirements.txt
 python run.py
 ```
 
-后端默认运行在 `http://localhost:5003`，通过 `backend/.env` 中的 `DATABASE_URL` 连接数据库。
+`python run.py` 会以 uvicorn reload 模式启动 FastAPI，默认监听 `http://localhost:5003`，并通过 `backend/.env` 中的 `DATABASE_URL` 连接 PostgreSQL。
 
 ### 4. 启动后台任务 worker
 
@@ -80,11 +83,11 @@ npm install
 npm run dev
 ```
 
-前端开发服务器会自动代理 `/api` 请求到后端。
+前端开发服务器会自动代理 `/api/*` 请求到 `http://127.0.0.1:5003`。
 
 ### 6. 访问应用
 
-打开浏览器访问前端开发服务器地址（默认 `http://localhost:5173`）。
+打开浏览器访问前端开发服务器地址（当前 Vite 配置为 `http://localhost:5001`）。
 
 **第一个注册的用户自动成为管理员**，拥有题库管理、题目管理、AI 设置等权限。
 
@@ -92,9 +95,11 @@ npm run dev
 
 推荐把应用部署为：
 
-- `quiz-app.service`：Web 服务
-- `quiz-app-worker.service`：后台任务 worker
+- `quiz-app.service`：Web 服务，执行 `scripts/start-prod.sh`
+- `quiz-app-worker.service`：后台任务 worker，执行 `scripts/start-worker.sh`
 - nginx / Cloudflare：反向代理到 `127.0.0.1:5003`
+
+生产 Web 链路为 `scripts/start-prod.sh` → `python -m uvicorn serve:app --host 0.0.0.0 --port 5003`。启动脚本会在需要时构建前端，FastAPI 会直接托管 `frontend/dist/`，所有非 `/api/*` 路由回退到 `index.html`。
 
 正式部署文档见：
 
@@ -103,7 +108,7 @@ npm run dev
 如果只想快速手动验证生产环境，可执行：
 
 ```bash
-cd frontend && npm run build
+cd frontend && npm install && npm run build
 cd ..
 bash scripts/start-prod.sh
 bash scripts/start-worker.sh
@@ -153,7 +158,9 @@ sudo bash scripts/install-systemd-service.sh
 - Worker 服务名默认是 `quiz-app-worker.service`
 - 安装脚本会同时执行 `systemctl enable --now quiz-app.service` 和 `systemctl enable --now quiz-app-worker.service`
 - 默认监听 `0.0.0.0:5003`
-- 后端使用 `uvicorn` 启动 FastAPI，依赖已写入 `backend/requirements.txt`
+- Web 服务通过 `uvicorn` 启动 `serve:app`，依赖已写入 `backend/requirements.txt`
+- Worker 通过 `python -m app.workers.job_worker` 运行
+- Web/Worker 环境变量文件均为 `backend/.env`
 - 服务启动时会检查 `frontend/dist/`，缺失或过期时自动执行 `npm run build`
 - worker 默认以 2 个并发槽位运行；可通过 `JOB_WORKER_CONCURRENCY` 调整
 
@@ -208,16 +215,23 @@ quiz-app/
 
 ## API 概览
 
+前端通过 Axios 调用 `/api/*`，JWT 放在 `Authorization: Bearer <token>` 请求头中。当前 FastAPI 路由前缀如下：
+
 | 前缀 | 功能 | 权限 |
 |------|------|------|
 | `/api/auth` | 注册、登录、当前用户 | 公开 / JWT |
+| `/api/account` | 当前账号资料、密码等账号操作 | JWT |
+| `/api/admin/users` | 用户管理 | 管理员 |
 | `/api/banks` | 题库 CRUD、文件导入 | JWT / 管理员 |
 | `/api/questions` | 题目 CRUD、分页查询 | JWT / 管理员 |
 | `/api/quiz` | 答题会话（开始/答题/结束/历史） | JWT |
 | `/api/wrong` | 错题本（列表/练习/标记掌握/统计） | JWT |
 | `/api/ai` | AI 翻译（单题/批量）、AI 解析 | JWT / 管理员 |
-| `/api/vocab` | 专业词汇 + 个人单词本 | JWT / 管理员 |
+| `/api/jobs` | 后台任务查询与控制 | JWT / 管理员 |
 | `/api/settings` | AI API 配置管理 | 管理员 |
+| `/api/vocab` | 专业词汇 + 个人单词本 | JWT / 管理员 |
+| `/api/import-jobs` | 智能导入任务与复核 | JWT / 管理员 |
+| `/api/background-jobs` | 后台任务状态 | JWT / 管理员 |
 
 ## 数据模型
 

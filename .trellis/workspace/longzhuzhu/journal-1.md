@@ -320,3 +320,39 @@ Convert vocabulary batch translation from synchronous while-loop to async Backgr
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: Replace Flask runtime with FastAPI
+
+**Date**: 2026-05-08
+**Task**: Replace Flask runtime with FastAPI
+**Branch**: `codex/vocab-progress-settings-deploy`
+
+### Summary
+
+Replaced the deployed Flask runtime with FastAPI/uvicorn, updated docs, fixed add-vocabulary default input behavior, and fixed unfinished quiz resume progress with deployment verification.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9211785` | (see git log) |
+| `8aa2632` | (see git log) |
+| `284d53e` | (see git log) |
+| `6687e95` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
