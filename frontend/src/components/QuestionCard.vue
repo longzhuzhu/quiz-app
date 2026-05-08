@@ -50,7 +50,6 @@
 
     <!-- AI 按钮区 -->
     <div class="mt-4 flex flex-wrap items-center gap-2">
-      <BaseButton variant="secondary" size="sm" @click="copyQuestion">复制题目</BaseButton>
       <TranslateButton :key="question.id" :question-id="question.id" :has-translation="hasFullTranslation" :show="showTranslation"
         @translated="(e) => { $emit('translated', e); showTranslation = true }"
         @toggle="showTranslation = !showTranslation" />
@@ -62,6 +61,14 @@
         @explained="(e) => explainData = e"
       />
       <AddVocabButton :initial-term="question.content" />
+      <button @click="copyQuestion"
+        class="inline-flex items-center gap-1.5 rounded-button px-3 py-1.5 text-sm font-medium
+               bg-gray-100 text-gray-700 hover:bg-gray-200
+               dark:bg-slate-700 dark:text-gray-300 dark:hover:bg-slate-600
+               transition-colors">
+        <ClipboardDocumentIcon class="h-4 w-4" />
+        复制
+      </button>
     </div>
 
     <!-- AI 解析内容（独立于按钮行） -->
@@ -112,7 +119,7 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { CheckCircleIcon, XCircleIcon } from '@heroicons/vue/24/outline'
+import { CheckCircleIcon, ClipboardDocumentIcon, XCircleIcon } from '@heroicons/vue/24/outline'
 import TranslateButton from './TranslateButton.vue'
 import ExplainButton from './ExplainButton.vue'
 import AddVocabButton from './AddVocabButton.vue'
