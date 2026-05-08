@@ -79,6 +79,32 @@ def _load_options(question: Question) -> list | dict:
     return options
 
 
+def _compute_resume_index(question_ids: list[int], answers: list[QuizAnswer]) -> int:
+    """根据最近一次答题位置计算未完成会话恢复索引。"""
+    if not question_ids:
+        return 0
+
+    index_by_question_id = {qid: index for index, qid in enumerate(question_ids)}
+
+    def answer_sort_key(answer: QuizAnswer) -> tuple[float, int]:
+        answered_at = answer.answered_at
+        if answered_at is None:
+            answered_timestamp = 0.0
+        else:
+            if answered_at.tzinfo is None:
+                answered_at = answered_at.replace(tzinfo=timezone.utc)
+            answered_timestamp = answered_at.timestamp()
+        return answered_timestamp, answer.id or 0
+
+    ordered_answers = sorted(answers, key=answer_sort_key, reverse=True)
+    for answer in ordered_answers:
+        answered_index = index_by_question_id.get(answer.question_id)
+        if answered_index is not None:
+            return min(answered_index + 1, len(question_ids) - 1)
+
+    return 0
+
+
 @router.post("/start")
 def start_quiz(
     data: QuizStartRequest,
@@ -373,6 +399,8 @@ def session_detail(
     is_exam = session.mode == "exam"
 
     answers = db.query(QuizAnswer).filter_by(session_id=session_id).all()
+    session_question_ids = json.loads(session.question_ids) if session.question_ids else []
+    resume_index = _compute_resume_index(session_question_ids, answers)
     answers_out = []
     for a in answers:
         q = a.question
@@ -393,8 +421,8 @@ def session_detail(
 
     # 未完成的会话返回完整题目列表，用于页面刷新后恢复答题
     questions_out = []
-    if not session.is_completed and session.question_ids:
-        q_ids = json.loads(session.question_ids)
+    if not session.is_completed and session_question_ids:
+        q_ids = session_question_ids
         counts = _get_user_question_counts(user_id, q_ids, db)
         answered_ids = {a.question_id for a in answers}
         all_questions = db.query(Question).filter(Question.id.in_(q_ids)).all()
@@ -427,6 +455,7 @@ def session_detail(
             "correct_count": session.correct_count,
             "is_completed": session.is_completed,
             "accuracy": round(session.correct_count / max(session.answered_count, 1) * 100, 1),
+            "resume_index": resume_index,
             "created_at": session.created_at.isoformat(),
             "completed_at": session.completed_at.isoformat() if session.completed_at else None,
         },
