@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 # ─── 常量 ──────────────────────────────────────
 
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2-scenario-content"
 CHUNK_MAX_CHARS = 12000
 CHUNK_MIN_CHARS = 500
 AUTO_ACCEPT_CONFIDENCE = Decimal("0.90")
@@ -112,7 +112,32 @@ NOISE_PATTERNS = [
 ]
 
 
-# ─── 去重签名 ──────────────────────────────────
+# ─── 题干合成与去重签名 ─────────────────────────
+
+
+def build_full_question_content(scenario_text: str | None, content: str | None) -> str:
+    """合成正式题库题干：场景/背景材料在前，最后一问在后。
+
+    ImportParsedQuestion 继续保留原始 scenario_text 和 content；正式 Question.content
+    统一通过此 helper 生成，避免自动入库、人工复核、reparse、历史回填规则漂移。
+    """
+    scenario = (scenario_text or "").strip()
+    stem = (content or "").strip()
+    if scenario and stem:
+        if _normalize_content_for_match(stem).startswith(_normalize_content_for_match(scenario)):
+            return stem
+        return f"{scenario}\n\n{stem}"
+    return scenario or stem
+
+
+def _normalize_content_for_match(text: str | None) -> str:
+    """用于安全匹配的题干规范化：忽略首尾和连续空白差异。"""
+    return re.sub(r"\s+", " ", (text or "").strip())
+
+
+def _content_equivalent_for_backfill(current_content: str | None, parsed_content: str | None) -> bool:
+    """历史回填保护条件：正式题干仍等价于解析出的短题干时才允许覆盖。"""
+    return _normalize_content_for_match(current_content) == _normalize_content_for_match(parsed_content)
 
 
 def _question_signature(
@@ -938,7 +963,8 @@ def _save_parsed_question(
         question_type = "single"
 
     options_for_sig = [{"label": opt.label, "text": opt.text} for opt in parsed_q.options]
-    sig = _question_signature(question_type, parsed_q.content, options_for_sig, correct_answer_list)
+    full_content_for_sig = build_full_question_content(parsed_q.scenario, parsed_q.content)
+    sig = _question_signature(question_type, full_content_for_sig, options_for_sig, correct_answer_list)
     if seen_signatures is not None and sig in seen_signatures:
         _persist_duplicate_parsed_question(
             db, parsed_q, import_job, chunk, reason="content",
@@ -1037,16 +1063,21 @@ def _write_question_to_bank(
         correct_answer_str = str(correct_answer) if correct_answer else ""
         correct_answer_list = [a.strip() for a in correct_answer_str.split(",")] if correct_answer_str else []
 
+    full_content = build_full_question_content(
+        parsed_question.scenario_text,
+        parsed_question.content,
+    )
+
     # 双重保险：检查 Question 表是否已存在相同签名
     sig = _question_signature(
         parsed_question.question_type or "single",
-        parsed_question.content,
+        full_content,
         options,
         correct_answer_list,
     )
     existing = (
         db.query(Question)
-        .filter_by(bank_id=bank_id, content=sig[1])
+        .filter_by(bank_id=bank_id, content=full_content)
         .first()
     )
     if existing:
@@ -1071,7 +1102,7 @@ def _write_question_to_bank(
     question = Question(
         bank_id=bank_id,
         question_type=parsed_question.question_type or "single",
-        content=parsed_question.content,
+        content=full_content,
         options=options,
         correct_answer=correct_answer_str,
         explanation=parsed_question.explanation,
@@ -1457,6 +1488,35 @@ def _split_into_chunks(
     return chunks
 
 
+def _looks_like_leading_reading_material(text: str) -> bool:
+    """保守判断第一个题号前文本是否应归入后续第一题。
+
+    只接收明显像场景/阅读材料的前导文本；拒绝答案段、选项段、页眉广告等噪声，
+    以降低把上一题解析或页眉误拼到下一题的风险。
+    """
+    leading = (text or "").strip()
+    if not leading:
+        return False
+
+    if len(leading) < 80 and not re.search(r"\b(SCENARIO|CASE\s+STUDY)\b", leading, re.IGNORECASE):
+        return False
+
+    reject_patterns = [
+        r"\b(Correct\s+Answer|Answer\s*:|Answer\s+Key|Explanation\s*:|Reference\s*:)\b",
+        r"(?:^|\n)\s*[A-H][.)]\s+\S+",
+        r"\b(?:Page\s+\d+\s*(?:of|/)|www\.\S+|ExamQuestions\s+v\d|Passing\s+Score)\b",
+    ]
+    if any(re.search(pattern, leading, re.IGNORECASE) for pattern in reject_patterns):
+        return False
+
+    has_scenario_marker = re.search(r"\b(SCENARIO|CASE\s+STUDY)\b", leading, re.IGNORECASE)
+    paragraph_count = len([p for p in re.split(r"\n\s*\n", leading) if p.strip()])
+    sentence_count = len(re.findall(r"[.!?](?:\s|$)", leading))
+    word_count = len(re.findall(r"\w+", leading))
+
+    return bool(has_scenario_marker or paragraph_count >= 2 or sentence_count >= 3 or word_count >= 80)
+
+
 def _split_by_question_markers(text: str) -> list[dict]:
     """使用题号模式将文本分割为片段"""
     # 找到所有分割点
@@ -1469,14 +1529,16 @@ def _split_by_question_markers(text: str) -> list[dict]:
             best_count = len(matches)
             best_pattern = pattern
 
-    if best_count < 2 or not best_pattern:
+    if best_count == 0 or not best_pattern:
         return []
 
     matches = list(best_pattern.finditer(text))
     segments = []
+    leading_text = text[:matches[0].start()]
+    attach_leading_to_first = _looks_like_leading_reading_material(leading_text)
 
     for i, match in enumerate(matches):
-        start = match.start()
+        start = 0 if i == 0 and attach_leading_to_first else match.start()
         end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
         segment_text = text[start:end].strip()
 
@@ -1521,8 +1583,10 @@ def _split_by_single_question(text: str) -> list[dict]:
 
     matches = list(best_pattern.finditer(text))
     out: list[dict] = []
+    leading_text = text[:matches[0].start()]
+    attach_leading_to_first = _looks_like_leading_reading_material(leading_text)
     for i, m in enumerate(matches):
-        start = m.start()
+        start = 0 if i == 0 and attach_leading_to_first else m.start()
         end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
         seg_text = text[start:end].strip()
         if not seg_text:
@@ -1575,17 +1639,18 @@ def _build_llm_prompt(chunk_text: str, answer_key_text: str = "") -> list[dict]:
         "1. 只根据原文抽取题目，不要编造。\n"
         "2. 一个文本片段可能包含一道题或多道题。\n"
         "3. 识别题干（content）、选项（options）、答案（correct_answer）、解析（explanation）、参考资料（references）。\n"
-        "4. 如果是场景题，把案例背景放入 scenario 字段。\n"
-        "5. 答案必须来自原文中的 Answer / Correct Answer / Answer Key 等标记"
+        "4. 如果是场景题或长阅读材料题，把完整案例背景/阅读材料放入 scenario 字段，最后一问放入 content 字段；系统会将 scenario 与 content 合并为正式题干。\n"
+        "5. 不要遗漏题号前紧邻的 SCENARIO、Case Study、阅读材料；如果无法确定场景背景是否完整，请降低 confidence 并在 issues 说明。\n"
+        "6. 答案必须来自原文中的 Answer / Correct Answer / Answer Key 等标记"
         + ("或答案参考表" if answer_key_text else "") + "。\n"
-        "6. 如果原文没有答案，correct_answer 输出空数组。\n"
-        "7. 忽略页眉、页脚、广告、水印、文件版本信息等无关内容。\n"
-        "8. 输出必须是 JSON，不要输出 Markdown 代码块标记。\n"
-        "9. question_type 取值: single（单选）、multiple（多选）、truefalse（判断题）、unknown（不确定）。\n"
-        "10. 如果选项标记有 [CORRECT] 或类似标记，该选项即为正确答案。\n"
-        "11. 只提取有明确题号标记的题目（如 Q1、Question #1、1. 等编号格式），"
+        "7. 如果原文没有答案，correct_answer 输出空数组。\n"
+        "8. 忽略页眉、页脚、广告、水印、文件版本信息等无关内容。\n"
+        "9. 输出必须是 JSON，不要输出 Markdown 代码块标记。\n"
+        "10. question_type 取值: single（单选）、multiple（多选）、truefalse（判断题）、unknown（不确定）。\n"
+        "11. 如果选项标记有 [CORRECT] 或类似标记，该选项即为正确答案。\n"
+        "12. 只提取有明确题号标记的题目（如 Q1、Question #1、1. 等编号格式），"
         "忽略没有题号标记的段落、知识点讲解、案例分析说明等非题目内容。\n"
-        "12. 如果一段文字是知识讲解而非考试题目，不要将其转化为题目格式。\n"
+        "13. 如果一段文字是知识讲解而非考试题目，不要将其转化为题目格式。\n"
         f"{answer_key_section}"
         "\n"
         'JSON 格式要求：\n'
@@ -1619,6 +1684,24 @@ def _build_llm_prompt(chunk_text: str, answer_key_text: str = "") -> list[dict]:
         {"role": "system", "content": system_content},
         {"role": "user", "content": user_content},
     ]
+
+
+def _source_text_for_quality_check(parsed_q: ParsedQuestion, chunk_text: str) -> str:
+    """定位当前题目的原文片段，用于场景题质量检查。
+
+    L1 解析时一个 chunk 可能包含多道题；不能因为 chunk 中某一道题有 SCENARIO，
+    就把同 chunk 的普通题都判为缺失场景。能按题号定位时只检查当前题片段，
+    定位失败时再回退到完整 chunk。
+    """
+    normalized_qno = _normalize_qno(parsed_q.source_question_no)
+    if normalized_qno is None:
+        return chunk_text or ""
+
+    for segment in _split_by_single_question(chunk_text or ""):
+        if _normalize_qno(segment.get("source_question_no")) == normalized_qno:
+            return segment.get("text") or ""
+
+    return chunk_text or ""
 
 
 def _parse_llm_response(response_text: str) -> LlmParseResult:
@@ -1669,9 +1752,21 @@ def _quality_check(
 
     # 1. schema_score: 基本字段完整性
     schema_score = 1.0
-    if not parsed_q.content or len(parsed_q.content.strip()) < 10:
+    full_content = build_full_question_content(parsed_q.scenario, parsed_q.content)
+    if not full_content or len(full_content.strip()) < 10:
         schema_score *= 0.5
         issues.append({"code": "STEM_TOO_SHORT", "severity": "MEDIUM", "detail": "题干过短"})
+
+    source_text = _source_text_for_quality_check(parsed_q, chunk_text)
+    source_has_scenario_marker = re.search(r"\b(SCENARIO|CASE\s+STUDY)\b", source_text or "", re.IGNORECASE)
+    content_has_scenario_marker = re.search(r"\b(SCENARIO|CASE\s+STUDY)\b", full_content or "", re.IGNORECASE)
+    if source_has_scenario_marker and not parsed_q.scenario and not content_has_scenario_marker:
+        schema_score *= 0.6
+        issues.append({
+            "code": "SCENARIO_MISSING",
+            "severity": "HIGH",
+            "detail": "原文疑似包含场景/阅读材料，但解析结果未保留场景背景",
+        })
     if len(parsed_q.options) < 2:
         schema_score *= 0.3
         issues.append({"code": "OPTION_COUNT_ABNORMAL", "severity": "HIGH", "detail": f"选项数量异常: {len(parsed_q.options)}"})
@@ -1715,7 +1810,7 @@ def _quality_check(
 
     # 5. noise_clean_score: 噪声检测
     noise_clean_score = 1.0
-    combined_text = parsed_q.content + " " + " ".join(opt.text for opt in parsed_q.options)
+    combined_text = full_content + " " + " ".join(opt.text for opt in parsed_q.options)
     for noise_pattern in NOISE_PATTERNS:
         if noise_pattern.search(combined_text):
             noise_clean_score *= 0.7

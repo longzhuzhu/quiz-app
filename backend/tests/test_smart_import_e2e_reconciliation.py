@@ -111,7 +111,7 @@ def make_response_text(qnos: list[int | str]) -> str:
             {
                 "source_question_no": str(q),
                 "question_type": "single",
-                "scenario": None,
+                "scenario": f"SCENARIO: stub stem text for question {q} that is sufficiently long.",
                 "content": (
                     f"Stub stem for question {q} that is sufficiently long for "
                     "schema check (more than ten characters)."
