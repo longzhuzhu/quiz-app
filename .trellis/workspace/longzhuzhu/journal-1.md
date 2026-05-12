@@ -356,3 +356,36 @@ Replaced the deployed Flask runtime with FastAPI/uvicorn, updated docs, fixed ad
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: Fix smart import scenario stems
+
+**Date**: 2026-05-12
+**Task**: Fix smart import scenario stems
+**Branch**: `codex/vocab-progress-settings-deploy`
+
+### Summary
+
+Preserved scenario/reading material in smart import question content, added conservative leading-text attribution, scenario quality checks, and a dry-run backfill script.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fa2620c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
