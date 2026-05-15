@@ -389,3 +389,36 @@ Preserved scenario/reading material in smart import question content, added cons
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: Auto Handle Import Questions
+
+**Date**: 2026-05-15
+**Task**: Auto Handle Import Questions
+**Branch**: `codex/vocab-progress-settings-deploy`
+
+### Summary
+
+Implemented automatic smart-import handling: structurally usable parsed questions are imported, unusable parsed questions are auto-skipped with traceable records, the import job API exposes auto-handled counts and records, and the frontend adds the auto-handled records entry/page.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f2ecec5` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
