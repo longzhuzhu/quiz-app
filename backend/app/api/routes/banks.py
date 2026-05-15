@@ -235,7 +235,7 @@ def import_questions(
     )
 
     if "error" in result:
-        # 同文件重复导入返回 409 Conflict
+        # 兼容旧 service 返回 duplicate_of 的 409 语义；新同文件重导入默认不再报错。
         status_code = 409 if result.get("duplicate_of") else 400
         raise HTTPException(status_code=status_code, detail=result)
 

@@ -84,6 +84,137 @@ def bank_and_job(db_session):
     return bank, job, chunk
 
 
+def test_create_smart_import_job_allows_duplicate_file_hash(db_session, bank_and_job, monkeypatch):
+    bank, existing_job, _chunk = bank_and_job
+    existing_job.status = "review_required"
+    db_session.commit()
+    monkeypatch.setattr(
+        svc,
+        "save_upload_file",
+        lambda file_bytes, filename: ("/tmp/duplicate.pdf", existing_job.file_hash),
+    )
+
+    result = svc.create_smart_import_job(
+        db=db_session,
+        bank_id=bank.id,
+        file_bytes=b"same pdf content",
+        filename="duplicate.pdf",
+        user_id=1,
+    )
+
+    assert "error" not in result
+    new_job = db_session.get(ImportJob, result["import_job_id"])
+    assert new_job.id != existing_job.id
+    assert new_job.config_json["duplicate_file_of"] == existing_job.id
+    assert new_job.config_json["duplicate_file_status"] == "review_required"
+    assert new_job.background_job_id == result["background_job_id"]
+
+
+def test_duplicate_file_question_content_is_skipped_without_new_question(db_session, bank_and_job):
+    bank, job, chunk = bank_and_job
+    existing_question = Question(
+        bank_id=bank.id,
+        question_type="single",
+        content=FULL_CONTENT,
+        options=[
+            {"key": "A", "text": "Notify regulators and affected customers"},
+            {"key": "B", "text": "Ignore the incident"},
+            {"key": "C", "text": "Delete all records"},
+            {"key": "D", "text": "Wait for a complaint"},
+        ],
+        correct_answer="A",
+        order_index=0,
+    )
+    db_session.add(existing_question)
+    db_session.commit()
+    seen_signatures = {
+        svc._question_signature(
+            existing_question.question_type,
+            existing_question.content,
+            existing_question.options,
+            ["A"],
+        )
+    }
+
+    svc._save_parsed_question(
+        db_session,
+        _parsed_question(),
+        job,
+        chunk,
+        chunk_text=chunk.chunk_text,
+        auto_import=True,
+        seen_signatures=seen_signatures,
+    )
+
+    assert db_session.query(Question).filter_by(bank_id=bank.id).count() == 1
+    parsed = db_session.query(ImportParsedQuestion).one()
+    assert parsed.review_status == "duplicate"
+    assert parsed.import_status == "skipped"
+    assert parsed.imported_question_id is None
+    assert parsed.issues_json["details"][0]["reason"] == "content"
+    assert job.imported_questions == 0
+
+
+def test_question_signature_normalizes_option_key_label_and_label_case():
+    from_question_table = svc._question_signature(
+        "single",
+        FULL_CONTENT,
+        [
+            {"key": "A", "text": "Notify regulators and affected customers"},
+            {"key": "B", "text": "Ignore the incident"},
+        ],
+        ["A"],
+    )
+    from_llm_parse = svc._question_signature(
+        "single",
+        FULL_CONTENT,
+        [
+            {"label": " b ", "text": "Ignore the incident"},
+            {"label": " a ", "text": "Notify regulators and affected customers"},
+        ],
+        ["a"],
+    )
+
+    assert from_question_table == from_llm_parse
+
+
+def test_write_question_duplicate_fallback_records_content_reason(db_session, bank_and_job):
+    bank, job, chunk = bank_and_job
+    existing_question = Question(
+        bank_id=bank.id,
+        question_type="single",
+        content=FULL_CONTENT,
+        options=[
+            {"key": "A", "text": "Notify regulators and affected customers"},
+            {"key": "B", "text": "Ignore the incident"},
+            {"key": "C", "text": "Delete all records"},
+            {"key": "D", "text": "Wait for a complaint"},
+        ],
+        correct_answer="A",
+        order_index=0,
+    )
+    db_session.add(existing_question)
+    db_session.commit()
+
+    svc._save_parsed_question(
+        db_session,
+        _parsed_question(),
+        job,
+        chunk,
+        chunk_text=chunk.chunk_text,
+        auto_import=True,
+        seen_signatures=None,
+    )
+
+    assert db_session.query(Question).filter_by(bank_id=bank.id).count() == 1
+    parsed = db_session.query(ImportParsedQuestion).one()
+    assert parsed.review_status == "duplicate"
+    assert parsed.import_status == "skipped"
+    assert parsed.imported_question_id is None
+    assert parsed.issues_json["details"][0]["reason"] == "content"
+    assert job.imported_questions == 0
+
+
 def _parsed_question(*, scenario: str | None = SCENARIO, qno: str = "247") -> ParsedQuestion:
     return ParsedQuestion(
         source_question_no=qno,

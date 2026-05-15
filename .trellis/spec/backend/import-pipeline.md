@@ -702,6 +702,37 @@ else:
 
 ---
 
+## Scenario F：允许同文件重复导入，去重边界下沉到题目级
+
+### 1. Scope / Trigger
+
+同一题库重复上传相同文件时，`create_smart_import_job()` 曾基于 `bank_id + file_hash` 直接返回 `该文件已导入过`，API 层据此返回 409。这会阻断用户重新导入同一份题库文件，且无法生成本次导入任务、解析记录和跳过原因。
+
+### 2. Contracts
+
+- `file_hash` 只能用于追溯同文件历史导入，不能作为同题库导入的硬阻断。
+- 命中同 `bank_id + file_hash` 的历史 `ImportJob` 时，仍必须创建新的 `ImportJob` 与 `BackgroundJob`。
+- 新 `ImportJob.config_json` 可记录 `duplicate_file_of`、`duplicate_file_status` 等溯源字段；使用 dict 重新赋值或创建完整 dict，避免 JSONB dirty 检测问题。
+- 重复题目去重边界在 `_save_parsed_question()` / `_write_question_to_bank()`：通过题目完整题干、选项、答案、题型组成的内容签名判断重复；命中后保留 `ImportParsedQuestion`，标记 `review_status="duplicate"`、`import_status="skipped"`，不写新的 `Question`。
+- 题目签名必须归一化选项标签来源（`label` / `key`），避免 LLM 解析结构与正式表存储结构字段名不同导致同题漏判。
+- `force=true` 可保留为兼容参数，但同文件重导入不再依赖它。
+
+### 3. Validation & Error Matrix
+
+| 条件 | 行为 |
+|---|---|
+| 同一题库、相同 `file_hash` 再次导入 | 创建新导入任务，不返回 400/409 |
+| 同一题库、重复文件中的相同题目 | 写 duplicate/skipped 解析记录，不新增正式题 |
+| 不同题库、相同 `file_hash` | 正常创建新任务；题目去重仅在目标题库内生效 |
+| `force=true` | 保持兼容，不改变题目级去重语义 |
+
+### 4. Tests Required
+
+- 同 bank 相同 `file_hash` 第二次调用 `create_smart_import_job()` 不返回 error，并记录 duplicate file 溯源字段。
+- 重复文件第二次处理同题内容时，`questions` 数量不增加，`import_parsed_questions` 新增 duplicate/skipped 记录且 `details[0].reason == "content"`。
+
+---
+
 ## 关键设计决策汇总
 
 | # | 决策 | 理由 |
@@ -719,6 +750,7 @@ else:
 | D11 | 第一个题号前导材料采用保守归属 | 优先修复明显场景/阅读材料丢失，同时降低吞入页眉、广告、上一题解析或答案段落的风险 |
 | D12 | 历史回填默认 dry-run，显式 `--apply` 才写 | 避免一次性脚本误改历史正式题，尤其保护人工编辑过的内容 |
 | D13 | 智能导入默认按可用性自动处理，不再按置信度阈值进入人工复核 | 用户对常规待复核项缺少有效选择；结构完整题自动入库，不可用题自动跳过并保留追溯记录 |
+| D14 | 文件 hash 不作为同题库重复导入硬阻断，去重边界下沉到题目级 | 保留每次导入任务的可追溯性，同时通过题目签名 duplicate/skipped 防止正式题库重复增长 |
 
 ---
 

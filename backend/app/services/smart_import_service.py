@@ -142,10 +142,23 @@ def _content_equivalent_for_backfill(current_content: str | None, parsed_content
 def _question_signature(
     question_type: str, content: str, options: list, correct_answer: list
 ) -> tuple:
-    """生成题目唯一签名，用于去重（复用旧版逻辑，增强 options/answer 排序归一化）"""
+    """生成题目唯一签名，用于去重（复用旧版逻辑，增强 options/answer 排序归一化）。"""
+
+    def _option_label(opt: dict) -> str:
+        return str(opt.get("label", opt.get("key", "")) or "").strip().upper()
+
     normalized_options = (
         json.dumps(
-            sorted(options, key=lambda o: o.get("label", o.get("key", ""))),
+            sorted(
+                [
+                    {
+                        "label": _option_label(opt),
+                        "text": opt.get("text", ""),
+                    }
+                    for opt in options
+                ],
+                key=lambda o: o.get("label", ""),
+            ),
             sort_keys=True, ensure_ascii=False, separators=(",", ":"),
         )
         if isinstance(options, list)
@@ -232,21 +245,25 @@ def create_smart_import_job(
     # 保存文件（先保存以获取 file_hash）
     file_path, file_hash = save_upload_file(file_bytes, filename)
 
-    # 同文件重复导入检测
-    if not force:
-        dup_job = (
-            db.query(ImportJob)
-            .filter_by(bank_id=bank_id, file_hash=file_hash)
-            .filter(ImportJob.status.in_(["completed", "partial_imported", "parsing", "extracting", "chunking", "validating", "review_required", "unimported"]))
-            .first()
-        )
-        if dup_job:
-            return {
-                "error": "该文件已导入过",
-                "duplicate_of": dup_job.id,
-                "existing_status": dup_job.status,
-                "hint": "使用 force=true 强制重新导入",
-            }
+    # 同文件重复导入仅记录溯源信息，不再硬阻断。
+    # 去重边界在题目级：run_smart_import 会把题库现有 Question 签名加入 seen_signatures，
+    # _save_parsed_question 命中后写入 duplicate/skipped 审计记录，避免重复写正式题库。
+    duplicate_file_job = (
+        db.query(ImportJob)
+        .filter_by(bank_id=bank_id, file_hash=file_hash)
+        .order_by(ImportJob.id.desc())
+        .first()
+    )
+    config_json = {
+        "auto_import": auto_import,
+        "use_llm_cache": use_llm_cache,
+    }
+    if duplicate_file_job:
+        config_json = {
+            **config_json,
+            "duplicate_file_of": duplicate_file_job.id,
+            "duplicate_file_status": duplicate_file_job.status,
+        }
 
     # 创建 ImportJob
     import_job = ImportJob(
@@ -256,10 +273,7 @@ def create_smart_import_job(
         file_hash=file_hash,
         file_type=file_type,
         status="pending",
-        config_json={
-            "auto_import": auto_import,
-            "use_llm_cache": use_llm_cache,
-        },
+        config_json=config_json,
         created_by=user_id,
     )
     db.add(import_job)
@@ -1156,7 +1170,9 @@ def _save_parsed_question(
     elif auto_import:
         question = _write_question_to_bank(db, parsed_question, import_job.bank_id)
         if parsed_question.import_status == "skipped":
-            parsed_question.imported_question_id = question.id if question else None
+            # _write_question_to_bank 的双重保险命中重复题时，会保留当前解析记录为
+            # duplicate/skipped，并且不关联已有正式题，避免被计入已导入题。
+            pass
         else:
             parsed_question.import_status = "imported"
             parsed_question.review_status = "auto_accepted"
@@ -1235,7 +1251,16 @@ def _write_question_to_bank(
             logger.info("题库 %d 已存在相同题目 (id=%d)，跳过写入", bank_id, existing.id)
             parsed_question.import_status = "skipped"
             parsed_question.review_status = "duplicate"
-            parsed_question.imported_question_id = existing.id
+            parsed_question.imported_question_id = None
+            parsed_question.issues_json = {
+                "issues": ["DUPLICATE"],
+                "details": [{
+                    "code": "DUPLICATE",
+                    "severity": "LOW",
+                    "reason": "content",
+                    "detail": "与已有题目重复",
+                }],
+            }
             db.flush()
             return existing
 
