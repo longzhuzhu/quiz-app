@@ -1,6 +1,6 @@
 # Smart Import 流水线规范
 
-> 题库 PDF/XLSX/DOCX → LLM 解析 → 复核入库的核心流水线，位于 `backend/app/services/smart_import_service.py`。本文记录 chunk 失败两级重试、reparse 卫生、reconciliation 报告、场景题完整题干四类对外契约。
+> 题库 PDF/XLSX/DOCX → LLM 解析 → 复核入库的核心流水线，位于 `backend/app/services/smart_import_service.py`。本文记录 chunk 失败两级重试、L1 完整性检查、reparse 卫生、reconciliation 报告、场景题完整题干等对外契约。
 
 适用范围：FastAPI 一侧（Flask 旧版 `backend/services/import_service.py` 仅维持现状，不增量）。
 
@@ -75,7 +75,7 @@ def _process_chunk(
 
 ```jsonc
 {
-  "chunk_issues": [...],          // LLM 原返回的 issues（既有）
+  "chunk_issues": [...],          // LLM 原返回的 issues（既有），也可包含 L1_INCOMPLETE_RESPONSE
   "retry_count": 0,               // L1 实际重试次数（0 或 1）
   "fallback_used": false,         // L2 是否触发
   "per_question_failures": [
@@ -84,9 +84,12 @@ def _process_chunk(
      "error": "TimeoutException after 60.0s"}
   ],
   "fallback_meta": {"total_segments": 24, "succeeded": 22, "failed": 2,
-                    "elapsed_seconds": 1320.5}
+                    "elapsed_seconds": 1320.5,
+                    "reason": "l1_retry_exhausted" | "l1_incomplete_response"}
 }
 ```
+
+**L1 完整性检查**：L1 调用返回合法 JSON 后，保存任何题目前必须用 `_split_by_single_question(chunk_text)` 计算可检测题号段数。若 `len(llm_result.questions) < len(expected_segments)` 且 `expected_segments` 非空，说明 chunk 级 LLM 合法但漏题；此时不得写缓存、不得先保存不完整 L1 结果，应丢弃该 L1 结果并改走 L2 单题降级。命中既有 `LlmParseCache` 时也必须执行同一检查；若缓存响应不完整，应绕过缓存直接走 L2，避免历史坏缓存固化低识别率。最终通过 `fallback_used=true`、`fallback_meta.reason="l1_incomplete_response"` 和 `chunk_issues[0].code="L1_INCOMPLETE_RESPONSE"` 留痕。
 
 ### 4. Validation & Error Matrix
 
@@ -94,6 +97,7 @@ def _process_chunk(
 |---|---|---|
 | 首次调用成功 | 直接保存 | `parsed` |
 | 首次抛 `httpx.TimeoutException` → 重试成功 | sleep 2s 后再调 1 次 | `parsed_retry`（`retry_count=1`） |
+| L1 返回合法 JSON 但题数 < `_split_by_single_question` 可检测段数 | 保存前丢弃不完整 L1 结果，改走 L2；不写 chunk 级缓存 | `parsed_fallback` / `parsed_partial` |
 | L1 重试仍失败 → L2 切单题 | `_split_by_single_question` 切段，逐题调 LLM | `parsed_fallback` / `parsed_partial` |
 | L2 单题失败 | **不**写 `ImportParsedQuestion` 占位行；记入 `per_question_failures` | 取决于全失败/部分失败 |
 | L2 累计耗时 > 480s | 剩余段写 `stage="L2_fallback_budget_exceeded"`，break | `parsed_partial` 或 `failed` |
@@ -116,6 +120,8 @@ def _process_chunk(
 - L2 部分失败时 `per_question_failures` 含失败题号 + stage
 - 不可重试异常（如 `ValueError("AI API Key 未配置")`）首次失败立即 `failed`，无 retry
 - L2 累计耗时 > `CHUNK_TOTAL_BUDGET_SECONDS` 时剩余段标 `L2_fallback_budget_exceeded`
+- L1 合法 JSON 但返回题数少于可检测题号段时触发 L2，`fallback_meta.reason == "l1_incomplete_response"`，且不写 LlmParseCache
+- 既有 LlmParseCache 命中但响应题数少于可检测题号段时绕过缓存触发 L2，防止坏缓存固化
 - `bg_job` 传入时 heartbeat 被周期性调用
 
 ### 7. Wrong vs Correct

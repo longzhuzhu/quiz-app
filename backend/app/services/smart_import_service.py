@@ -519,6 +519,7 @@ def _process_chunk(
             auto_import=auto_import,
             seen_signatures=seen_signatures,
             imported_qnos=imported_qnos,
+            bg_job=bg_job,
         )
         return
 
@@ -530,20 +531,24 @@ def _process_chunk(
     # 3) L1 整 chunk 调用（含最多 1 次重试）
     retry_count = 0
     fallback_used = False
+    fallback_reason: str | None = None
     per_question_failures: list[dict] = []
     merged_questions: list[dict] = []
     response_text: str | None = None
+    extra_chunk_issues: list[dict] = []
 
     try:
         response_text, retry_count = _call_llm_with_l1_retry(messages, db, timeout=120.0)
     except RETRYABLE_HTTP_EXC:
         # httpx.TimeoutException / httpx.HTTPError：L1 用尽 → 进 L2
         fallback_used = True
+        fallback_reason = "l1_retry_exhausted"
         retry_count = L1_MAX_RETRIES
     except ValueError as exc:
         if _is_retryable_value_error(exc):
             # 5xx ValueError：L1 用尽 → 进 L2
             fallback_used = True
+            fallback_reason = "l1_retry_exhausted"
             retry_count = L1_MAX_RETRIES
         else:
             # 4xx / API Key 缺失：硬失败，不进 L2
@@ -558,7 +563,7 @@ def _process_chunk(
             db.commit()
             raise
 
-    # 4) L2 单题降级（仅 fallback_used 时执行）
+    # 4) 如 L1 已决定降级，先执行 L2 单题降级。
     if fallback_used:
         merged_questions, per_question_failures = _run_per_question_fallback(
             chunk_text=chunk_text,
@@ -568,19 +573,7 @@ def _process_chunk(
             chunk=chunk,
             started_at=chunk_started_at,
         )
-        # 拼装 chunk 级伪响应，便于下游 _parse_llm_response 复用解析逻辑
-        response_text = json.dumps(
-            {
-                "questions": merged_questions,
-                "chunk_issues": [],
-                "_fallback_meta": {
-                    "total_segments": len(merged_questions) + len(per_question_failures),
-                    "succeeded": len(merged_questions),
-                    "failed": len(per_question_failures),
-                },
-            },
-            ensure_ascii=False,
-        )
+        response_text = _build_fallback_response_text(merged_questions, per_question_failures)
 
     # 5) 解析 LLM 响应（L1 路径可能失败；L2 路径自构造，保证可解析）
     try:
@@ -598,6 +591,42 @@ def _process_chunk(
         chunk.llm_response_json = {"raw": (response_text or "")[:2000]}
         db.commit()
         raise
+
+    # 5.1) L1 完整性检查：合法 JSON 但题量明显少于 chunk 内可检测题号段时，
+    #      视为 chunk 级 LLM 漏题，改走 L2 单题降级。此时尚未保存任何题目，
+    #      可安全丢弃不完整 L1 结果，避免重复写入。
+    if not fallback_used:
+        expected_segments = _split_by_single_question(chunk_text)
+        expected_count = len(expected_segments)
+        actual_count = len(llm_result.questions)
+        if expected_count > 0 and actual_count < expected_count:
+            fallback_used = True
+            fallback_reason = "l1_incomplete_response"
+            extra_chunk_issues.append({
+                "code": "L1_INCOMPLETE_RESPONSE",
+                "severity": "MEDIUM",
+                "detail": (
+                    f"L1 returned {actual_count} questions, "
+                    f"but chunk contains {expected_count} detectable question segments; "
+                    "switched to L2 per-question fallback"
+                ),
+                "expected_segments": expected_count,
+                "actual_questions": actual_count,
+            })
+            logger.warning(
+                "[smart_import] chunk_no=%s L1 incomplete response: expected_segments=%d actual_questions=%d; entering L2 fallback",
+                chunk.chunk_no, expected_count, actual_count,
+            )
+            merged_questions, per_question_failures = _run_per_question_fallback(
+                chunk_text=chunk_text,
+                answer_key_text=answer_key_text,
+                db=db,
+                bg_job=bg_job,
+                chunk=chunk,
+                started_at=chunk_started_at,
+            )
+            response_text = _build_fallback_response_text(merged_questions, per_question_failures)
+            llm_result = _parse_llm_response(response_text or "")
 
     # 6) 写 llm_response_json（结构化便于排查）
     try:
@@ -636,8 +665,11 @@ def _process_chunk(
             "failed": len(per_question_failures),
             "elapsed_seconds": round(time.monotonic() - chunk_started_at, 2),
         }
-    if llm_result.chunk_issues:
-        issues_payload["chunk_issues"] = llm_result.chunk_issues
+        if fallback_reason:
+            issues_payload["fallback_meta"]["reason"] = fallback_reason
+    chunk_issues = extra_chunk_issues + (llm_result.chunk_issues or [])
+    if chunk_issues:
+        issues_payload["chunk_issues"] = chunk_issues
     chunk.issues_json = issues_payload
 
     # 9) 缓存写入（仅 L1 路径成功 / L1 重试成功；L2 路径与失败路径都不写）
@@ -676,6 +708,7 @@ def _process_chunk_cached(
     auto_import: bool,
     seen_signatures: set | None,
     imported_qnos: set[str] | None = None,
+    bg_job: BackgroundJob | None = None,
 ) -> None:
     """处理 LlmParseCache 命中的 chunk：直接复用历史响应，跳过 LLM 调用。"""
     response_text = cached.get("response_text", "")
@@ -696,13 +729,76 @@ def _process_chunk_cached(
         db.commit()
         raise
 
-    chunk.status = "parsed_cached"
-    if llm_result.chunk_issues:
+    expected_segments = _split_by_single_question(chunk_text)
+    expected_count = len(expected_segments)
+    actual_count = len(llm_result.questions)
+    if expected_count > 0 and actual_count < expected_count:
+        logger.warning(
+            "[smart_import] chunk_no=%s cached L1 response incomplete: expected_segments=%d actual_questions=%d; bypassing cache and entering L2 fallback",
+            chunk.chunk_no, expected_count, actual_count,
+        )
+        config = import_job.config_json or {}
+        answer_key_text = config.get("answer_key_text", "")
+        started_at = time.monotonic()
+        merged_questions, per_question_failures = _run_per_question_fallback(
+            chunk_text=chunk_text,
+            answer_key_text=answer_key_text,
+            db=db,
+            bg_job=bg_job,
+            chunk=chunk,
+            started_at=started_at,
+        )
+        response_text = _build_fallback_response_text(merged_questions, per_question_failures)
+        llm_result = _parse_llm_response(response_text)
+        try:
+            chunk.llm_response_json = json.loads(response_text)
+        except json.JSONDecodeError:
+            chunk.llm_response_json = {"raw": response_text[:2000]}
+
+        if not merged_questions:
+            chunk.status = "failed"
+            import_job.failed_chunks = (import_job.failed_chunks or 0) + 1
+        elif per_question_failures:
+            chunk.status = "parsed_partial"
+            import_job.failed_chunks = (import_job.failed_chunks or 0) + 1
+        else:
+            chunk.status = "parsed_fallback"
+
         chunk.issues_json = {
             **(chunk.issues_json or {}),
-            "chunk_issues": llm_result.chunk_issues,
+            "retry_count": 0,
+            "fallback_used": True,
+            "per_question_failures": per_question_failures,
+            "fallback_meta": {
+                "total_segments": len(merged_questions) + len(per_question_failures),
+                "succeeded": len(merged_questions),
+                "failed": len(per_question_failures),
+                "elapsed_seconds": round(time.monotonic() - started_at, 2),
+                "reason": "l1_incomplete_response",
+            },
+            "chunk_issues": [{
+                "code": "L1_INCOMPLETE_RESPONSE",
+                "severity": "MEDIUM",
+                "detail": (
+                    f"Cached L1 response returned {actual_count} questions, "
+                    f"but chunk contains {expected_count} detectable question segments; "
+                    "switched to L2 per-question fallback"
+                ),
+                "expected_segments": expected_count,
+                "actual_questions": actual_count,
+            }] + (llm_result.chunk_issues or []),
         }
-    db.commit()
+        db.commit()
+        if chunk.status == "failed":
+            return
+    else:
+        chunk.status = "parsed_cached"
+        if llm_result.chunk_issues:
+            chunk.issues_json = {
+                **(chunk.issues_json or {}),
+                "chunk_issues": llm_result.chunk_issues,
+            }
+        db.commit()
 
     for parsed_q in llm_result.questions:
         _save_parsed_question(
@@ -715,6 +811,25 @@ def _process_chunk_cached(
             seen_signatures=seen_signatures,
             imported_qnos=imported_qnos,
         )
+
+
+def _build_fallback_response_text(
+    merged_questions: list[dict],
+    per_question_failures: list[dict],
+) -> str:
+    """把 L2 单题降级结果拼成 chunk 级伪响应，复用下游 Pydantic 解析逻辑。"""
+    return json.dumps(
+        {
+            "questions": merged_questions,
+            "chunk_issues": [],
+            "_fallback_meta": {
+                "total_segments": len(merged_questions) + len(per_question_failures),
+                "succeeded": len(merged_questions),
+                "failed": len(per_question_failures),
+            },
+        },
+        ensure_ascii=False,
+    )
 
 
 def _call_llm_with_l1_retry(
