@@ -10,6 +10,7 @@ from app.models.import_job import ImportJob
 from app.models.import_parsed_question import ImportParsedQuestion
 from app.models.user import User
 from app.services.smart_import_service import (
+    serialize_auto_handled_item,
     serialize_chunk,
     serialize_import_job,
     serialize_parsed_question,
@@ -34,7 +35,7 @@ def list_import_jobs(
         query = query.filter_by(status=status)
 
     jobs = query.all()
-    return {"jobs": [serialize_import_job(j) for j in jobs]}
+    return {"jobs": [serialize_import_job(j, db) for j in jobs]}
 
 
 @router.get("/{job_id}")
@@ -47,7 +48,7 @@ def get_import_job(
     import_job = db.get(ImportJob, job_id)
     if not import_job:
         raise HTTPException(status_code=404, detail="导入任务不存在")
-    return serialize_import_job(import_job)
+    return serialize_import_job(import_job, db)
 
 
 @router.get("/{job_id}/chunks")
@@ -92,3 +93,27 @@ def list_parsed_questions(
 
     questions = query.all()
     return {"questions": [serialize_parsed_question(q) for q in questions]}
+
+
+@router.get("/{job_id}/auto-handled")
+def list_auto_handled_items(
+    job_id: int,
+    _admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """获取导入任务的自动处理记录"""
+    import_job = db.get(ImportJob, job_id)
+    if not import_job:
+        raise HTTPException(status_code=404, detail="导入任务不存在")
+
+    items = (
+        db.query(ImportParsedQuestion)
+        .filter(ImportParsedQuestion.import_job_id == job_id)
+        .filter(ImportParsedQuestion.review_status.in_(["auto_accepted", "auto_skipped"]))
+        .order_by(ImportParsedQuestion.id.asc())
+        .all()
+    )
+    return {
+        "items": [serialize_auto_handled_item(item) for item in items],
+        "total": len(items),
+    }

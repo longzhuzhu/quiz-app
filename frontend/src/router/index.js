@@ -17,6 +17,7 @@ const routes = [
   { path: '/import-jobs', name: 'ImportJobs', component: () => import('../views/ImportJobsView.vue'), meta: { auth: true, admin: true } },
   { path: '/import-jobs/:jobId', name: 'ImportJobDetail', component: () => import('../views/ImportJobDetailView.vue'), meta: { auth: true, admin: true } },
   { path: '/import-jobs/:jobId/review', name: 'ImportReview', component: () => import('../views/ImportReviewView.vue'), meta: { auth: true, admin: true } },
+  { path: '/import-jobs/:jobId/auto-handled', name: 'ImportAutoHandled', component: () => import('../views/ImportAutoHandledView.vue'), meta: { auth: true, admin: true } },
 ]
 
 const router = createRouter({

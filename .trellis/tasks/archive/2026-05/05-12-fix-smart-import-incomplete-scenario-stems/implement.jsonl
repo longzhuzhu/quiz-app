@@ -1,0 +1,6 @@
+{"file":".trellis/tasks/05-12-fix-smart-import-incomplete-scenario-stems/prd.md","reason":"Confirmed requirements, acceptance criteria, and product decisions for complete scenario stems, PDF leading text repair, and historical backfill."}
+{"file":".trellis/tasks/05-12-fix-smart-import-incomplete-scenario-stems/research/smart-import-scenario-stems.md","reason":"Codebase research identifying smart import flow, affected functions, script placement, test patterns, risks, and suggested tests."}
+{"file":".trellis/spec/backend/import-pipeline.md","reason":"Existing smart import contracts for chunk processing, L1/L2 fallback, reparse hygiene, reconciliation, and expected_qnos behavior."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Database/session and JSONB-on-SQLite test guidance relevant to historical backfill and ORM-based backend tests."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Backend quality expectations for safe, maintainable implementation and regression-focused testing."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Shared guidance to keep canonical content composition centralized and avoid duplicated scenario merge logic."}

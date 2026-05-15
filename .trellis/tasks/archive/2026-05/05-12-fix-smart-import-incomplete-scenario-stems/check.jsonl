@@ -1,0 +1,6 @@
+{"file":".trellis/tasks/05-12-fix-smart-import-incomplete-scenario-stems/prd.md","reason":"Acceptance criteria and out-of-scope boundaries to verify before marking the task complete."}
+{"file":".trellis/tasks/05-12-fix-smart-import-incomplete-scenario-stems/research/smart-import-scenario-stems.md","reason":"Research-backed checklist of affected paths, risks, and suggested tests for quality review."}
+{"file":".trellis/spec/backend/import-pipeline.md","reason":"Verify changes preserve import pipeline, retry/fallback, reparse hygiene, and reconciliation contracts."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Verify DB script and ORM tests follow project database/session conventions."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verify implementation quality, regression coverage, and maintainability against backend standards."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Verify scenario/content composition is centralized and not duplicated across import, accept, reparse, and backfill paths."}
