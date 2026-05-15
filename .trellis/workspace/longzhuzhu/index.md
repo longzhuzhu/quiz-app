@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 13
+- **Total Sessions**: 14
 - **Last Active**: 2026-05-15
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~457 | Active |
+| `journal-1.md` | ~491 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 14 | 2026-05-15 | Allow duplicate smart imports with question dedupe | `571ab5a`, `96ec6e7` | `codex/vocab-progress-settings-deploy` |
 | 13 | 2026-05-15 | Fix IAPP Import Recognition | `322b3a1` | `codex/vocab-progress-settings-deploy` |
 | 12 | 2026-05-15 | Auto Handle Import Questions | `f2ecec5` | `codex/vocab-progress-settings-deploy` |
 | 11 | 2026-05-12 | Fix smart import scenario stems | `fa2620c` | `codex/vocab-progress-settings-deploy` |

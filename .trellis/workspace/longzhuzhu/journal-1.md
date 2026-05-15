@@ -455,3 +455,37 @@ Investigated low recognition for iapp-certified-information-privacy-technologist
 ### Next Steps
 
 - None - task complete
+
+
+## Session 14: Allow duplicate smart imports with question dedupe
+
+**Date**: 2026-05-15
+**Task**: Allow duplicate smart imports with question dedupe
+**Branch**: `codex/vocab-progress-settings-deploy`
+
+### Summary
+
+Allowed repeated uploads of the same smart-import file without file-hash blocking, preserved per-question duplicate skipped records, fixed answer-key parsing so inline Answer blocks no longer truncate later questions, updated import status summary for all-duplicate reruns, and redeployed/verified web and worker services.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `571ab5a` | (see git log) |
+| `96ec6e7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
