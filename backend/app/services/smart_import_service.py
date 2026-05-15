@@ -88,13 +88,15 @@ QUESTION_SPLIT_PATTERNS = [
 
 # 答案键检测模式
 ANSWER_KEY_PATTERN = re.compile(
-    r'(?:Answer\s*Key|Answers?\s*:|ANSWER\s*KEY|正确答案)[:\s]*\n([\s\S]+?)$',
+    # 仅识别成段答案键标题；不要把题目解析里的单题 ``Answer:`` 当成答案键，
+    # 否则会从第一道题答案处截断后续所有题目。
+    r'(?:^|\n)\s*(?:Answer\s*Key|Answers\s*:|ANSWER\s*KEY|正确答案)[:\s]*\n([\s\S]+?)$',
     re.IGNORECASE,
 )
 
 # 答案键条目解析
 ANSWER_ENTRY_PATTERN = re.compile(
-    r'(\d{1,4})[.\s)]+\s*([A-Ea-e](?:\s*[,，]\s*[A-Ea-e])*|True|False)',
+    r'(\d{1,4})[.\s):：-]+\s*([A-Ea-e](?:\s*[,，]\s*[A-Ea-e])*|True|False)',
     re.IGNORECASE,
 )
 
@@ -393,12 +395,14 @@ def run_smart_import(db: Session, background_job: BackgroundJob) -> None:
             if norm is not None:
                 expected_qnos.add(norm)
 
-    # 将 answer_key_text 与 expected_qnos 一并持久化到 config_json
-    config = import_job.config_json or {}
+    # 将 answer_key_text 与 expected_qnos 一并持久化到 config_json。
+    # 使用新 dict 重新赋值，避免 JSONB 就地变更导致脏检测丢失。
+    config = {
+        **(import_job.config_json or {}),
+        "expected_qnos": sorted(expected_qnos, key=_qno_sort_key),
+    }
     if answer_key_text:
-        config["answer_key_text"] = answer_key_text
-    config["expected_qnos"] = sorted(expected_qnos, key=_qno_sort_key)
-    # 重新赋值触发 SQLAlchemy JSONB dirty 检测（与 PR-3 等位姿势一致）
+        config = {**config, "answer_key_text": answer_key_text}
     import_job.config_json = config
 
     db.commit()
@@ -2177,6 +2181,14 @@ def _auto_handled_counts(db: Session, import_job_id: int) -> dict:
     }
 
 
+def _duplicate_skipped_count(db: Session, import_job_id: int) -> int:
+    return db.query(func.count(ImportParsedQuestion.id)).filter_by(
+        import_job_id=import_job_id,
+        review_status="duplicate",
+        import_status="skipped",
+    ).scalar() or 0
+
+
 def _finalize_import(db: Session, import_job: ImportJob) -> None:
     """导入完成后的汇总处理"""
     import_job = db.get(ImportJob, import_job.id)
@@ -2190,6 +2202,7 @@ def _finalize_import(db: Session, import_job: ImportJob) -> None:
     total_failed = import_job.failed_chunks or 0
     auto_counts = _auto_handled_counts(db, import_job.id)
     total_auto_skipped = auto_counts["auto_skipped"]
+    total_duplicate_skipped = _duplicate_skipped_count(db, import_job.id)
 
     # 生成摘要
     summary = {
@@ -2198,22 +2211,28 @@ def _finalize_import(db: Session, import_job: ImportJob) -> None:
         "total_review": total_review,
         "total_failed": total_failed,
         **auto_counts,
+        "duplicate_skipped": total_duplicate_skipped,
         "auto_import_rate": round(total_imported / total_parsed, 4) if total_parsed > 0 else 0,
     }
     import_job.summary_json = summary
 
-    # 确定最终状态
-    if total_review > 0 and total_imported > 0:
+    # 确定最终状态。失败 chunk 优先标记为 partial_imported，避免被待复核、
+    # auto_skipped 或 duplicate/skipped 的未入库语义覆盖。
+    if total_failed > 0:
+        import_job.status = "partial_imported"
+    elif total_review > 0 and total_imported > 0:
         import_job.status = "partial_imported"
     elif total_review > 0:
         import_job.status = "review_required"
-    elif total_failed > 0:
-        import_job.status = "partial_imported"
     elif total_imported > 0 and total_auto_skipped > 0:
         import_job.status = "partial_imported"
     elif total_imported > 0:
         import_job.status = "imported"
-    elif total_auto_skipped > 0 and total_parsed > 0:
+    elif total_parsed > 0 and (total_auto_skipped > 0 or total_duplicate_skipped > 0):
+        import_job.status = "unimported"
+    elif total_parsed > 0:
+        # 兜底：已有解析记录但没有新增入库/待复核/失败时，不应显示为"已入库"。
+        # 典型场景是重复文件重导入，全部解析题都被 duplicate/skipped。
         import_job.status = "unimported"
     else:
         import_job.status = "imported"

@@ -713,8 +713,10 @@ else:
 - `file_hash` 只能用于追溯同文件历史导入，不能作为同题库导入的硬阻断。
 - 命中同 `bank_id + file_hash` 的历史 `ImportJob` 时，仍必须创建新的 `ImportJob` 与 `BackgroundJob`。
 - 新 `ImportJob.config_json` 可记录 `duplicate_file_of`、`duplicate_file_status` 等溯源字段；使用 dict 重新赋值或创建完整 dict，避免 JSONB dirty 检测问题。
-- 重复题目去重边界在 `_save_parsed_question()` / `_write_question_to_bank()`：通过题目完整题干、选项、答案、题型组成的内容签名判断重复；命中后保留 `ImportParsedQuestion`，标记 `review_status="duplicate"`、`import_status="skipped"`，不写新的 `Question`。
+- 重复题目去重边界在 `_save_parsed_question()` / `_write_question_to_bank()`：通过题目完整题干、选项、答案、题型组成的内容签名判断重复；命中后必须**逐题**保留 `ImportParsedQuestion`，标记 `review_status="duplicate"`、`import_status="skipped"`，不写新的 `Question`。不得因为整文件重复或整 chunk 缓存命中而只保留第一道重复题。
 - 题目签名必须归一化选项标签来源（`label` / `key`），避免 LLM 解析结构与正式表存储结构字段名不同导致同题漏判。
+- 全部解析题都为 `duplicate/skipped`、且无新增入库/待复核/失败 chunk 时，`_finalize_import()` 不得把任务标为 `imported`；应使用 `unimported`（或等价的未新增入库语义）并在摘要中暴露 duplicate skipped 数量，避免用户误以为本次导入新增成功。
+- PDF 正文中的单题答案块（如每题后跟 `Answer:` / `Explanation:`）不得被当作末尾答案键剥离；只有成段的 `Answer Key` / `Answers:` 等答案键标题才可从正文移除。否则重复旧文件时会在第一道题答案处截断正文，只生成 1 个 chunk / 1 条 parsed record。
 - `force=true` 可保留为兼容参数，但同文件重导入不再依赖它。
 
 ### 3. Validation & Error Matrix
@@ -722,14 +724,18 @@ else:
 | 条件 | 行为 |
 |---|---|
 | 同一题库、相同 `file_hash` 再次导入 | 创建新导入任务，不返回 400/409 |
-| 同一题库、重复文件中的相同题目 | 写 duplicate/skipped 解析记录，不新增正式题 |
+| 同一题库、重复文件中的相同题目 | 每道重复题都写 duplicate/skipped 解析记录，不新增正式题 |
+| 重复文件全部题目均 duplicate/skipped | 任务终态为 `unimported`（无新增入库），摘要包含 `duplicate_skipped` |
+| PDF 每题内联 `Answer:` / `Explanation:` | 不剥离正文，后续题目仍参与 chunk 切分与 parsed record 保存 |
 | 不同题库、相同 `file_hash` | 正常创建新任务；题目去重仅在目标题库内生效 |
 | `force=true` | 保持兼容，不改变题目级去重语义 |
 
 ### 4. Tests Required
 
 - 同 bank 相同 `file_hash` 第二次调用 `create_smart_import_job()` 不返回 error，并记录 duplicate file 溯源字段。
-- 重复文件第二次处理同题内容时，`questions` 数量不增加，`import_parsed_questions` 新增 duplicate/skipped 记录且 `details[0].reason == "content"`。
+- 重复文件第二次处理同题内容时，`questions` 数量不增加，`import_parsed_questions` 按题目数量逐条新增 duplicate/skipped 记录且 `details[0].reason == "content"`。
+- 全部 duplicate/skipped 时 `_finalize_import()` 输出 `status="unimported"` 且 `summary_json.duplicate_skipped` 为重复题数。
+- 含每题内联 `Answer:` 的 PDF 文本不会在第一处答案截断，`_extract_answer_key()` 不应把单题答案块识别为末尾答案键。
 
 ---
 

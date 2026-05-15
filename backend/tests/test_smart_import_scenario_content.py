@@ -155,6 +155,225 @@ def test_duplicate_file_question_content_is_skipped_without_new_question(db_sess
     assert job.imported_questions == 0
 
 
+def test_inline_answer_blocks_do_not_strip_following_questions():
+    text = """
+Question 1
+Which identifier should be used?
+Options:
+A- Driver license
+B- Email
+Answer:
+A
+Explanation:
+Option A is strongest. References mention 4.1 controls, section 1.2, and article 7.
+Question 2
+Which control helps most?
+Options:
+A- Logging
+B- None
+Answer:
+A
+Explanation:
+Logging helps.
+"""
+
+    answer_key = svc._extract_answer_key(svc._normalize_text(text))
+    segments = svc._split_by_question_markers(svc._normalize_text(text))
+
+    assert answer_key == {}
+    assert len(svc._split_by_single_question(segments[0]["text"])) == 2
+    assert "Question 2" in segments[0]["text"]
+
+
+def test_answer_key_detection_supports_common_terminal_formats():
+    answer_key_text = """
+Question 1
+Which identifier should be used?
+A. Driver license
+B. Email
+Question 2
+Which control helps most?
+A. Logging
+B. None
+Question 3
+Which notice is required?
+A. Privacy notice
+B. No notice
+
+Answer Key:
+1: A
+2. B
+3) True
+"""
+    answers_colon_text = """
+Question 1
+Which identifier should be used?
+A. Driver license
+B. Email
+
+Answers:
+1 A
+2: B
+3. C
+"""
+
+    assert svc._extract_answer_key(svc._normalize_text(answer_key_text)) == {1: "A", 2: "B", 3: "TRUE"}
+    assert svc._extract_answer_key(svc._normalize_text(answers_colon_text)) == {1: "A", 2: "B", 3: "C"}
+
+
+def test_duplicate_cached_chunk_preserves_each_duplicate_parsed_record(db_session, bank_and_job, monkeypatch):
+    bank, job, chunk = bank_and_job
+    chunk.chunk_text = """
+Question #1
+Which identifier should be used?
+A. Driver license
+B. Email
+Question #2
+Which control helps most?
+A. Logging
+B. None
+Question #3
+Which notice is required?
+A. Privacy notice
+B. No notice
+"""
+    existing_questions = [
+        Question(
+            bank_id=bank.id,
+            question_type="single",
+            content=content,
+            options=[{"key": "A", "text": option_a}, {"key": "B", "text": option_b}],
+            correct_answer="A",
+            order_index=index,
+        )
+        for index, (content, option_a, option_b) in enumerate([
+            ("Which identifier should be used?", "Driver license", "Email"),
+            ("Which control helps most?", "Logging", "None"),
+            ("Which notice is required?", "Privacy notice", "No notice"),
+        ])
+    ]
+    db_session.add_all(existing_questions)
+    db_session.commit()
+    seen_signatures = {
+        svc._question_signature(q.question_type, q.content, q.options, ["A"])
+        for q in existing_questions
+    }
+    cached_questions = [
+        {
+            "source_question_no": str(index),
+            "question_type": "single",
+            "scenario": None,
+            "content": content,
+            "options": [
+                {"label": "A", "text": option_a},
+                {"label": "B", "text": option_b},
+            ],
+            "correct_answer": ["A"],
+            "explanation": "",
+            "references": [],
+            "confidence": 0.95,
+            "issues": [],
+        }
+        for index, (content, option_a, option_b) in enumerate([
+            ("Which identifier should be used?", "Driver license", "Email"),
+            ("Which control helps most?", "Logging", "None"),
+            ("Which notice is required?", "Privacy notice", "No notice"),
+        ], start=1)
+    ]
+    monkeypatch.setattr(svc, "_write_reconciliation", lambda db, import_job: None)
+
+    svc._process_chunk_cached(
+        db=db_session,
+        chunk=chunk,
+        cached={"response_text": json.dumps({"questions": cached_questions, "chunk_issues": []})},
+        import_job=job,
+        chunk_text=chunk.chunk_text,
+        auto_import=True,
+        seen_signatures=seen_signatures,
+    )
+    svc._finalize_import(db_session, job)
+
+    parsed_rows = db_session.query(ImportParsedQuestion).order_by(ImportParsedQuestion.id).all()
+    assert len(parsed_rows) == 3
+    assert [pq.source_question_no for pq in parsed_rows] == ["1", "2", "3"]
+    assert {pq.review_status for pq in parsed_rows} == {"duplicate"}
+    assert {pq.import_status for pq in parsed_rows} == {"skipped"}
+    assert db_session.query(Question).filter_by(bank_id=bank.id).count() == 3
+    assert job.imported_questions == 0
+    assert job.status == "unimported"
+    assert job.summary_json["duplicate_skipped"] == 3
+
+
+def test_duplicate_non_cached_chunk_preserves_each_duplicate_parsed_record(db_session, bank_and_job, monkeypatch):
+    bank, job, chunk = bank_and_job
+    question_rows = [
+        ("1", "Which identifier should be used?", "Driver license", "Email"),
+        ("2", "Which control helps most?", "Logging", "None"),
+        ("3", "Which notice is required?", "Privacy notice", "No notice"),
+    ]
+    chunk.chunk_text = "\n".join(
+        f"Question #{qno}\n{content}\nA. {option_a}\nB. {option_b}"
+        for qno, content, option_a, option_b in question_rows
+    )
+    existing_questions = [
+        Question(
+            bank_id=bank.id,
+            question_type="single",
+            content=content,
+            options=[{"key": "A", "text": option_a}, {"key": "B", "text": option_b}],
+            correct_answer="A",
+            order_index=index,
+        )
+        for index, (_qno, content, option_a, option_b) in enumerate(question_rows)
+    ]
+    db_session.add_all(existing_questions)
+    db_session.commit()
+    seen_signatures = {
+        svc._question_signature(q.question_type, q.content, q.options, ["A"])
+        for q in existing_questions
+    }
+    llm_questions = [
+        {
+            "source_question_no": qno,
+            "question_type": "single",
+            "scenario": None,
+            "content": content,
+            "options": [{"label": "A", "text": option_a}, {"label": "B", "text": option_b}],
+            "correct_answer": ["A"],
+            "explanation": "",
+            "references": [],
+            "confidence": 0.95,
+            "issues": [],
+        }
+        for qno, content, option_a, option_b in question_rows
+    ]
+    monkeypatch.setattr(
+        svc,
+        "call_ai_api",
+        lambda messages, db, scene="default", timeout=60.0: json.dumps({"questions": llm_questions, "chunk_issues": []}),
+    )
+    monkeypatch.setattr(svc, "_write_reconciliation", lambda db, import_job: None)
+
+    svc._process_chunk(
+        db=db_session,
+        chunk=chunk,
+        import_job=job,
+        auto_import=True,
+        use_llm_cache=False,
+        seen_signatures=seen_signatures,
+    )
+    svc._finalize_import(db_session, job)
+
+    parsed_rows = db_session.query(ImportParsedQuestion).order_by(ImportParsedQuestion.id).all()
+    assert len(parsed_rows) == 3
+    assert [pq.source_question_no for pq in parsed_rows] == ["1", "2", "3"]
+    assert {pq.review_status for pq in parsed_rows} == {"duplicate"}
+    assert {pq.import_status for pq in parsed_rows} == {"skipped"}
+    assert db_session.query(Question).filter_by(bank_id=bank.id).count() == 3
+    assert job.status == "unimported"
+    assert job.summary_json["duplicate_skipped"] == 3
+
+
 def test_question_signature_normalizes_option_key_label_and_label_case():
     from_question_table = svc._question_signature(
         "single",
@@ -481,6 +700,32 @@ def test_finalize_import_marks_all_auto_skipped_as_unimported(db_session, bank_a
     assert job.status == "unimported"
     assert job.summary_json["auto_skipped"] == 1
     assert job.summary_json["auto_handled"] == 1
+
+
+def test_finalize_import_failed_chunks_take_priority_over_unimported(db_session, bank_and_job, monkeypatch):
+    _bank, job, chunk = bank_and_job
+    job.failed_chunks = 1
+    duplicate = ImportParsedQuestion(
+        import_job_id=job.id,
+        chunk_id=chunk.id,
+        source_question_no="1",
+        question_type="single",
+        content="Which identifier should be used?",
+        options_json=[{"key": "A", "text": "Driver license"}, {"key": "B", "text": "Email"}],
+        correct_answer=["A"],
+        review_status="duplicate",
+        import_status="skipped",
+        issues_json={"details": [{"code": "DUPLICATE", "reason": "content"}]},
+    )
+    db_session.add(duplicate)
+    job.parsed_questions = 1
+    monkeypatch.setattr(svc, "_write_reconciliation", lambda db, import_job: None)
+
+    svc._finalize_import(db_session, job)
+
+    db_session.refresh(job)
+    assert job.status == "partial_imported"
+    assert job.summary_json["duplicate_skipped"] == 1
 
 
 def test_history_backfill_dry_run_apply_and_safety_conditions(db_session, bank_and_job):
