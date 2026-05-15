@@ -422,3 +422,36 @@ Implemented automatic smart-import handling: structurally usable parsed question
 ### Next Steps
 
 - None - task complete
+
+
+## Session 13: Fix IAPP Import Recognition
+
+**Date**: 2026-05-15
+**Task**: Fix IAPP Import Recognition
+**Branch**: `codex/vocab-progress-settings-deploy`
+
+### Summary
+
+Investigated low recognition for iapp-certified-information-privacy-technologist imports, identified valid-but-incomplete L1 LLM responses and bad cache hits as the root cause, added completeness-triggered L2 fallback with cache bypass, covered the regression with backend tests, updated the smart import pipeline spec, rebuilt production frontend, restarted quiz-app services, and verified the deployed frontend loads.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `322b3a1` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

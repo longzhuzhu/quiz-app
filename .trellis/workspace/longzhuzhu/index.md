@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 12
+- **Total Sessions**: 13
 - **Last Active**: 2026-05-15
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~424 | Active |
+| `journal-1.md` | ~457 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 13 | 2026-05-15 | Fix IAPP Import Recognition | `322b3a1` | `codex/vocab-progress-settings-deploy` |
 | 12 | 2026-05-15 | Auto Handle Import Questions | `f2ecec5` | `codex/vocab-progress-settings-deploy` |
 | 11 | 2026-05-12 | Fix smart import scenario stems | `fa2620c` | `codex/vocab-progress-settings-deploy` |
 | 10 | 2026-05-08 | Replace Flask runtime with FastAPI | `9211785`, `8aa2632`, `284d53e`, `6687e95` | `codex/vocab-progress-settings-deploy` |
