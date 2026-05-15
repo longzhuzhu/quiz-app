@@ -49,7 +49,6 @@ logger = logging.getLogger(__name__)
 PROMPT_VERSION = "v2-scenario-content"
 CHUNK_MAX_CHARS = 12000
 CHUNK_MIN_CHARS = 500
-AUTO_ACCEPT_CONFIDENCE = Decimal("0.90")
 
 # ─── PR-2: 重试 / 降级常量 ─────────────────────
 # L1 整 chunk 重试：首次调用 + L1_MAX_RETRIES 次重试 = 共 (L1_MAX_RETRIES + 1) 次。
@@ -238,7 +237,7 @@ def create_smart_import_job(
         dup_job = (
             db.query(ImportJob)
             .filter_by(bank_id=bank_id, file_hash=file_hash)
-            .filter(ImportJob.status.in_(["completed", "partial_imported", "parsing", "extracting", "chunking", "validating", "review_required"]))
+            .filter(ImportJob.status.in_(["completed", "partial_imported", "parsing", "extracting", "chunking", "validating", "review_required", "unimported"]))
             .first()
         )
         if dup_job:
@@ -924,6 +923,37 @@ def _persist_duplicate_parsed_question(
     db.commit()
 
 
+def _unusable_question_issues(parsed_q: ParsedQuestion) -> list[dict]:
+    issues = []
+    full_content = build_full_question_content(parsed_q.scenario, parsed_q.content)
+    if not full_content or len(full_content.strip()) < 10:
+        issues.append({"code": "STEM_MISSING", "severity": "HIGH", "detail": "缺少题干或题干过短"})
+
+    if len(parsed_q.options or []) < 2:
+        issues.append({"code": "OPTIONS_MISSING", "severity": "HIGH", "detail": "选项不足"})
+
+    if not parsed_q.correct_answer:
+        issues.append({"code": "ANSWER_MISSING", "severity": "HIGH", "detail": "缺少正确答案"})
+    else:
+        option_labels = {opt.label.upper() for opt in parsed_q.options or []}
+        if any(ans.upper() not in option_labels for ans in parsed_q.correct_answer):
+            issues.append({"code": "ANSWER_NOT_IN_OPTIONS", "severity": "HIGH", "detail": "正确答案不在选项中"})
+
+    return issues
+
+
+def _merge_issue_details(quality_issues: list[dict], usability_issues: list[dict]) -> list[dict]:
+    merged = []
+    seen = set()
+    for issue in usability_issues + quality_issues:
+        code = issue.get("code")
+        if code in seen:
+            continue
+        seen.add(code)
+        merged.append(issue)
+    return merged
+
+
 def _save_parsed_question(
     db: Session,
     parsed_q: ParsedQuestion,
@@ -942,10 +972,9 @@ def _save_parsed_question(
            不更新 ``seen_signatures`` / ``imported_qnos``。
         2. **DUPLICATE_CONTENT**（既有内容签名）：
            ``seen_signatures`` 命中 → 走 DUPLICATE 路径；不更新 ``seen_signatures``。
-        3. 否则：执行质量评分 → ``_auto_accept_check`` → 自动入库 / 创建 ReviewItem。
+        3. 否则：执行质量评分和可用性判断 → 自动入库 / 自动跳过 / 创建 ReviewItem。
 
-    初次导入路径（``run_smart_import``）传 ``imported_qnos=None``，DUPLICATE_QNO 永不触发，
-    happy path 等价于 PR-3 之前的行为。
+    初次导入路径（``run_smart_import``）传 ``imported_qnos=None``，DUPLICATE_QNO 永不触发。
     """
     # PR-3：题号去重（reparse 路径）—— 优先于内容签名
     if imported_qnos is not None:
@@ -975,7 +1004,9 @@ def _save_parsed_question(
         seen_signatures.add(sig)
 
     # 质量检查
-    final_confidence, issues = _quality_check(parsed_q, chunk_text)
+    final_confidence, quality_issues = _quality_check(parsed_q, chunk_text)
+    unusable_issues = _unusable_question_issues(parsed_q)
+    issues = _merge_issue_details(quality_issues, unusable_issues)
 
     # 转换 options 格式：ParsedOption(label, text) -> dict(key, text)
     options_for_storage = [{"key": opt.label, "text": opt.text} for opt in parsed_q.options]
@@ -1004,22 +1035,19 @@ def _save_parsed_question(
     db.add(parsed_question)
     db.flush()
 
-    # 判断是否自动入库
-    should_auto_import = (
-        auto_import
-        and _auto_accept_check(final_confidence, issues)
-        and correct_answer_str  # 必须有答案
-    )
-
-    if should_auto_import:
-        # 写入 Question 表
+    if unusable_issues:
+        parsed_question.import_status = "skipped"
+        parsed_question.review_status = "auto_skipped"
+    elif auto_import:
         question = _write_question_to_bank(db, parsed_question, import_job.bank_id)
-        parsed_question.import_status = "imported"
-        parsed_question.review_status = "auto_accepted"
-        parsed_question.imported_question_id = question.id
-        import_job.imported_questions = (import_job.imported_questions or 0) + 1
+        if parsed_question.import_status == "skipped":
+            parsed_question.imported_question_id = question.id if question else None
+        else:
+            parsed_question.import_status = "imported"
+            parsed_question.review_status = "auto_accepted"
+            parsed_question.imported_question_id = question.id if question else None
+            import_job.imported_questions = (import_job.imported_questions or 0) + 1
     else:
-        # 创建 ReviewItem
         severity = "HIGH" if any(i.get("severity") == "HIGH" for i in issues) else "MEDIUM"
         review_type = issues[0]["code"] if issues else "LOW_CONFIDENCE"
         review_item = ImportReviewItem(
@@ -1836,22 +1864,6 @@ def _quality_check(
     return Decimal(str(final_confidence)), issues
 
 
-def _auto_accept_check(final_confidence: Decimal, issues: list[dict]) -> bool:
-    """判断是否满足自动入库条件：
-    - final_confidence >= 0.90
-    - 无 HIGH severity issue
-    - 答案证据存在（无 ANSWER_MISSING 或 ANSWER_NOT_IN_OPTIONS）
-    """
-    if final_confidence < AUTO_ACCEPT_CONFIDENCE:
-        return False
-    for issue in issues:
-        if issue.get("severity") == "HIGH":
-            return False
-        if issue.get("code") in ("ANSWER_MISSING", "ANSWER_NOT_IN_OPTIONS", "ANSWER_CONFLICT"):
-            return False
-    return True
-
-
 # ─── 缓存管理 ──────────────────────────────────
 
 
@@ -1905,7 +1917,7 @@ def _store_llm_cache(
 IMPORT_JOB_STATUSES = {
     "pending", "extracting", "chunking", "parsing",
     "validating", "importing", "imported",
-    "review_required", "partial_imported", "failed", "cancelled",
+    "review_required", "unimported", "partial_imported", "failed", "cancelled",
 }
 
 
@@ -2007,6 +2019,24 @@ def _write_reconciliation(db: Session, import_job: ImportJob) -> None:
     db.commit()
 
 
+def _auto_handled_counts(db: Session, import_job_id: int) -> dict:
+    auto_imported = db.query(func.count(ImportParsedQuestion.id)).filter_by(
+        import_job_id=import_job_id,
+        review_status="auto_accepted",
+        import_status="imported",
+    ).scalar() or 0
+    auto_skipped = db.query(func.count(ImportParsedQuestion.id)).filter_by(
+        import_job_id=import_job_id,
+        review_status="auto_skipped",
+        import_status="skipped",
+    ).scalar() or 0
+    return {
+        "auto_imported": auto_imported,
+        "auto_skipped": auto_skipped,
+        "auto_handled": auto_imported + auto_skipped,
+    }
+
+
 def _finalize_import(db: Session, import_job: ImportJob) -> None:
     """导入完成后的汇总处理"""
     import_job = db.get(ImportJob, import_job.id)
@@ -2018,6 +2048,8 @@ def _finalize_import(db: Session, import_job: ImportJob) -> None:
     total_imported = import_job.imported_questions or 0
     total_review = import_job.review_questions or 0
     total_failed = import_job.failed_chunks or 0
+    auto_counts = _auto_handled_counts(db, import_job.id)
+    total_auto_skipped = auto_counts["auto_skipped"]
 
     # 生成摘要
     summary = {
@@ -2025,6 +2057,7 @@ def _finalize_import(db: Session, import_job: ImportJob) -> None:
         "total_imported": total_imported,
         "total_review": total_review,
         "total_failed": total_failed,
+        **auto_counts,
         "auto_import_rate": round(total_imported / total_parsed, 4) if total_parsed > 0 else 0,
     }
     import_job.summary_json = summary
@@ -2036,6 +2069,12 @@ def _finalize_import(db: Session, import_job: ImportJob) -> None:
         import_job.status = "review_required"
     elif total_failed > 0:
         import_job.status = "partial_imported"
+    elif total_imported > 0 and total_auto_skipped > 0:
+        import_job.status = "partial_imported"
+    elif total_imported > 0:
+        import_job.status = "imported"
+    elif total_auto_skipped > 0 and total_parsed > 0:
+        import_job.status = "unimported"
     else:
         import_job.status = "imported"
 
@@ -2112,7 +2151,7 @@ def _update_bank_stats(db: Session, bank_id: int) -> None:
 # ─── 序列化辅助 ──────────────────────────────────
 
 
-def serialize_import_job(import_job: ImportJob) -> dict:
+def serialize_import_job(import_job: ImportJob, db: Session | None = None) -> dict:
     """将 ImportJob 序列化为字典"""
     bg_job = None
     if import_job.background_job_id:
@@ -2125,6 +2164,13 @@ def serialize_import_job(import_job: ImportJob) -> dict:
                 "progress_done": bg_job_record.progress_done,
                 "status_message": bg_job_record.status_message,
             }
+
+    summary = import_job.summary_json or {}
+    auto_counts = _auto_handled_counts(db, import_job.id) if db else {
+        "auto_imported": summary.get("auto_imported", 0),
+        "auto_skipped": summary.get("auto_skipped", 0),
+        "auto_handled": summary.get("auto_handled", 0),
+    }
 
     return {
         "id": import_job.id,
@@ -2139,6 +2185,9 @@ def serialize_import_job(import_job: ImportJob) -> dict:
         "imported_questions": import_job.imported_questions,
         "review_questions": import_job.review_questions,
         "failed_chunks": import_job.failed_chunks,
+        "auto_imported_questions": auto_counts["auto_imported"],
+        "auto_skipped_questions": auto_counts["auto_skipped"],
+        "auto_handled_questions": auto_counts["auto_handled"],
         "summary": import_job.summary_json,
         "error_message": import_job.error_message,
         "created_by": import_job.created_by,
@@ -2187,6 +2236,72 @@ def serialize_parsed_question(pq: ImportParsedQuestion) -> dict:
         "review_status": pq.review_status,
         "import_status": pq.import_status,
         "imported_question_id": pq.imported_question_id,
+    }
+
+
+UNUSABLE_REASON_LABELS = {
+    "STEM_MISSING": "缺少题干",
+    "STEM_TOO_SHORT": "题干过短",
+    "OPTIONS_MISSING": "选项不足",
+    "OPTION_COUNT_ABNORMAL": "选项数量异常",
+    "ANSWER_MISSING": "缺少正确答案",
+    "ANSWER_NOT_IN_OPTIONS": "正确答案不在选项中",
+}
+
+QUALITY_TIP_LABELS = {
+    "LOW_CONFIDENCE": "置信度较低",
+    "NO_QUESTION_NO": "无题号",
+    "NOISE_DETECTED": "疑似包含噪声",
+    "SCENARIO_MISSING": "疑似缺少场景材料",
+    "OPTION_COUNT_ABNORMAL": "选项数量异常",
+    "STEM_TOO_SHORT": "题干偏短",
+}
+
+
+def _issue_details(pq: ImportParsedQuestion) -> list[dict]:
+    issues = pq.issues_json or {}
+    details = issues.get("details") if isinstance(issues, dict) else None
+    return details if isinstance(details, list) else []
+
+
+def _auto_handled_reason(pq: ImportParsedQuestion) -> str:
+    if pq.review_status == "auto_skipped":
+        for issue in _issue_details(pq):
+            code = issue.get("code")
+            if code in UNUSABLE_REASON_LABELS:
+                return UNUSABLE_REASON_LABELS[code]
+        return "不可用题目，已自动跳过"
+    return "题目结构完整，已自动入库"
+
+
+def _auto_handled_quality_tips(pq: ImportParsedQuestion) -> list[str]:
+    tips = []
+    for issue in _issue_details(pq):
+        code = issue.get("code")
+        if pq.review_status == "auto_skipped" and code in UNUSABLE_REASON_LABELS:
+            continue
+        label = QUALITY_TIP_LABELS.get(code)
+        if label and label not in tips:
+            tips.append(label)
+    return tips
+
+
+def serialize_auto_handled_item(pq: ImportParsedQuestion) -> dict:
+    return {
+        "id": pq.id,
+        "import_job_id": pq.import_job_id,
+        "result": "auto_skipped" if pq.review_status == "auto_skipped" else "auto_imported",
+        "reason": _auto_handled_reason(pq),
+        "quality_tips": _auto_handled_quality_tips(pq),
+        "source_question_no": pq.source_question_no,
+        "content": pq.content,
+        "scenario_text": pq.scenario_text,
+        "question_type": pq.question_type,
+        "options": pq.options_json,
+        "correct_answer": pq.correct_answer,
+        "imported_question_id": pq.imported_question_id,
+        "handled_at": pq.updated_at.isoformat() if pq.updated_at else (pq.created_at.isoformat() if pq.created_at else None),
+        "issues": pq.issues_json,
     }
 
 

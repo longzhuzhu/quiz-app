@@ -530,6 +530,172 @@ if has_scenario_marker(source_text) and not parsed_q.scenario:
 
 ---
 
+## Scenario E：默认自动处理导入题目
+
+### 1. Scope / Trigger
+
+智能导入此前把低置信度、缺字段等常规质量问题推入人工复核。实际使用中用户对这些待复核题通常只有“接纳结构完整题”或“跳过不可用题”两种选择，因此导入流水线改为默认自动处理，并提供只读追溯入口。
+
+适用范围：`_save_parsed_question()` 首次导入与 reparse 新题写入、`_finalize_import()` 状态机、`serialize_import_job()` 计数字段、`GET /api/import-jobs/{job_id}/auto-handled`。
+
+### 2. Signatures
+
+```python
+# backend/app/services/smart_import_service.py
+def _unusable_question_issues(parsed_q: ParsedQuestion) -> list[dict]: ...
+# 返回导致题目不能用于练习的 HIGH issue：STEM_MISSING / OPTIONS_MISSING /
+# ANSWER_MISSING / ANSWER_NOT_IN_OPTIONS。
+
+
+def _save_parsed_question(
+    db: Session,
+    parsed_q: ParsedQuestion,
+    import_job: ImportJob,
+    chunk: ImportChunk,
+    *,
+    chunk_text: str,
+    auto_import: bool,
+    seen_signatures: set | None = None,
+    imported_qnos: set[str] | None = None,
+) -> None: ...
+# auto_import=True 时：可入库题目自动写 Question；不可用题目自动跳过。
+
+
+def serialize_auto_handled_item(pq: ImportParsedQuestion) -> dict: ...
+```
+
+```http
+GET /api/import-jobs/{job_id}/auto-handled
+Authorization: Bearer <admin jwt>
+```
+
+### 3. Contracts
+
+**可入库题目**：同时满足题干非空、至少 2 个选项、有正确答案、正确答案能匹配选项。可入库题目在 `auto_import=True` 时写入 `questions`，并标记：
+
+```jsonc
+{
+  "review_status": "auto_accepted",
+  "import_status": "imported",
+  "imported_question_id": 123
+}
+```
+
+低置信度、无题号、疑似噪声、疑似缺少场景材料等不再阻止自动入库；这些只保留在 `issues_json.details`，通过自动处理记录展示为质量提示。
+
+**不可用题目**：缺题干、选项不足、缺少正确答案、正确答案不在选项中。不可用题目必须保留 `ImportParsedQuestion` 审计记录，但不写 `Question`，不创建 `ImportReviewItem`，并标记：
+
+```jsonc
+{
+  "review_status": "auto_skipped",
+  "import_status": "skipped",
+  "imported_question_id": null,
+  "issues_json": {"details": [{"code": "ANSWER_MISSING", "severity": "HIGH"}]}
+}
+```
+
+**导入任务序列化新增字段**：
+
+```jsonc
+{
+  "auto_imported_questions": 10,
+  "auto_skipped_questions": 2,
+  "auto_handled_questions": 12,
+  "summary": {
+    "auto_imported": 10,
+    "auto_skipped": 2,
+    "auto_handled": 12
+  }
+}
+```
+
+**自动处理记录响应**：
+
+```jsonc
+{
+  "items": [{
+    "id": 1,
+    "result": "auto_imported" | "auto_skipped",
+    "reason": "题目结构完整，已自动入库" | "缺少正确答案",
+    "quality_tips": ["无题号", "疑似包含噪声"],
+    "source_question_no": "247",
+    "content": "Which is the best next step?",
+    "scenario_text": "SCENARIO...",
+    "correct_answer": ["A"],
+    "handled_at": "2026-05-15T10:00:00+00:00"
+  }],
+  "total": 1
+}
+```
+
+**`ImportJob.status` 扩展**：`unimported` 表示本次任务有解析题、全部自动跳过、没有入库题、没有失败 chunk、没有待复核。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 行为 |
+|---|---|
+| 题干缺失或过短 | `auto_skipped`，不写 `Question`，不建 `ImportReviewItem` |
+| 选项少于 2 个 | `auto_skipped`，不写 `Question`，不建 `ImportReviewItem` |
+| `correct_answer=[]` | `auto_skipped`，原因“缺少正确答案” |
+| 答案标签不在选项标签集合 | `auto_skipped`，原因“正确答案不在选项中” |
+| 结构完整但 `confidence < 0.90` | `auto_accepted`，质量提示保留 |
+| 结构完整但 `NO_QUESTION_NO` / `NOISE_DETECTED` / `SCENARIO_MISSING` | `auto_accepted`，质量提示保留 |
+| `auto_import=False` | 保留原人工复核兜底路径，创建 `ImportReviewItem` |
+| 重复题号 / 重复内容 | 继续走 `review_status='duplicate'`, `import_status='skipped'`，不计入自动处理记录 |
+| 全部自动跳过且无失败 chunk | `_finalize_import()` 设置 `status='unimported'` |
+| 有失败 chunk | 优先 `partial_imported`，不得被 `unimported` 覆盖 |
+
+### 5. Good / Base / Bad Cases
+
+- **Good**：结构完整但低置信度题目自动入库，自动处理记录显示“题目结构完整，已自动入库”并附“无题号”等质量提示。
+- **Base**：缺答案题目自动跳过，用户在自动处理记录中看到“缺少正确答案”，题库题量不增加，待复核数不增加。
+- **Bad**：继续用置信度阈值阻止低置信完整题入库，导致复核队列虚高。
+- **Bad**：不可用题完全丢弃不保存 `ImportParsedQuestion`，用户无法追溯程序跳过了哪些题。
+
+### 6. Tests Required
+
+文件：`backend/tests/test_smart_import_scenario_content.py`，断言点：
+
+- 缺题干、选项不足、缺答案、答案不在选项中均保存为 `review_status='auto_skipped'`、`import_status='skipped'`。
+- 自动跳过不写 `questions`，不创建 `ImportReviewItem`，不增加 `review_questions`。
+- 低置信但结构完整题保存为 `auto_accepted/imported`，写入 `questions`，且 `serialize_auto_handled_item()` 返回质量提示。
+- 全部自动跳过时 `_finalize_import()` 设置 `ImportJob.status == 'unimported'`，并写入 `summary_json.auto_skipped/auto_handled`。
+- 现有 reparse hygiene 与 reconciliation 测试必须继续通过，尤其有失败 chunk 时仍为 `partial_imported`。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+should_auto_import = (
+    auto_import
+    and final_confidence >= Decimal("0.90")
+    and not any(issue["severity"] == "HIGH" for issue in issues)
+)
+if not should_auto_import:
+    db.add(ImportReviewItem(...))
+```
+
+问题：结构完整但低置信度、无题号或疑似噪声的题仍进入人工复核，制造用户无法有效处理的队列。
+
+#### Correct
+
+```python
+unusable_issues = _unusable_question_issues(parsed_q)
+if unusable_issues:
+    parsed_question.review_status = "auto_skipped"
+    parsed_question.import_status = "skipped"
+elif auto_import:
+    question = _write_question_to_bank(db, parsed_question, import_job.bank_id)
+    parsed_question.review_status = "auto_accepted"
+    parsed_question.import_status = "imported"
+    parsed_question.imported_question_id = question.id
+else:
+    db.add(ImportReviewItem(...))
+```
+
+---
+
 ## 关键设计决策汇总
 
 | # | 决策 | 理由 |
@@ -546,6 +712,7 @@ if has_scenario_marker(source_text) and not parsed_q.scenario:
 | D10 | `build_full_question_content()` 是正式题干唯一构造入口 | 防止自动入库、reparse、review accept、历史回填规则漂移 |
 | D11 | 第一个题号前导材料采用保守归属 | 优先修复明显场景/阅读材料丢失，同时降低吞入页眉、广告、上一题解析或答案段落的风险 |
 | D12 | 历史回填默认 dry-run，显式 `--apply` 才写 | 避免一次性脚本误改历史正式题，尤其保护人工编辑过的内容 |
+| D13 | 智能导入默认按可用性自动处理，不再按置信度阈值进入人工复核 | 用户对常规待复核项缺少有效选择；结构完整题自动入库，不可用题自动跳过并保留追溯记录 |
 
 ---
 

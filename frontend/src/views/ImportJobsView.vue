@@ -33,7 +33,7 @@
               {{ job.file_type?.toUpperCase() }}
             </p>
             <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
-              解析 {{ job.parsed_questions || 0 }} 题 / 入库 {{ job.imported_questions || 0 }} 题 / 待复核 {{ job.review_questions || 0 }} 题
+              解析 {{ job.parsed_questions || 0 }} 题 / 入库 {{ job.imported_questions || 0 }} 题 / 自动跳过 {{ job.auto_skipped_questions || 0 }} 题 / 待复核 {{ job.review_questions || 0 }} 题
               <span v-if="job.failed_chunks"> / 失败 {{ job.failed_chunks }} chunk</span>
             </p>
             <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">{{ job.created_at }}</p>
@@ -78,6 +78,7 @@ const STATUS_MAP = {
   imported: '已入库',
   review_required: '待复核',
   partial_imported: '部分入库',
+  unimported: '未入库',
   failed: '失败',
   cancelled: '已取消',
 }
@@ -90,11 +91,13 @@ function statusClass(status) {
   const activeStatuses = ['pending', 'extracting', 'chunking', 'parsing', 'validating', 'importing']
   const doneStatuses = ['imported']
   const warnStatuses = ['review_required', 'partial_imported']
+  const neutralStatuses = ['unimported']
   const errorStatuses = ['failed']
 
   if (activeStatuses.includes(status)) return 'text-sky-600 dark:text-sky-400'
   if (doneStatuses.includes(status)) return 'text-emerald-600 dark:text-emerald-400'
   if (warnStatuses.includes(status)) return 'text-amber-600 dark:text-amber-400'
+  if (neutralStatuses.includes(status)) return 'text-gray-500 dark:text-gray-400'
   if (errorStatuses.includes(status)) return 'text-rose-600 dark:text-rose-400'
   return 'text-gray-500 dark:text-gray-400'
 }

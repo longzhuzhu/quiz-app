@@ -245,12 +245,13 @@ def test_leading_noise_is_not_attached_to_first_question():
     assert "Page 162" not in segments[0]["text"]
 
 
-def test_quality_check_blocks_high_confidence_when_scenario_missing():
+def test_quality_check_keeps_scenario_missing_as_quality_tip_not_unusable():
     parsed = _parsed_question(scenario=None)
     final_confidence, issues = svc._quality_check(parsed, f"{SCENARIO}\nQuestion #247\n{CONTENT}")
 
+    assert final_confidence < 1
     assert any(issue["code"] == "SCENARIO_MISSING" and issue["severity"] == "HIGH" for issue in issues)
-    assert not svc._auto_accept_check(final_confidence, issues)
+    assert svc._unusable_question_issues(parsed) == []
 
 
 def test_quality_check_does_not_apply_scenario_marker_to_other_questions():
@@ -262,8 +263,93 @@ def test_quality_check_does_not_apply_scenario_marker_to_other_questions():
 
     final_confidence, issues = svc._quality_check(parsed, chunk_text)
 
+    assert final_confidence > 0
     assert not any(issue["code"] == "SCENARIO_MISSING" for issue in issues)
-    assert svc._auto_accept_check(final_confidence, issues)
+    assert svc._unusable_question_issues(parsed) == []
+
+
+@pytest.mark.parametrize("case", ["missing_stem", "missing_options", "missing_answer", "answer_not_in_options"])
+def test_unusable_question_auto_skips_without_review_item(db_session, bank_and_job, case):
+    bank, job, chunk = bank_and_job
+    parsed = _parsed_question()
+    if case == "missing_stem":
+        parsed.scenario = None
+        parsed.content = ""
+    elif case == "missing_options":
+        parsed.options = [ParsedOption(label="A", text="Only one option")]
+    elif case == "missing_answer":
+        parsed.correct_answer = []
+    elif case == "answer_not_in_options":
+        parsed.correct_answer = ["Z"]
+
+    svc._save_parsed_question(
+        db_session,
+        parsed,
+        job,
+        chunk,
+        chunk_text=chunk.chunk_text,
+        auto_import=True,
+        seen_signatures=set(),
+    )
+
+    parsed_row = db_session.query(ImportParsedQuestion).one()
+    assert parsed_row.review_status == "auto_skipped"
+    assert parsed_row.import_status == "skipped"
+    assert parsed_row.imported_question_id is None
+    assert db_session.query(Question).count() == 0
+    assert db_session.query(ImportReviewItem).count() == 0
+    assert job.review_questions == 0
+    assert job.imported_questions == 0
+
+
+def test_low_confidence_complete_question_auto_imports_with_quality_tip(db_session, bank_and_job):
+    bank, job, chunk = bank_and_job
+    parsed = _parsed_question(qno="")
+    parsed.confidence = 0.1
+
+    svc._save_parsed_question(
+        db_session,
+        parsed,
+        job,
+        chunk,
+        chunk_text=chunk.chunk_text,
+        auto_import=True,
+        seen_signatures=set(),
+    )
+
+    parsed_row = db_session.query(ImportParsedQuestion).one()
+    assert parsed_row.review_status == "auto_accepted"
+    assert parsed_row.import_status == "imported"
+    assert db_session.query(Question).count() == 1
+    assert db_session.query(ImportReviewItem).count() == 0
+    assert job.imported_questions == 1
+    item = svc.serialize_auto_handled_item(parsed_row)
+    assert item["result"] == "auto_imported"
+    assert item["reason"] == "题目结构完整，已自动入库"
+    assert "无题号" in item["quality_tips"]
+
+
+def test_finalize_import_marks_all_auto_skipped_as_unimported(db_session, bank_and_job, monkeypatch):
+    bank, job, chunk = bank_and_job
+    parsed = _parsed_question()
+    parsed.correct_answer = []
+    monkeypatch.setattr(svc, "_write_reconciliation", lambda db, import_job: None)
+
+    svc._save_parsed_question(
+        db_session,
+        parsed,
+        job,
+        chunk,
+        chunk_text=chunk.chunk_text,
+        auto_import=True,
+        seen_signatures=set(),
+    )
+    svc._finalize_import(db_session, job)
+
+    db_session.refresh(job)
+    assert job.status == "unimported"
+    assert job.summary_json["auto_skipped"] == 1
+    assert job.summary_json["auto_handled"] == 1
 
 
 def test_history_backfill_dry_run_apply_and_safety_conditions(db_session, bank_and_job):

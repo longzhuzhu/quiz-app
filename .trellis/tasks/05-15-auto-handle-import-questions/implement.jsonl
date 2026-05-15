@@ -1,0 +1,9 @@
+{"file":".trellis/spec/backend/import-pipeline.md","reason":"智能导入流水线、解析题状态、reparse 去重与 reconciliation 的现有契约"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"后端模型、JSONB、迁移与持久化变更的约束"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"FastAPI 路由错误处理与响应约定"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"后端实现质量、测试与边界条件要求"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Vue 页面组件结构、Tailwind、日期展示与 props/emits 约定"}
+{"file":".trellis/spec/frontend/directory-structure.md","reason":"前端新增视图、路由和组件放置约定"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"前端交互质量、空状态与构建验证要求"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"后端 API 与前端页面跨层数据流一致性检查"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"优先复用现有导入任务/解析题序列化与 UI 模式"}

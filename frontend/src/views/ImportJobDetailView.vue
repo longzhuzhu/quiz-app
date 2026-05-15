@@ -86,6 +86,11 @@
           <ExclamationCircleIcon class="h-4 w-4" />
           复核待审核题目 ({{ job.review_questions }})
         </BaseButton>
+        <BaseButton variant="secondary"
+          @click="$router.push(`/import-jobs/${job.id}/auto-handled`)">
+          <ClipboardDocumentListIcon class="h-4 w-4" />
+          自动处理记录 ({{ job.auto_handled_questions || 0 }})
+        </BaseButton>
       </div>
 
       <!-- Chunk 列表 -->
@@ -171,7 +176,7 @@ import { useRoute } from 'vue-router'
 import client from '../api/client'
 import BaseButton from '../components/BaseButton.vue'
 import SkeletonLoader from '../components/SkeletonLoader.vue'
-import { ArrowLeftIcon, ExclamationCircleIcon } from '@heroicons/vue/24/outline'
+import { ArrowLeftIcon, ClipboardDocumentListIcon, ExclamationCircleIcon } from '@heroicons/vue/24/outline'
 
 const route = useRoute()
 const jobId = route.params.jobId
@@ -192,6 +197,7 @@ const STATUS_MAP = {
   imported: '已入库',
   review_required: '待复核',
   partial_imported: '部分入库',
+  unimported: '未入库',
   failed: '失败',
   cancelled: '已取消',
 }
@@ -207,6 +213,7 @@ function statusClass(status) {
   const active = ['pending', 'extracting', 'chunking', 'parsing', 'validating', 'importing']
   if (active.includes(status)) return 'text-sky-600 dark:text-sky-400'
   if (status === 'imported') return 'text-emerald-600 dark:text-emerald-400'
+  if (status === 'unimported') return 'text-gray-500 dark:text-gray-400'
   if (['review_required', 'partial_imported'].includes(status)) return 'text-amber-600 dark:text-amber-400'
   if (status === 'failed') return 'text-rose-600 dark:text-rose-400'
   return 'text-gray-500 dark:text-gray-400'

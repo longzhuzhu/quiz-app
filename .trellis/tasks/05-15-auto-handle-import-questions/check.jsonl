@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/import-pipeline.md","reason":"验证智能导入状态机、计数、reparse 与人工复核不回归"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"检查是否需要迁移、字段语义和持久化一致性"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查后端测试覆盖、边界条件和回归风险"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"检查 Vue 页面结构、Tailwind 风格与日期展示符合项目约定"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查前端空状态、加载态、错误态和生产构建"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查 API 返回字段、前端消费字段、计数与状态标签跨层一致"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"检查是否复用现有导入页面、序列化和状态标签模式"}
