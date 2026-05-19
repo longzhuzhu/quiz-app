@@ -36,6 +36,7 @@ from app.models.vocabulary import Vocabulary  # noqa: E402,F401
 from app.schemas.llm_parse import ParsedOption, ParsedQuestion  # noqa: E402
 from app.services import smart_import_service as svc  # noqa: E402
 from scripts.backfill_scenario_question_content import backfill_scenario_question_content  # noqa: E402
+from scripts.clear_question_explanations import clear_question_explanations  # noqa: E402
 
 
 SCENARIO = "SCENARIO\nAn organization discovers that customer data was exposed during a vendor migration."
@@ -434,7 +435,12 @@ def test_write_question_duplicate_fallback_records_content_reason(db_session, ba
     assert job.imported_questions == 0
 
 
-def _parsed_question(*, scenario: str | None = SCENARIO, qno: str = "247") -> ParsedQuestion:
+def _parsed_question(
+    *,
+    scenario: str | None = SCENARIO,
+    qno: str = "247",
+    explanation: str = "",
+) -> ParsedQuestion:
     return ParsedQuestion(
         source_question_no=qno,
         question_type="single",
@@ -447,14 +453,20 @@ def _parsed_question(*, scenario: str | None = SCENARIO, qno: str = "247") -> Pa
             ParsedOption(label="D", text="Wait for a complaint"),
         ],
         correct_answer=["A"],
-        explanation="",
+        explanation=explanation,
         references=[],
         confidence=0.96,
         issues=[],
     )
 
 
-def _parsed_row(job: ImportJob, chunk: ImportChunk, *, scenario: str | None = SCENARIO) -> ImportParsedQuestion:
+def _parsed_row(
+    job: ImportJob,
+    chunk: ImportChunk,
+    *,
+    scenario: str | None = SCENARIO,
+    explanation: str | None = None,
+) -> ImportParsedQuestion:
     return ImportParsedQuestion(
         import_job_id=job.id,
         chunk_id=chunk.id,
@@ -469,6 +481,7 @@ def _parsed_row(job: ImportJob, chunk: ImportChunk, *, scenario: str | None = SC
             {"key": "D", "text": "Wait for a complaint"},
         ],
         correct_answer=["A"],
+        explanation=explanation,
         llm_confidence=0.96,
         final_confidence=0.96,
         review_status="pending",
@@ -481,7 +494,7 @@ def test_auto_import_writes_full_scenario_content(db_session, bank_and_job):
 
     svc._save_parsed_question(
         db_session,
-        _parsed_question(),
+        _parsed_question(explanation="导入解析：应仅保留在导入解析记录中"),
         job,
         chunk,
         chunk_text=chunk.chunk_text,
@@ -492,13 +505,16 @@ def test_auto_import_writes_full_scenario_content(db_session, bank_and_job):
     question = db_session.query(Question).one()
     parsed = db_session.query(ImportParsedQuestion).one()
     assert question.content == FULL_CONTENT
+    assert question.explanation is None
+    assert question.explanation_zh is None
     assert parsed.scenario_text == SCENARIO
     assert parsed.content == CONTENT
+    assert parsed.explanation == "导入解析：应仅保留在导入解析记录中"
 
 
 def test_review_accept_writes_full_scenario_content(db_session, bank_and_job, monkeypatch):
     bank, job, chunk = bank_and_job
-    parsed = _parsed_row(job, chunk)
+    parsed = _parsed_row(job, chunk, explanation="复核导入解析：不应写入正式题目")
     db_session.add(parsed)
     db_session.flush()
     review = ImportReviewItem(
@@ -516,6 +532,9 @@ def test_review_accept_writes_full_scenario_content(db_session, bank_and_job, mo
 
     question = db_session.get(Question, result["question_id"])
     assert question.content == FULL_CONTENT
+    assert question.explanation is None
+    assert question.explanation_zh is None
+    assert parsed.explanation == "复核导入解析：不应写入正式题目"
     assert parsed.import_status == "imported"
     assert review.status == "accepted"
 
@@ -547,7 +566,7 @@ def test_run_reparse_writes_full_scenario_content(db_session, bank_and_job, monk
                     {"label": "D", "text": "Wait for a complaint"},
                 ],
                 "correct_answer": ["A"],
-                "explanation": "",
+                "explanation": "reparse 导入解析：仅保留在导入解析记录中",
                 "references": [],
                 "confidence": 0.96,
                 "issues": [],
@@ -562,7 +581,11 @@ def test_run_reparse_writes_full_scenario_content(db_session, bank_and_job, monk
     svc.run_reparse(db_session, bg_job)
 
     question = db_session.query(Question).one()
+    parsed = db_session.query(ImportParsedQuestion).one()
     assert question.content == FULL_CONTENT
+    assert question.explanation is None
+    assert question.explanation_zh is None
+    assert parsed.explanation == "reparse 导入解析：仅保留在导入解析记录中"
 
 
 def test_leading_scenario_material_is_attached_to_first_question():
@@ -726,6 +749,71 @@ def test_finalize_import_failed_chunks_take_priority_over_unimported(db_session,
     db_session.refresh(job)
     assert job.status == "partial_imported"
     assert job.summary_json["duplicate_skipped"] == 1
+
+
+def test_clear_question_explanations_dry_run_apply_and_preserves_import_parse_explanations(db_session, bank_and_job):
+    bank, job, chunk = bank_and_job
+    question_with_both = Question(
+        bank_id=bank.id,
+        question_type="single",
+        content="Question with both explanations",
+        options=[{"key": "A", "text": "Yes"}, {"key": "B", "text": "No"}],
+        correct_answer="A",
+        explanation="AI explanation",
+        explanation_zh="中文 AI 解析",
+        order_index=0,
+    )
+    question_with_zh_only = Question(
+        bank_id=bank.id,
+        question_type="single",
+        content="Question with zh explanation only",
+        options=[{"key": "A", "text": "Yes"}, {"key": "B", "text": "No"}],
+        correct_answer="A",
+        explanation=None,
+        explanation_zh="仅中文 AI 解析",
+        order_index=1,
+    )
+    question_without_explanation = Question(
+        bank_id=bank.id,
+        question_type="single",
+        content="Question without explanations",
+        options=[{"key": "A", "text": "Yes"}, {"key": "B", "text": "No"}],
+        correct_answer="A",
+        explanation=None,
+        explanation_zh=None,
+        order_index=2,
+    )
+    parsed = _parsed_row(job, chunk, explanation="导入解析必须保留")
+    db_session.add_all([question_with_both, question_with_zh_only, question_without_explanation, parsed])
+    db_session.commit()
+
+    dry_run = clear_question_explanations(db_session, apply=False)
+    db_session.refresh(question_with_both)
+    db_session.refresh(question_with_zh_only)
+    db_session.refresh(parsed)
+
+    assert dry_run.matched == 2
+    assert dry_run.updated == 0
+    assert question_with_both.explanation == "AI explanation"
+    assert question_with_both.explanation_zh == "中文 AI 解析"
+    assert question_with_zh_only.explanation_zh == "仅中文 AI 解析"
+    assert parsed.explanation == "导入解析必须保留"
+
+    applied = clear_question_explanations(db_session, apply=True)
+    db_session.refresh(question_with_both)
+    db_session.refresh(question_with_zh_only)
+    db_session.refresh(question_without_explanation)
+    db_session.refresh(parsed)
+
+    assert applied.matched == 2
+    assert applied.updated == 2
+    assert question_with_both.explanation is None
+    assert question_with_both.explanation_zh is None
+    assert question_with_zh_only.explanation is None
+    assert question_with_zh_only.explanation_zh is None
+    assert question_without_explanation.explanation is None
+    assert question_without_explanation.explanation_zh is None
+    assert parsed.explanation == "导入解析必须保留"
 
 
 def test_history_backfill_dry_run_apply_and_safety_conditions(db_session, bank_and_job):

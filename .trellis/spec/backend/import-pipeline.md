@@ -739,6 +739,95 @@ else:
 
 ---
 
+## Scenario G：正式题目 AI 解析与导入解析边界
+
+### 1. Scope / Trigger
+
+智能导入的 LLM 解析会产出 `ImportParsedQuestion.explanation`，但该内容用于辅助识别题目结构、答案和来源材料，不等同于用户在练习中主动请求的 AI 辅导解析。正式题目的 `Question.explanation` / `Question.explanation_zh` 只表示用户点击“AI 解析”后生成并缓存的结果。
+
+### 2. Signatures
+
+```python
+# backend/app/services/smart_import_service.py
+def _write_question_to_bank(
+    db: Session,
+    parsed_question: ImportParsedQuestion,
+    bank_id: int,
+) -> Question | None: ...
+# 自动入库、reparse 自动入库、review accept 写正式 Question 的统一入口。
+# 不得把 parsed_question.explanation 写入 Question.explanation。
+```
+
+```bash
+# backend/scripts/clear_question_explanations.py
+python3 backend/scripts/clear_question_explanations.py [--apply]
+```
+
+### 3. Contracts
+
+- `ImportParsedQuestion.explanation`：导入解析记录，保留在导入任务语境中，用于导入详情、复核和追溯。
+- `Question.explanation` / `Question.explanation_zh`：正式题目 AI 解析缓存，只能由用户主动请求 AI 解析的路径写入。
+- `_write_question_to_bank()` 创建 `Question` 时必须保持 `explanation=None`、`explanation_zh=None`，即使 `parsed_question.explanation` 非空。
+- 清理脚本默认 dry-run，只统计至少一个正式解析字段非空的题目数量并 rollback。
+- 清理脚本只有传 `--apply` 时才清空 `Question.explanation` 与 `Question.explanation_zh` 并 commit。
+- 清理脚本不得修改 `ImportParsedQuestion.explanation`，不得放进 Alembic migration、应用启动或部署钩子自动执行。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 行为 |
+|---|---|
+| 自动入库解析题含 `parsed_question.explanation` | 正式 `Question.explanation/explanation_zh` 仍为空；导入解析保留在 `ImportParsedQuestion.explanation` |
+| 人工复核 accept 的解析题含 `parsed_question.explanation` | 同样经 `_write_question_to_bank()`，正式题目解析字段为空 |
+| reparse 新入库题含 LLM explanation | 正式题目解析字段为空，导入解析记录保留 |
+| 用户点击 AI 解析且正式题目无解析 | `/api/ai/explain` 调 AI 并写入 `Question.explanation/explanation_zh` |
+| 用户点击 AI 解析且正式题目已有解析 | 返回缓存，不重新生成 |
+| 清理脚本未传 `--apply` | 输出待清理数量，不修改数据库 |
+| 清理脚本传 `--apply` | 清空所有正式题目的 `explanation/explanation_zh`，不动导入解析记录 |
+
+### 5. Good / Base / Bad Cases
+
+- **Good**：导入详情能看到导入解析；练习页首次点击“AI 解析”会生成正式 AI 解析。
+- **Base**：题目已有用户生成的 AI 解析时，再次点击只展示缓存。
+- **Bad**：把 `ImportParsedQuestion.explanation` 写进 `Question.explanation`，导致前端和后端误以为 AI 解析已存在，用户无法生成真正的辅导解析。
+- **Bad**：把历史清理放进 Alembic migration，部署时无提示清空生产解析数据。
+
+### 6. Tests Required
+
+- 自动入库：解析题含非空 `explanation` 时，新建 `Question.explanation/explanation_zh` 为空，`ImportParsedQuestion.explanation` 保留。
+- 复核 accept：正式题目解析字段为空，导入解析记录保留。
+- reparse：LLM 返回非空 explanation 时，正式题目解析字段为空，导入解析记录保留。
+- 清理脚本 dry-run：返回待清理数量，不改变 `Question` 与 `ImportParsedQuestion`。
+- 清理脚本 `--apply`：清空 `Question.explanation/explanation_zh`，不改变 `ImportParsedQuestion.explanation`。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+question = Question(
+    bank_id=bank_id,
+    content=full_content,
+    options=options,
+    correct_answer=correct_answer_str,
+    explanation=parsed_question.explanation,
+)
+```
+
+#### Correct
+
+```python
+question = Question(
+    bank_id=bank_id,
+    content=full_content,
+    options=options,
+    correct_answer=correct_answer_str,
+    explanation=None,
+    explanation_zh=None,
+)
+```
+
+---
+
 ## 关键设计决策汇总
 
 | # | 决策 | 理由 |
@@ -757,6 +846,7 @@ else:
 | D12 | 历史回填默认 dry-run，显式 `--apply` 才写 | 避免一次性脚本误改历史正式题，尤其保护人工编辑过的内容 |
 | D13 | 智能导入默认按可用性自动处理，不再按置信度阈值进入人工复核 | 用户对常规待复核项缺少有效选择；结构完整题自动入库，不可用题自动跳过并保留追溯记录 |
 | D14 | 文件 hash 不作为同题库重复导入硬阻断，去重边界下沉到题目级 | 保留每次导入任务的可追溯性，同时通过题目签名 duplicate/skipped 防止正式题库重复增长 |
+| D15 | 正式题目的 `explanation/explanation_zh` 只表示用户主动生成的 AI 解析 | 避免导入解析占用正式题目解析字段，导致 AI 解析按钮误判已有缓存 |
 
 ---
 

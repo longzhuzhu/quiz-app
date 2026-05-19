@@ -1277,7 +1277,9 @@ def _write_question_to_bank(
         content=full_content,
         options=options,
         correct_answer=correct_answer_str,
-        explanation=parsed_question.explanation,
+        # 正式题目的解析字段只表示用户主动生成的 AI 解析；导入解析仅保留在 ImportParsedQuestion.explanation。
+        explanation=None,
+        explanation_zh=None,
         order_index=max_order + 1,
     )
     db.add(question)
