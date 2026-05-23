@@ -489,3 +489,36 @@ Allowed repeated uploads of the same smart-import file without file-hash blockin
 ### Next Steps
 
 - None - task complete
+
+
+## Session 15: Separate imported explanations from AI explanations
+
+**Date**: 2026-05-23
+**Task**: Separate imported explanations from AI explanations
+**Branch**: `codex/vocab-progress-settings-deploy`
+
+### Summary
+
+Separated imported parsing explanations from official AI explanation fields, added a dry-run cleanup script, updated import pipeline specs, created PR #20, restarted services, and applied the one-off cleanup.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f09b70d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
