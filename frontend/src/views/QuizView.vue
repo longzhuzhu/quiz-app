@@ -132,6 +132,7 @@
 import { computed, reactive, ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuizStore } from '../stores/quiz'
+import { currentExamPath } from '../utils/examRoutes'
 import { useToast } from '../composables/useToast'
 import QuestionCard from '../components/QuestionCard.vue'
 import client from '../api/client'
@@ -216,7 +217,7 @@ onMounted(async () => {
   try {
     const res = await client.get(`/quiz/session/${route.params.sessionId}`)
     if (res.data.session.is_completed) {
-      router.replace(`/quiz/${route.params.sessionId}/result`)
+      router.replace(currentExamPath(route, 'quizResult', { sessionId: route.params.sessionId }))
       return
     }
 
@@ -225,10 +226,10 @@ onMounted(async () => {
       quizStore.questions = res.data.questions
       restoreSessionState(res.data)
     } else {
-      router.replace('/')
+      router.replace(currentExamPath(route, 'dashboard'))
     }
   } catch {
-    router.replace('/')
+    router.replace(currentExamPath(route, 'dashboard'))
   }
 })
 
@@ -312,7 +313,7 @@ async function handleSubmit(answer, callback) {
 async function handleFinish() {
   try {
     await quizStore.finishQuiz()
-    router.push(`/quiz/${quizStore.session.id}/result`)
+    router.push(currentExamPath(route, 'quizResult', { sessionId: quizStore.session.id }))
   } catch (e) {
     toast.error(e.response?.data?.error || '结束失败')
   }

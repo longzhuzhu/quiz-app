@@ -3,29 +3,28 @@
     <div class="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
       <!-- 左侧品牌 -->
       <router-link to="/" class="flex items-center gap-2 text-lg font-bold text-primary-600">
-        <span>🎯</span>
         <span>备考助手</span>
       </router-link>
 
       <!-- 中部导航链接（仅桌面端） -->
       <div class="hidden md:flex items-center gap-1">
         <router-link
-          to="/"
+          :to="navPath('dashboard')"
           exact-active-class="text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-900/30"
           class="px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
         >首页</router-link>
         <router-link
-          to="/wrong"
+          :to="navPath('wrong')"
           active-class="text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-900/30"
           class="px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
         >错题本</router-link>
         <router-link
-          to="/history"
+          :to="navPath('history')"
           active-class="text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-900/30"
           class="px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
         >历史</router-link>
         <router-link
-          to="/vocabulary"
+          :to="navPath('vocab')"
           active-class="text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-900/30"
           class="px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
         >单词本</router-link>
@@ -33,6 +32,8 @@
 
       <!-- 右侧操作区 -->
       <div class="flex items-center gap-2">
+        <ExamSwitcher v-if="examStore.current" class="hidden md:block" />
+
         <!-- 管理员下拉菜单（仅桌面端） -->
         <div v-if="authStore.isAdmin" class="hidden md:block relative">
           <Menu as="div" class="relative">
@@ -51,7 +52,7 @@
               <MenuItems class="absolute right-0 mt-2 w-48 rounded-card bg-white dark:bg-slate-800 shadow-lg ring-1 ring-black/5 focus:outline-none overflow-hidden">
                 <MenuItem v-slot="{ active }">
                   <router-link
-                    to="/admin/banks"
+                    :to="navPath('banks')"
                     :class="[
                       'block w-full text-left px-4 py-2 text-sm',
                       active ? 'bg-gray-100 dark:bg-slate-700 text-gray-900 dark:text-white' : 'text-gray-700 dark:text-gray-300'
@@ -60,7 +61,7 @@
                 </MenuItem>
                 <MenuItem v-slot="{ active }">
                   <router-link
-                    to="/import-jobs"
+                    :to="navPath('importJobs')"
                     :class="[
                       'block w-full text-left px-4 py-2 text-sm',
                       active ? 'bg-gray-100 dark:bg-slate-700 text-gray-900 dark:text-white' : 'text-gray-700 dark:text-gray-300'
@@ -140,13 +141,21 @@
 <script setup>
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { useExamStore } from '../stores/exam'
 import { useDarkMode } from '../composables/useDarkMode'
+import { examPath } from '../utils/examRoutes'
+import ExamSwitcher from './ExamSwitcher.vue'
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/vue'
 import { SunIcon, MoonIcon, ChevronDownIcon } from '@heroicons/vue/24/outline'
 
 const authStore = useAuthStore()
+const examStore = useExamStore()
 const router = useRouter()
 const darkMode = useDarkMode()
+
+function navPath(kind) {
+  return examStore.current?.slug ? examPath(examStore.current.slug, kind) : '/onboarding'
+}
 
 function handleLogout() {
   authStore.logout()

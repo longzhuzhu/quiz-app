@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="mb-4">
-      <router-link :to="`/import-jobs/${jobId}`"
+      <router-link :to="currentExamPath(route, 'importJobDetail', { jobId })"
         class="inline-flex items-center gap-1 text-sm text-primary-600 dark:text-primary-400 hover:underline">
         <ArrowLeftIcon class="h-4 w-4" />
         返回导入任务详情
@@ -63,6 +63,7 @@
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import client from '../api/client'
+import { currentExamPath } from '../utils/examRoutes'
 import SkeletonLoader from '../components/SkeletonLoader.vue'
 import { ArrowLeftIcon, ClipboardDocumentListIcon } from '@heroicons/vue/24/outline'
 

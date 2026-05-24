@@ -70,6 +70,93 @@ client.interceptors.response.use(
 
 ---
 
+## 考试项目上下文 API 契约
+
+### 1. Scope / Trigger
+
+- Trigger: 前端考试项目上下文跨越 router、Pinia、Axios header 和后端 `/api/exams`、`/api/account/active-exam` 响应契约。
+- Scope: 只适用于用户自有考试项目上下文，不适用于管理员全局配置页。
+
+### 2. Signatures
+
+- `GET /api/exams` → 当前用户拥有的考试项目列表。
+- `POST /api/exams` → 创建考试项目，并由后端设置为 active exam。
+- `PATCH /api/exams/{slug}` → 更新当前用户拥有的考试项目。
+- `DELETE /api/exams/{slug}` → 删除当前用户拥有的考试项目。
+- `POST /api/account/active-exam` → 切换 active exam。
+
+### 3. Contracts
+
+`GET /api/exams` 返回包装对象，不是裸数组：
+
+```javascript
+const res = await client.get('/exams')
+myExams.value = Array.isArray(res.data?.items) ? res.data.items : []
+```
+
+`POST /api/account/active-exam` 返回 `{ active_exam: Exam }`，不是裸 Exam：
+
+```javascript
+const res = await client.post('/account/active-exam', { slug })
+current.value = res.data?.active_exam || null
+```
+
+考试项目范围 API 的请求头必须来自 `useExamStore.current.slug`：
+
+```javascript
+if (examStore.current?.slug) {
+  config.headers['X-Exam-Slug'] = examStore.current.slug
+}
+```
+
+不要用 `active_exam_id` 作为 header，也不要从 `localStorage.user.active_exam` 隐式兜底生成 header。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 前端行为 |
+|------|----------|
+| 未登录访问 `/exams`、`/onboarding`、`/exams/:examSlug/*` | 路由守卫跳转 `/login` |
+| 登录后 `auth/me.active_exam` 为空 | 跳转 `/onboarding` |
+| `GET /api/exams` 返回非数组 `items` | `myExams` 降级为空数组 |
+| 切换不存在或无权限的 `examSlug` | 切换失败后回到 `/exams` |
+| 全局认证失效 401 / JWT invalid 422 | 清理 token、user、exam store，并跳转 `/login` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: 已登录且有 active exam，`/` 跳转 `/exams/{slug}/dashboard`，exam-scoped API 带 `X-Exam-Slug: {slug}`。
+- Base: 已登录但没有 active exam，进入 `/onboarding` 创建第一个项目。
+- Bad: 把 `GET /api/exams` 当数组或把 `POST /api/account/active-exam` 当裸 Exam，会导致项目列表为空或 `current.slug` 丢失。
+
+### 6. Tests Required
+
+- Store 测试或手工验证：`fetchExams()` 读取 `res.data.items`，`switchTo()` 读取 `res.data.active_exam`。
+- Router 手工验证：未登录访问 `/exams`、`/onboarding` 重定向 `/login`；有 active exam 时 `/` 进入 `/exams/{slug}/dashboard`。
+- Axios 手工验证：调用 `/banks`、`/quiz/*`、`/wrong`、`/vocab`、`/ai`、`/import-jobs` 时带当前项目 `X-Exam-Slug`。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```javascript
+const res = await client.get('/exams')
+myExams.value = Array.isArray(res.data) ? res.data : []
+
+const switchRes = await client.post('/account/active-exam', { slug })
+current.value = switchRes.data
+```
+
+#### Correct
+
+```javascript
+const res = await client.get('/exams')
+myExams.value = Array.isArray(res.data?.items) ? res.data.items : []
+
+const switchRes = await client.post('/account/active-exam', { slug })
+current.value = switchRes.data?.active_exam || null
+```
+
+---
+
 ## 错误处理三级体系
 
 ### 第 1 级：全局拦截器（认证失效）
