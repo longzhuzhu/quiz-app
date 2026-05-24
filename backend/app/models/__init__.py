@@ -1,6 +1,7 @@
 """模型导出 - 统一导入路径"""
 
 from app.models.user import User
+from app.models.exam import Exam
 from app.models.question_bank import QuestionBank
 from app.models.question import Question
 from app.models.quiz import QuizSession, QuizAnswer
@@ -18,6 +19,7 @@ from app.models.vector_index import VectorIndex
 
 __all__ = [
     "User",
+    "Exam",
     "QuestionBank",
     "Question",
     "QuizSession",

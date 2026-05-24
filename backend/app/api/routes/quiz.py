@@ -8,13 +8,16 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_exam_context
 from app.core.database import get_db
+from app.models.exam import Exam
 from app.models.question import Question
+from app.models.question_bank import QuestionBank
 from app.models.quiz import QuizSession, QuizAnswer
 from app.models.wrong import WrongAnswer, UserQuestionStat
 from app.models.user import User
 from app.schemas.quiz import QuizStartRequest, QuizAnswerRequest, QuizFinishRequest
+from app.services.exam_service import get_bank_in_exam_or_404
 
 router = APIRouter()
 
@@ -79,6 +82,11 @@ def _load_options(question: Question) -> list | dict:
     return options
 
 
+def _ensure_session_in_exam(session: QuizSession, exam: Exam) -> None:
+    if not session.bank or session.bank.exam_id != exam.id:
+        raise HTTPException(status_code=404, detail="答题会话不存在")
+
+
 def _compute_resume_index(question_ids: list[int], answers: list[QuizAnswer]) -> int:
     """根据最近一次答题位置计算未完成会话恢复索引。"""
     if not question_ids:
@@ -109,6 +117,7 @@ def _compute_resume_index(question_ids: list[int], answers: list[QuizAnswer]) ->
 def start_quiz(
     data: QuizStartRequest,
     current_user: User = Depends(get_current_user),
+    exam: Exam = Depends(get_exam_context),
     db: Session = Depends(get_db),
 ):
     user_id = current_user.id
@@ -116,8 +125,9 @@ def start_quiz(
     mode = data.mode
     question_count = data.question_count
     is_exam = mode == "exam"
+    bank = get_bank_in_exam_or_404(db, bank_id, exam)
 
-    query = db.query(Question).filter_by(bank_id=bank_id)
+    query = db.query(Question).filter_by(bank_id=bank.id)
     if mode in ("random", "exam"):
         query = query.order_by(func.random())
     else:
@@ -174,6 +184,7 @@ def start_quiz(
 def submit_answer(
     data: QuizAnswerRequest,
     current_user: User = Depends(get_current_user),
+    exam: Exam = Depends(get_exam_context),
     db: Session = Depends(get_db),
 ):
     user_id = current_user.id
@@ -184,6 +195,7 @@ def submit_answer(
     session = db.get(QuizSession, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="答题会话不存在")
+    _ensure_session_in_exam(session, exam)
     if session.user_id != user_id:
         raise HTTPException(status_code=403, detail="无权限")
     if session.is_completed:
@@ -197,7 +209,12 @@ def submit_answer(
         session_id=session_id, question_id=question_id
     ).first()
 
-    question = db.get(Question, question_id)
+    question = (
+        db.query(Question)
+        .join(QuestionBank, Question.bank_id == QuestionBank.id)
+        .filter(Question.id == question_id, QuestionBank.exam_id == exam.id)
+        .first()
+    )
     if not question:
         raise HTTPException(status_code=404, detail="题目不存在")
     is_correct = user_answer.strip().upper() == question.correct_answer.strip().upper()
@@ -270,12 +287,14 @@ def submit_answer(
 def finish_quiz(
     data: QuizFinishRequest,
     current_user: User = Depends(get_current_user),
+    exam: Exam = Depends(get_exam_context),
     db: Session = Depends(get_db),
 ):
     user_id = current_user.id
     session = db.get(QuizSession, data.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="答题会话不存在")
+    _ensure_session_in_exam(session, exam)
     if session.user_id != user_id:
         raise HTTPException(status_code=403, detail="无权限")
 
@@ -300,11 +319,17 @@ def history(
     page: int = Query(1, ge=1),
     per_page: int = Query(10, ge=1),
     current_user: User = Depends(get_current_user),
+    exam: Exam = Depends(get_exam_context),
     db: Session = Depends(get_db),
 ):
     user_id = current_user.id
     offset = (page - 1) * per_page
-    query = db.query(QuizSession).filter_by(user_id=user_id).order_by(QuizSession.created_at.desc())
+    query = (
+        db.query(QuizSession)
+        .join(QuestionBank, QuizSession.bank_id == QuestionBank.id)
+        .filter(QuizSession.user_id == user_id, QuestionBank.exam_id == exam.id)
+        .order_by(QuizSession.created_at.desc())
+    )
     total = query.count()
     sessions = query.offset(offset).limit(per_page).all()
     pages = (total + per_page - 1) // per_page if total > 0 else 0
@@ -337,10 +362,16 @@ def history(
 @router.delete("/history")
 def clear_history(
     current_user: User = Depends(get_current_user),
+    exam: Exam = Depends(get_exam_context),
     db: Session = Depends(get_db),
 ):
     user_id = current_user.id
-    sessions = db.query(QuizSession).filter_by(user_id=user_id).all()
+    sessions = (
+        db.query(QuizSession)
+        .join(QuestionBank, QuizSession.bank_id == QuestionBank.id)
+        .filter(QuizSession.user_id == user_id, QuestionBank.exam_id == exam.id)
+        .all()
+    )
     for s in sessions:
         db.delete(s)
     db.commit()
@@ -351,6 +382,7 @@ def clear_history(
 def recent_accuracy(
     limit: int = Query(100, ge=10, le=500, description="统计最近答题数"),
     current_user: User = Depends(get_current_user),
+    exam: Exam = Depends(get_exam_context),
     db: Session = Depends(get_db),
 ):
     user_id = current_user.id
@@ -358,8 +390,10 @@ def recent_accuracy(
     sub = (
         db.query(QuizAnswer.id, QuizAnswer.is_correct)
         .join(QuizSession, QuizAnswer.session_id == QuizSession.id)
+        .join(QuestionBank, QuizSession.bank_id == QuestionBank.id)
         .filter(
             QuizSession.user_id == user_id,
+            QuestionBank.exam_id == exam.id,
             QuizAnswer.answered_at.isnot(None),
             QuizAnswer.is_correct.isnot(None),
         )
@@ -388,12 +422,14 @@ def recent_accuracy(
 def session_detail(
     session_id: int,
     current_user: User = Depends(get_current_user),
+    exam: Exam = Depends(get_exam_context),
     db: Session = Depends(get_db),
 ):
     user_id = current_user.id
     session = db.get(QuizSession, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="答题会话不存在")
+    _ensure_session_in_exam(session, exam)
     if session.user_id != user_id:
         raise HTTPException(status_code=403, detail="无权限")
     is_exam = session.mode == "exam"

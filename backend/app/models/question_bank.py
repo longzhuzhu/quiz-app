@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -20,8 +20,12 @@ class QuestionBank(Base):
         DateTime,
         default=lambda: datetime.now(timezone.utc),
     )
+    exam_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("exams.id"), nullable=False, index=True
+    )
 
     # 关系
+    exam = relationship("Exam", back_populates="banks")
     questions = relationship(
         "Question", back_populates="bank", lazy="dynamic", cascade="all, delete-orphan"
     )

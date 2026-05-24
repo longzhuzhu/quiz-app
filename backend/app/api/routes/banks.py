@@ -2,34 +2,20 @@
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from sqlalchemy.exc import SQLAlchemyError
+from fastapi import APIRouter, Depends, HTTPException, File, Form, UploadFile
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_admin
+from app.api.deps import get_current_user, get_exam_context
 from app.core.config import settings as app_settings
 from app.core.database import get_db
+from app.models.bank_word import BankWordFrequency
+from app.models.exam import Exam
 from app.models.question_bank import QuestionBank
-from app.models.question import Question
-from app.models.quiz import QuizSession, QuizAnswer
-from app.models.wrong import WrongAnswer, UserQuestionStat
-from app.models.bank_word import BankWordFrequency, UserBankWordProgress, BankWordExclusion
-from app.models.background_job import BackgroundJob
-from app.models.import_job import ImportJob
-from app.models.import_chunk import ImportChunk
-from app.models.import_parsed_question import ImportParsedQuestion
-from app.models.import_review_item import ImportReviewItem
-from app.models.vector_index import VectorIndex
 from app.models.user import User
 from app.schemas.bank import BankCreateRequest, BankUpdateRequest
-from app.services.import_service import build_bank_word_frequencies
-from app.services.smart_import_service import create_smart_import_job
 from app.services.ai_service import batch_translate_terms
-from app.services.job_service import (
-    JOB_TYPE_BANK_FREQUENT_TRANSLATE,
-    build_scope_key,
-    invalidate_active_scope,
-)
+from app.services.exam_service import delete_bank_data, get_bank_in_exam_or_404
+from app.services.smart_import_service import create_smart_import_job
 
 router = APIRouter()
 
@@ -37,6 +23,7 @@ router = APIRouter()
 def bank_to_dict(bank: QuestionBank) -> dict:
     return {
         "id": bank.id,
+        "exam_id": bank.exam_id,
         "name": bank.name,
         "description": bank.description,
         "source_filename": bank.source_filename,
@@ -102,10 +89,10 @@ def translate_bank_word_frequencies(items):
 @router.get("")
 @router.get("/")
 def list_banks(
-    current_user: User = Depends(get_current_user),
+    exam: Exam = Depends(get_exam_context),
     db: Session = Depends(get_db),
 ):
-    banks = db.query(QuestionBank).order_by(QuestionBank.created_at.desc()).all()
+    banks = db.query(QuestionBank).filter_by(exam_id=exam.id).order_by(QuestionBank.created_at.desc()).all()
     return [bank_to_dict(b) for b in banks]
 
 
@@ -113,26 +100,33 @@ def list_banks(
 @router.post("/", status_code=201)
 def create_bank(
     data: BankCreateRequest,
-    _admin: User = Depends(require_admin),
+    exam: Exam = Depends(get_exam_context),
     db: Session = Depends(get_db),
 ):
-    bank = QuestionBank(name=data.name, description=data.description)
+    bank = QuestionBank(name=data.name, description=data.description, exam_id=exam.id)
     db.add(bank)
     db.commit()
     db.refresh(bank)
     return bank_to_dict(bank)
 
 
+@router.get("/{bank_id}")
+def get_bank(
+    bank_id: int,
+    exam: Exam = Depends(get_exam_context),
+    db: Session = Depends(get_db),
+):
+    return bank_to_dict(get_bank_in_exam_or_404(db, bank_id, exam))
+
+
 @router.put("/{bank_id}")
 def update_bank(
     bank_id: int,
     data: BankUpdateRequest,
-    _admin: User = Depends(require_admin),
+    exam: Exam = Depends(get_exam_context),
     db: Session = Depends(get_db),
 ):
-    bank = db.get(QuestionBank, bank_id)
-    if not bank:
-        raise HTTPException(status_code=404, detail="题库不存在")
+    bank = get_bank_in_exam_or_404(db, bank_id, exam)
 
     if data.name is not None:
         bank.name = data.name
@@ -146,60 +140,12 @@ def update_bank(
 @router.delete("/{bank_id}")
 def delete_bank(
     bank_id: int,
-    _admin: User = Depends(require_admin),
+    exam: Exam = Depends(get_exam_context),
     db: Session = Depends(get_db),
 ):
-    bank = db.get(QuestionBank, bank_id)
-    if not bank:
-        raise HTTPException(status_code=404, detail="题库不存在")
-
-    try:
-        question_ids_subquery = db.query(Question.id).filter(Question.bank_id == bank.id)
-
-        db.query(QuizAnswer).filter(
-            QuizAnswer.question_id.in_(question_ids_subquery)
-        ).delete(synchronize_session=False)
-        db.query(WrongAnswer).filter(
-            WrongAnswer.question_id.in_(question_ids_subquery)
-        ).delete(synchronize_session=False)
-        db.query(UserQuestionStat).filter(
-            UserQuestionStat.question_id.in_(question_ids_subquery)
-        ).delete(synchronize_session=False)
-
-        db.query(QuizSession).filter_by(bank_id=bank.id).delete(synchronize_session=False)
-        db.query(BankWordFrequency).filter_by(bank_id=bank.id).delete(synchronize_session=False)
-        db.query(UserBankWordProgress).filter_by(bank_id=bank.id).delete(synchronize_session=False)
-        db.query(BankWordExclusion).filter_by(bank_id=bank.id).delete(synchronize_session=False)
-        db.query(VectorIndex).filter_by(bank_id=bank.id).delete(synchronize_session=False)
-        db.query(Question).filter_by(bank_id=bank.id).delete(synchronize_session=False)
-
-        # 清理 import_jobs 链：按 FK 依赖从叶子到根删除
-        import_job_ids_subquery = db.query(ImportJob.id).filter(ImportJob.bank_id == bank.id)
-        db.query(ImportReviewItem).filter(
-            ImportReviewItem.import_job_id.in_(import_job_ids_subquery)
-        ).delete(synchronize_session=False)
-        db.query(ImportParsedQuestion).filter(
-            ImportParsedQuestion.import_job_id.in_(import_job_ids_subquery)
-        ).delete(synchronize_session=False)
-        db.query(ImportChunk).filter(
-            ImportChunk.import_job_id.in_(import_job_ids_subquery)
-        ).delete(synchronize_session=False)
-        # 断开 ImportJob -> BackgroundJob FK，再删除关联的 BackgroundJob
-        import_jobs = db.query(ImportJob).filter(ImportJob.bank_id == bank.id).all()
-        bg_job_ids = [ij.background_job_id for ij in import_jobs if ij.background_job_id]
-        for ij in import_jobs:
-            ij.background_job_id = None
-        db.flush()
-        if bg_job_ids:
-            db.query(BackgroundJob).filter(BackgroundJob.id.in_(bg_job_ids)).delete(synchronize_session=False)
-        db.query(ImportJob).filter_by(bank_id=bank.id).delete(synchronize_session=False)
-
-        db.delete(bank)
-        db.commit()
-    except SQLAlchemyError:
-        db.rollback()
-        raise HTTPException(status_code=500, detail="删除题库失败，请稍后重试")
-
+    bank = get_bank_in_exam_or_404(db, bank_id, exam)
+    delete_bank_data(db, bank)
+    db.commit()
     return {"message": "题库已删除"}
 
 
@@ -208,15 +154,12 @@ def import_questions(
     bank_id: int,
     file: UploadFile = File(...),
     force: str = Form("false"),
-    _admin: User = Depends(require_admin),
+    current_user: User = Depends(get_current_user),
+    exam: Exam = Depends(get_exam_context),
     db: Session = Depends(get_db),
 ):
-    """智能导入：创建异步 ImportJob + BackgroundJob，立即返回任务 ID"""
-    bank = db.get(QuestionBank, bank_id)
-    if not bank:
-        raise HTTPException(status_code=404, detail="题库不存在")
+    bank = get_bank_in_exam_or_404(db, bank_id, exam)
 
-    # 读取文件内容并校验大小
     file_bytes = file.file.read()
     if len(file_bytes) > app_settings.upload_max_size_bytes:
         raise HTTPException(
@@ -224,18 +167,16 @@ def import_questions(
             detail=f"文件大小超过限制（最大 {app_settings.MAX_UPLOAD_SIZE_MB}MB）",
         )
 
-    force = force.lower() == "true"
     result = create_smart_import_job(
         db=db,
-        bank_id=bank_id,
+        bank_id=bank.id,
         file_bytes=file_bytes,
         filename=file.filename or "unknown",
-        user_id=_admin.id,
-        force=force,
+        user_id=current_user.id,
+        force=force.lower() == "true",
     )
 
     if "error" in result:
-        # 同文件重复导入返回 409 Conflict
         status_code = 409 if result.get("duplicate_of") else 400
         raise HTTPException(status_code=status_code, detail=result)
 
@@ -245,20 +186,17 @@ def import_questions(
 @router.post("/{bank_id}/translate-frequencies")
 def translate_frequencies(
     bank_id: int,
-    _admin: User = Depends(require_admin),
+    exam: Exam = Depends(get_exam_context),
     db: Session = Depends(get_db),
 ):
-    bank = db.get(QuestionBank, bank_id)
-    if not bank:
-        raise HTTPException(status_code=404, detail="题库不存在")
+    bank = get_bank_in_exam_or_404(db, bank_id, exam)
 
     untranslated = db.query(BankWordFrequency).filter_by(
-        bank_id=bank_id, term_zh=None
+        bank_id=bank.id, term_zh=None
     ).order_by(BankWordFrequency.frequency.desc()).limit(100).all()
 
     if not untranslated:
-        remaining = 0
-        return {"translated": 0, "remaining": remaining}
+        return {"translated": 0, "remaining": 0}
 
     batch = [{"term": item.term} for item in untranslated]
     translation_map = _translate_frequency_batch(batch, 1)
@@ -273,7 +211,7 @@ def translate_frequencies(
     db.commit()
 
     remaining = db.query(BankWordFrequency).filter_by(
-        bank_id=bank_id, term_zh=None
+        bank_id=bank.id, term_zh=None
     ).count()
 
     return {"translated": translated_count, "remaining": remaining}

@@ -20,6 +20,9 @@ class Vocabulary(Base):
     user_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("users.id"), nullable=True
     )
+    exam_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("exams.id"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=lambda: datetime.now(timezone.utc),
@@ -27,6 +30,7 @@ class Vocabulary(Base):
 
     # 关系
     user = relationship("User", back_populates="vocabularies")
+    exam = relationship("Exam", back_populates="vocabularies")
     progress_entries = relationship(
         "UserVocabProgress", back_populates="vocabulary", lazy="dynamic", cascade="all, delete-orphan"
     )

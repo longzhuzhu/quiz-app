@@ -21,6 +21,9 @@ class UserResponse(BaseModel):
     username: str
     email: str
     is_admin: bool
+    active_exam_id: int | None = None
+    active_exam: dict | None = None
+    exam_count: int | None = None
     created_at: str
 
     model_config = {"from_attributes": True}

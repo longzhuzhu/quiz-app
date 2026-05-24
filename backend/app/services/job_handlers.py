@@ -4,30 +4,24 @@
 """
 
 from app.models.bank_word import BankWordFrequency
-from app.models.vocabulary import Vocabulary
-from app.services.ai_service import batch_translate_terms, batch_translate_vocab
+from app.services.ai_service import batch_translate_terms
 from app.services.job_service import (
     JOB_TYPE_BANK_FREQUENT_TRANSLATE,
-    JOB_TYPE_PROFESSIONAL_VOCAB_TRANSLATE,
     JOB_TYPE_QUESTION_IMPORT_LLM,
     JOB_TYPE_QUESTION_IMPORT_LLM_REPARSE,
     deserialize_job_payload,
     heartbeat_job,
     list_bank_frequent_terms,
     text_missing,
-    vocabulary_needs_translation,
 )
 
 from sqlalchemy.orm import Session
 
-PROFESSIONAL_VOCAB_BATCH_SIZE = 10
 BANK_FREQUENT_BATCH_SIZE = 100
 
 
 def run_job(db: Session, job) -> None:
     """根据 job_type 分派任务"""
-    if job.job_type == JOB_TYPE_PROFESSIONAL_VOCAB_TRANSLATE:
-        return handle_professional_vocab_translate(db, job)
     if job.job_type == JOB_TYPE_BANK_FREQUENT_TRANSLATE:
         return handle_bank_frequent_translate(db, job)
     if job.job_type == JOB_TYPE_QUESTION_IMPORT_LLM:
@@ -35,34 +29,6 @@ def run_job(db: Session, job) -> None:
     if job.job_type == JOB_TYPE_QUESTION_IMPORT_LLM_REPARSE:
         return handle_question_import_llm_reparse(db, job)
     raise ValueError(f"不支持的任务类型: {job.job_type}")
-
-
-def handle_professional_vocab_translate(db: Session, job) -> None:
-    while True:
-        batch = (
-            db.query(Vocabulary)
-            .filter(Vocabulary.is_system.is_(True))
-            .order_by(Vocabulary.term.asc())
-            .all()
-        )
-        batch = [word for word in batch if vocabulary_needs_translation(word)][:PROFESSIONAL_VOCAB_BATCH_SIZE]
-        if not batch:
-            return
-
-        translated_count, skipped_count = translate_professional_vocab_batch(db, batch)
-        if translated_count <= 0 and skipped_count <= 0:
-            raise RuntimeError("专业词汇批量翻译未产生进展")
-
-        job = db.get(type(job), job.id)
-        next_done = (job.success_count or 0) + (job.skipped_count or 0) + translated_count + skipped_count
-        heartbeat_job(
-            db,
-            job,
-            success_increment=translated_count,
-            skipped_increment=skipped_count,
-            status_message=f"专业词汇翻译中，已处理 {next_done}/{job.progress_total}",
-        )
-        job = db.get(type(job), job.id)
 
 
 def handle_bank_frequent_translate(db: Session, job) -> None:
@@ -113,14 +79,6 @@ def handle_question_import_llm_reparse(db: Session, job) -> None:
 # ─── 内部辅助 ──────────────────────────────────────
 
 
-def translate_professional_vocab_batch(db: Session, batch: list) -> tuple[int, int]:
-    if not batch:
-        return 0, 0
-    batch_translate_vocab(db, batch)
-    completed_count = _count_completed_professional_vocab(db, [word.id for word in batch])
-    return completed_count, 0
-
-
 def translate_bank_frequency_batch(db: Session, rows: list) -> tuple[int, int]:
     if not rows:
         return 0, 0
@@ -146,15 +104,6 @@ def translate_bank_frequency_batch(db: Session, rows: list) -> tuple[int, int]:
     completed_count = _count_completed_bank_frequency(db, [row.id for row in rows])
     skipped_count = max(completed_count - translated_count, 0)
     return translated_count, skipped_count
-
-
-def _count_completed_professional_vocab(db: Session, batch_ids: list[int]) -> int:
-    db.expire_all()
-    return sum(
-        1
-        for word in db.query(Vocabulary).filter(Vocabulary.id.in_(batch_ids)).all()
-        if not vocabulary_needs_translation(word)
-    )
 
 
 def _count_completed_bank_frequency(db: Session, batch_ids: list[int]) -> int:

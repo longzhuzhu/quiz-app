@@ -1,11 +1,12 @@
 """API 依赖注入 - 数据库会话、当前用户、管理员权限"""
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import decode_access_token
+from app.models.exam import Exam
 from app.models.user import User
 
 security = HTTPBearer(auto_error=False)
@@ -71,3 +72,20 @@ def require_admin(
             detail="需要管理员权限",
         )
     return current_user
+
+
+def get_exam_context(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    x_exam_slug: str | None = Header(None, alias="X-Exam-Slug"),
+) -> Exam:
+    if x_exam_slug is None or not x_exam_slug.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="EXAM_REQUIRED")
+
+    exam = db.query(Exam).filter_by(
+        owner_id=current_user.id,
+        slug=x_exam_slug.strip(),
+    ).first()
+    if exam is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="EXAM_NOT_FOUND")
+    return exam

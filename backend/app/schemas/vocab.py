@@ -35,8 +35,9 @@ class FrequentProgressUpdateRequest(BaseModel):
 
 
 class VocabStatsResponse(BaseModel):
-    professional: int
     personal: int
+    exam_personal: int
+    all: int
 
 
 class BatchTranslateResponse(BaseModel):
