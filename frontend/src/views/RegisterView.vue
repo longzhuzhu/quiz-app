@@ -4,8 +4,8 @@
       <!-- 品牌标识 -->
       <div class="mb-8 text-center">
         <div class="text-4xl mb-3">🎯</div>
-        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">CIPT 备考</h1>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">认证信息隐私技术师考试</p>
+        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">备考助手</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">通用考试项目练习与题库管理</p>
       </div>
 
       <!-- 注册卡片 -->

@@ -4,7 +4,7 @@
       <!-- 左侧品牌 -->
       <router-link to="/" class="flex items-center gap-2 text-lg font-bold text-primary-600">
         <span>🎯</span>
-        <span>CIPT 备考</span>
+        <span>备考助手</span>
       </router-link>
 
       <!-- 中部导航链接（仅桌面端） -->
