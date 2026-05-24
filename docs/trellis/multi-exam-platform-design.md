@@ -1,36 +1,47 @@
-# 通用刷题备考平台改造设计（多考试支持）
+# 通用刷题备考平台改造设计（用户自有考试项目）
 
-- 文档版本：v1.0
-- 创建日期：2026-05-24
-- 状态：待评审 → 实施中
+- 文档版本：v2.0
+- 更新日期：2026-05-24
+- 状态：已评审，待实施
 - 关联文档：`quiz-app-fastapi-postgresql-smart-import-design.md`
+- 关联领域语言：`CONTEXT.md`
+- 关联 ADR：
+  - `docs/adr/0002-exam-project-deletion.md`
+  - `docs/adr/0003-url-exam-slug-and-active-exam.md`
+  - `docs/adr/0004-no-legacy-routes-for-multi-exam.md`
 
 ---
 
 ## 0. 文档导读
 
-本文档定义将当前 **CIPT 专用刷题应用** 改造为 **通用刷题备考平台** 的完整设计，覆盖：
+本文档定义将当前 **CIPT 专用刷题应用** 改造为 **通用刷题备考平台** 的设计。核心模型从“平台公开考试目录 + 用户订阅”收敛为：
 
-- 领域模型变更（数据库 Schema + 迁移脚本）
-- 后端 API 契约（路由清单、请求/响应、依赖注入）
-- 前端交互设计（组件、路由、Pinia Store、用户流）
-- 权限模型与数据可见性规则
-- 分阶段交付计划（PR 拆分）
-- 兼容性与回滚策略
+> 每个用户拥有自己的 **考试项目**；题库、题目、错题、词汇、练习进度和 AI Profile 都在考试项目内隔离。
 
 **本次范围（IN SCOPE）**：
 
-- 引入 `Exam` 一等公民，所有题库/错题/词汇/统计按考试隔离
-- 用户级"我的考试"订阅模型（用户主动加入考试才出现在切换器）
-- 普通用户可创建私有考试，管理员可上架为公开
-- AI Profile 按考试可配置（翻译/解析 prompt）
-- 前端考试切换器、考试目录页、首登引导
+- 引入 `Exam` 一等公民，中文领域术语为 **考试项目**。
+- 所有考试项目由单个用户拥有，通过 `exams.owner_id` 表达归属。
+- 所有题库唯一归属于一个考试项目，不跨考试项目复用或迁移。
+- 题库导入必须发生在当前考试项目上下文中。
+- 错题、历史、词汇、统计按考试项目隔离。
+- 保留跨考试项目个人词汇。
+- AI Profile 按考试项目配置。
+- 前端增加“我的项目”、考试项目切换器、首登创建项目引导。
+- 管理员可只读查看所有用户的考试项目、题库、题目内容和基础统计，用于支持排查。
 
-**本次范围外（OUT OF SCOPE，留作后续 spec）**：
+**本次范围外（OUT OF SCOPE）**：
 
-- ImporterProfile 抽象（通用 XLSX/DOCX 导入器）—— 本次保留现有 ExamTopics PDF 解析逻辑，`exam.importer_profile` 字段预留但不发挥作用
-- QuizProfile 扩展（填空、题组阅读、AI 评分简答题）—— 本次仍保持单选/多选/判断三种题型
-- 题库/考试社区市场、订阅评分
+- 公开考试项目、私有考试项目区分。
+- 加入/退出考试项目、订阅关系、公开目录、可订阅项目。
+- `user_exams` 成员关系表。
+- 上架/下架/停用、`visibility`、`is_listed`、`is_enabled`。
+- 管理员编辑或删除其他用户的考试项目、题库、题目。
+- 管理员查看其他用户答题历史。
+- 旧 URL 兼容重定向。
+- ImporterProfile 抽象。
+- QuizProfile 扩展、新题型。
+- 跨考试项目全局概览。
 
 ---
 
@@ -38,14 +49,20 @@
 
 | 编号 | 决策项 | 结论 |
 |---|---|---|
-| D1 | 多考试切换粒度 | **账号级**（`User.active_exam_id`，URL 带 `examSlug` 自动同步） |
-| D2 | 错题本范围 | **按考试隔离**，不提供跨考试合并视图 |
-| D3 | 词汇本结构 | **双层**：`exam_id IS NULL` = 个人跨考试单词本；`exam_id != NULL` = 考试专属术语本 |
-| D4 | 题目归属 | **唯一归属**，`Question` 通过 `bank_id → exam_id` 单向归属，不支持跨考试复用 |
-| D5 | 考试创建权限 | **B 方案**：普通用户可创建**私有考试**自用；管理员可将其上架为**公开考试** |
-| D6 | "我的考试"模型 | **A 方案**：用户必须显式"加入"考试才出现在切换器，未加入的在 `/exams` 目录页可订阅 |
-| D7 | ImporterProfile | **本次不实现**，字段预留 |
-| D8 | QuizProfile / 新题型 | **本次不实现**，保持现状 |
+| D1 | `Exam` 中文术语 | **考试项目**；空间有限的 UI 可短写为“我的项目” |
+| D2 | 项目归属模型 | 所有考试项目都是用户自有项目，`exams.owner_id` 表示所有者 |
+| D3 | 公开/私有与订阅 | 不做公开/私有区分；不做加入、退出、订阅、上架、下架、停用 |
+| D4 | Slug 唯一性 | `slug` 在同一 owner 范围内唯一，允许 owner 修改；旧 URL 不兼容 |
+| D5 | 当前考试项目 | `users.active_exam_id` 仅作为默认项目和切换器状态，不作为 API 隐式上下文 |
+| D6 | API 考试项目上下文 | 考试项目范围 API 必须显式传 `X-Exam-Slug`，与当前认证用户共同解析 |
+| D7 | 题库归属 | `QuestionBank` 唯一归属一个 `Exam`，不跨项目复用或迁移 |
+| D8 | 题库/题目 owner 字段 | 不在题库和题目重复存 `owner_id`，从 `exam.owner_id` 推导 |
+| D9 | 词汇结构 | 保留跨考试项目个人词汇；项目专属词汇只表示用户个人词汇 |
+| D10 | AI Profile | 按考试项目配置；owner 可编辑，管理员只读查看他人项目配置 |
+| D11 | 存量 CIPT 迁移 | 当前存量 CIPT 数据只迁移到当前管理员用户的自有 CIPT 考试项目 |
+| D12 | 管理员能力 | 管理员可只读查看其他用户项目/题库/题目/基础统计，不编辑、不删除、不看答题历史 |
+| D13 | 删除语义 | owner 可删除整个考试项目及项目内数据；跨考试项目个人词汇保留 |
+| D14 | 路由兼容 | 不保留 `/banks`、`/wrong`、`/vocab` 等旧路由兼容重定向 |
 
 ---
 
@@ -53,123 +70,113 @@
 
 ### 2.1 模型关系图
 
-```
-┌─────────────┐         ┌────────────────┐
-│    User     │────M:N──│    Exam        │  via user_exams
-│             │         │                │
-│ active_exam │────────►│ id, slug, name │
-└─────┬───────┘         │ visibility     │
-      │                 │ owner_id       │
-      │                 │ ai_profile     │
-      │                 └────────┬───────┘
-      │                          │ 1:N
-      │                          ▼
-      │                   ┌──────────────┐
-      │                   │ QuestionBank │
-      │                   │  exam_id (NN)│
-      │                   └──────┬───────┘
-      │                          │ 1:N
-      │                          ▼
-      │                   ┌──────────────┐
-      │                   │  Question    │
-      │                   └──────┬───────┘
-      │                          │ 1:N
-      │                          ▼
-      │                   ┌──────────────┐
-      └──── 1:N ─────────►│ WrongAnswer  │
-                          └──────────────┘
+```text
+┌─────────────┐       1:N       ┌──────────────┐
+│    User     │────────────────▶│     Exam     │
+│             │                 │ owner_id     │
+│ active_exam │────────────────▶│ slug, name   │
+└─────┬───────┘                 │ ai_profile   │
+      │                         └──────┬───────┘
+      │                                │ 1:N
+      │                                ▼
+      │                         ┌──────────────┐
+      │                         │ QuestionBank │
+      │                         │ exam_id      │
+      │                         └──────┬───────┘
+      │                                │ 1:N
+      │                                ▼
+      │                         ┌──────────────┐
+      │                         │  Question    │
+      │                         └──────┬───────┘
+      │                                │ 1:N
+      │                                ▼
+      └─────────────── 1:N ─────│ WrongAnswer  │
+                                └──────────────┘
 
 ┌──────────────┐
-│  Vocabulary  │   exam_id (NULL=个人跨考试 / NN=考试术语)
-│  user_id     │   user_id  (NULL=系统/管理员维护 / NN=用户私有)
+│  Vocabulary  │
+│  user_id     │  必填：词汇归属用户
+│  exam_id     │  NULL = 跨考试项目个人词汇；非 NULL = 考试项目专属词汇
 └──────────────┘
 ```
 
-### 2.2 新增表
-
-#### `exams` —— 考试/科目
+### 2.2 新增表：`exams` —— 考试项目
 
 | 字段 | 类型 | 约束 | 说明 |
 |---|---|---|---|
 | id | INT PK | autoinc | |
-| slug | VARCHAR(50) | UNIQUE NOT NULL | URL 标识，如 `cipt`、`pmp`、`aws-saa` |
-| name | VARCHAR(100) | NOT NULL | 完整名，如"CIPT 信息隐私技术认证" |
-| short_name | VARCHAR(30) | NOT NULL | 切换器显示，如"CIPT" |
-| description | TEXT | NULL | 简介（Markdown） |
-| icon | VARCHAR(50) | NULL | lucide 图标名，如 `Shield` |
+| owner_id | INT FK→users.id | NOT NULL | 考试项目所有者 |
+| slug | VARCHAR(50) | NOT NULL | owner 范围内唯一短标识，如 `cipt`、`pmp` |
+| name | VARCHAR(100) | NOT NULL | 完整名称 |
+| short_name | VARCHAR(30) | NOT NULL | UI 短名称 |
+| description | TEXT | NULL | 简介 |
+| icon | VARCHAR(50) | NULL | lucide 图标名 |
 | locale | VARCHAR(10) | NOT NULL DEFAULT 'en-US' | 题目原文语言 |
-| visibility | VARCHAR(10) | NOT NULL DEFAULT 'private' | `public` / `private` |
-| owner_id | INT FK→users.id | NULL | 创建者；`public` 考试可为 NULL（平台官方） |
-| is_active | BOOLEAN | NOT NULL DEFAULT true | 下架开关 |
-| sort_order | INT | NOT NULL DEFAULT 0 | 目录页排序 |
-| importer_profile | VARCHAR(50) | NOT NULL DEFAULT 'examtopics-pdf' | 预留字段（D7） |
-| ai_profile | JSONB | NOT NULL DEFAULT '{}' | 见 §2.4 |
-| quiz_profile | JSONB | NOT NULL DEFAULT '{}' | 预留字段（D8） |
+| sort_order | INT | NOT NULL DEFAULT 0 | 用户自己的项目排序 |
+| importer_profile | VARCHAR(50) | NOT NULL DEFAULT 'examtopics-pdf' | 预留字段，本次不读取 |
+| ai_profile | JSONB | NOT NULL DEFAULT '{}' | 考试项目 AI Profile |
+| quiz_profile | JSONB | NOT NULL DEFAULT '{}' | 预留字段，本次不读取 |
 | created_at | TIMESTAMPTZ | NOT NULL DEFAULT now() | |
 | updated_at | TIMESTAMPTZ | NOT NULL DEFAULT now() | |
 
-**索引**：`UNIQUE(slug)`、`INDEX(visibility, is_active, sort_order)`、`INDEX(owner_id)`
+**索引与约束**：
 
-**业务约束**：
-
-- `visibility = 'private'` 时 `owner_id` 必须非 NULL
-- `visibility = 'public'` 时 `owner_id` 可空（官方考试）或保留首位创建者
-- 已有 `QuestionBank` 的 `Exam` 不允许删除（仅可 `is_active = false` 软下架）
-
-#### `user_exams` —— 用户订阅关系（D6）
-
-| 字段 | 类型 | 约束 | 说明 |
-|---|---|---|---|
-| user_id | INT FK→users.id | NOT NULL | |
-| exam_id | INT FK→exams.id | NOT NULL | |
-| joined_at | TIMESTAMPTZ | NOT NULL DEFAULT now() | |
-| role | VARCHAR(20) | NOT NULL DEFAULT 'member' | `member` / `editor` / `owner` |
-
-**主键**：`(user_id, exam_id)`
-**索引**：`INDEX(user_id)`、`INDEX(exam_id)`
+- `UNIQUE(owner_id, slug)`
+- `INDEX(owner_id, sort_order)`
 
 **业务规则**：
 
-- 创建私有考试时自动插入 `(owner, exam, role='owner')`
-- 公开考试需用户主动 `POST /api/exams/{slug}/join` 才落库
-- 取消订阅 `DELETE /api/exams/{slug}/leave`，但 `role='owner'` 不可退订
-- `active_exam_id` 必须是用户已加入的考试，否则切换接口拒绝
+- 用户只能在自己的 owner 范围内创建、编辑、删除考试项目。
+- 同一用户不能有两个相同 slug 的考试项目。
+- 不同用户可以使用相同 slug。
+- owner 可以修改 slug；修改后旧 URL 不保留兼容重定向。
+- owner 删除考试项目时，删除项目内题库、题目、错题、历史、项目专属词汇；跨考试项目个人词汇不删除。
 
 ### 2.3 现有表改动
 
 | 表 | 字段变更 | 约束 | 数据迁移 |
 |---|---|---|---|
-| `users` | `+ active_exam_id INT NULL FK→exams.id` | — | 全量回填为 CIPT id |
-| `question_banks` | `+ exam_id INT NOT NULL FK→exams.id` | 一旦设定不可改 | 存量回填 CIPT id，再加 NOT NULL |
-| `vocabularies` | `+ exam_id INT NULL FK→exams.id` | — | `is_system = true` 的行回填 CIPT id；其余保持 NULL（变成"个人跨考试单词本"） |
-| `wrong_answers` | 不改字段 | 通过 `JOIN questions JOIN question_banks` 推导 exam | 加复合索引 `(user_id, question_id)` |
-| `quiz_sessions` | 不改字段 | 通过 `bank_id → exam_id` 推导 | — |
+| `users` | `+ active_exam_id INT NULL FK→exams.id` | active exam 必须属于该用户 | 当前管理员用户回填为 CIPT 项目 id；其他用户为 NULL |
+| `question_banks` | `+ exam_id INT NOT NULL FK→exams.id` | 一旦创建后不允许跨项目迁移 | 存量题库回填到管理员 CIPT 项目 |
+| `vocabularies` | `+ exam_id INT NULL FK→exams.id` | `user_id` 应为非 NULL | 存量系统词汇迁移为管理员 CIPT 项目专属词汇 |
+| `wrong_answers` | 不改字段 | 通过 question→bank→exam 推导项目 | 加复合索引 `(user_id, question_id)` |
+| `quiz_sessions` | 不改字段 | 通过 `bank_id → exam_id` 推导项目 | — |
 
-> **关于 `wrong_answers.exam_id` 是否冗余**：评估查询频率与 JOIN 成本后采用**隐式过滤方案**，零数据冗余、迁移最简。如未来出现性能瓶颈再增加冗余字段（不阻塞本次设计）。
+> 不新增 `user_exams`。本设计没有加入、退出、成员、订阅关系。
 
-### 2.4 `ai_profile` JSONB 结构
+### 2.4 AI Profile
+
+`ai_profile` 是考试项目级配置，不支持题库级或题目级覆盖。
 
 ```jsonc
 {
-  "translation_system_prompt": "你是信息隐私领域的专业翻译...",
-  "explanation_system_prompt": "你是 IAPP CIPT 认证的专家讲师...",
+  "translation_system_prompt": "你是专业考试题目的翻译助手...",
+  "explanation_system_prompt": "你是专业考试题目的解析助手...",
   "vocab_extract_system_prompt": "从下列题目中识别专业术语...",
   "source_lang": "en",
   "target_lang": "zh-CN",
-  "model_override": null,           // null = 使用全局 SystemSetting.default_model
+  "model_override": null,
   "enabled_features": ["translate", "explain", "vocab_extract"]
 }
 ```
 
-**校验**：通过 Pydantic `AIProfile` schema 验证；缺失字段使用全局默认。
+**规则**：
 
-### 2.5 `quiz_profile` JSONB 结构（预留，D8）
+- 新建考试项目默认使用平台通用 AI Profile。
+- 创建时可选择复制 owner 已有考试项目的 AI Profile。
+- owner 可编辑自己考试项目的 AI Profile。
+- 管理员只读查看其他用户考试项目的 AI Profile，用于支持排查。
+- 存量 CIPT prompt 迁移到管理员 CIPT 项目的 AI Profile。
+
+### 2.5 Quiz Profile
+
+`quiz_profile` 字段仅预留，本次不读取。
 
 ```jsonc
 {
-  "supported_types": ["single", "multi", "boolean"],
+  "supported_types": ["single", "multiple", "truefalse"],
   "scoring": {
-    "multi": "all-or-nothing",      // 或 "partial-credit"
+    "multiple": "all-or-nothing",
     "passing_score": 0.7
   },
   "timer_seconds_per_question": null,
@@ -178,186 +185,98 @@
 }
 ```
 
-本次不读取该字段，前端使用全局默认行为。
-
 ---
 
-## 3. Alembic 迁移脚本
+## 3. Alembic 迁移设计
 
-文件：`backend/alembic/versions/003_add_exams_and_relations.py`
+文件：`backend/alembic/versions/003_add_user_owned_exams.py`
+
+### 3.1 升级步骤
+
+1. 创建 `exams` 表。
+2. 找到当前存量管理员用户。
+3. 为该管理员创建 `slug='cipt'` 的 CIPT 考试项目。
+4. 为 `question_banks` 增加 `exam_id`，将存量题库回填到管理员 CIPT 项目，再设置 NOT NULL 和 FK。
+5. 为 `vocabularies` 增加 `exam_id`：
+   - 存量 `is_system = true` 词汇：设置 `user_id = 管理员用户 id`，`exam_id = 管理员 CIPT 项目 id`。
+   - 存量非系统个人词汇：保留为 `exam_id = NULL` 的跨考试项目个人词汇。
+6. 为 `users` 增加 `active_exam_id`：
+   - 管理员用户回填为 CIPT 项目 id。
+   - 其他用户保持 NULL，登录后通过引导创建第一个考试项目。
+7. 为 `wrong_answers` 增加 `(user_id, question_id)` 索引。
+
+### 3.2 关键约束
 
 ```python
-"""add exams and multi-exam relations
-
-Revision ID: 003_multi_exam
-Revises: 002_xxx
-Create Date: 2026-05-24
-"""
-from alembic import op
-import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
-
-revision = "003_multi_exam"
-down_revision = "002_xxx"  # 替换为实际上一个版本
-
-CIPT_DEFAULT_AI_PROFILE = {
-    "translation_system_prompt": "<从现有 ai_service.py 抽出>",
-    "explanation_system_prompt": "<从现有 ai_service.py 抽出>",
-    "vocab_extract_system_prompt": "<从现有 ai_service.py 抽出>",
-    "source_lang": "en",
-    "target_lang": "zh-CN",
-    "model_override": None,
-    "enabled_features": ["translate", "explain", "vocab_extract"],
-}
-
-def upgrade():
-    # 1. exams 表
-    op.create_table(
-        "exams",
-        sa.Column("id", sa.Integer, primary_key=True),
-        sa.Column("slug", sa.String(50), nullable=False, unique=True),
-        sa.Column("name", sa.String(100), nullable=False),
-        sa.Column("short_name", sa.String(30), nullable=False),
-        sa.Column("description", sa.Text, nullable=True),
-        sa.Column("icon", sa.String(50), nullable=True),
-        sa.Column("locale", sa.String(10), nullable=False, server_default="en-US"),
-        sa.Column("visibility", sa.String(10), nullable=False, server_default="private"),
-        sa.Column("owner_id", sa.Integer, sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
-        sa.Column("is_active", sa.Boolean, nullable=False, server_default=sa.true()),
-        sa.Column("sort_order", sa.Integer, nullable=False, server_default="0"),
-        sa.Column("importer_profile", sa.String(50), nullable=False, server_default="examtopics-pdf"),
-        sa.Column("ai_profile", postgresql.JSONB, nullable=False, server_default="{}"),
-        sa.Column("quiz_profile", postgresql.JSONB, nullable=False, server_default="{}"),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-    )
-    op.create_index("ix_exams_listing", "exams", ["visibility", "is_active", "sort_order"])
-    op.create_index("ix_exams_owner", "exams", ["owner_id"])
-
-    # 2. user_exams 关联表
-    op.create_table(
-        "user_exams",
-        sa.Column("user_id", sa.Integer, sa.ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
-        sa.Column("exam_id", sa.Integer, sa.ForeignKey("exams.id", ondelete="CASCADE"), primary_key=True),
-        sa.Column("joined_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.Column("role", sa.String(20), nullable=False, server_default="member"),
-    )
-    op.create_index("ix_user_exams_user", "user_exams", ["user_id"])
-    op.create_index("ix_user_exams_exam", "user_exams", ["exam_id"])
-
-    # 3. 插入默认 CIPT 公开考试
-    conn = op.get_bind()
-    cipt_id = conn.execute(sa.text("""
-        INSERT INTO exams (slug, name, short_name, description, icon, locale,
-                           visibility, owner_id, is_active, sort_order,
-                           importer_profile, ai_profile, quiz_profile)
-        VALUES ('cipt', 'CIPT 信息隐私技术认证', 'CIPT',
-                'IAPP 信息隐私技术认证（Certified Information Privacy Technologist）',
-                'Shield', 'en-US', 'public', NULL, true, 0,
-                'examtopics-pdf', :ai, '{}'::jsonb)
-        RETURNING id
-    """), {"ai": sa.text("CAST(:p AS JSONB)").bindparams(p=CIPT_DEFAULT_AI_PROFILE)}).scalar()
-
-    # 4. question_banks.exam_id
-    op.add_column("question_banks", sa.Column("exam_id", sa.Integer, nullable=True))
-    conn.execute(sa.text(f"UPDATE question_banks SET exam_id = {cipt_id}"))
-    op.alter_column("question_banks", "exam_id", nullable=False)
-    op.create_foreign_key("fk_banks_exam", "question_banks", "exams",
-                          ["exam_id"], ["id"], ondelete="RESTRICT")
-    op.create_index("ix_banks_exam", "question_banks", ["exam_id"])
-
-    # 5. vocabularies.exam_id
-    op.add_column("vocabularies", sa.Column("exam_id", sa.Integer, nullable=True))
-    op.create_foreign_key("fk_vocab_exam", "vocabularies", "exams",
-                          ["exam_id"], ["id"], ondelete="CASCADE")
-    op.create_index("ix_vocab_scope", "vocabularies", ["user_id", "exam_id"])
-    conn.execute(sa.text(f"UPDATE vocabularies SET exam_id = {cipt_id} WHERE is_system = true"))
-
-    # 6. users.active_exam_id
-    op.add_column("users", sa.Column("active_exam_id", sa.Integer, nullable=True))
-    op.create_foreign_key("fk_users_active_exam", "users", "exams",
-                          ["active_exam_id"], ["id"], ondelete="SET NULL")
-    conn.execute(sa.text(f"UPDATE users SET active_exam_id = {cipt_id}"))
-
-    # 7. 全量回填 user_exams（所有现存用户都"加入"了 CIPT）
-    conn.execute(sa.text(f"""
-        INSERT INTO user_exams (user_id, exam_id, role)
-        SELECT id, {cipt_id}, 'member' FROM users
-        ON CONFLICT DO NOTHING
-    """))
-
-    # 8. wrong_answers 索引补强
-    op.create_index("ix_wrong_user_question", "wrong_answers", ["user_id", "question_id"])
-
-
-def downgrade():
-    op.drop_index("ix_wrong_user_question", table_name="wrong_answers")
-    op.drop_constraint("fk_users_active_exam", "users", type_="foreignkey")
-    op.drop_column("users", "active_exam_id")
-    op.drop_index("ix_vocab_scope", table_name="vocabularies")
-    op.drop_constraint("fk_vocab_exam", "vocabularies", type_="foreignkey")
-    op.drop_column("vocabularies", "exam_id")
-    op.drop_index("ix_banks_exam", table_name="question_banks")
-    op.drop_constraint("fk_banks_exam", "question_banks", type_="foreignkey")
-    op.drop_column("question_banks", "exam_id")
-    op.drop_table("user_exams")
-    op.drop_index("ix_exams_owner", table_name="exams")
-    op.drop_index("ix_exams_listing", table_name="exams")
-    op.drop_table("exams")
+op.create_table(
+    "exams",
+    sa.Column("id", sa.Integer, primary_key=True),
+    sa.Column("owner_id", sa.Integer, sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    sa.Column("slug", sa.String(50), nullable=False),
+    sa.Column("name", sa.String(100), nullable=False),
+    sa.Column("short_name", sa.String(30), nullable=False),
+    sa.Column("description", sa.Text, nullable=True),
+    sa.Column("icon", sa.String(50), nullable=True),
+    sa.Column("locale", sa.String(10), nullable=False, server_default="en-US"),
+    sa.Column("sort_order", sa.Integer, nullable=False, server_default="0"),
+    sa.Column("importer_profile", sa.String(50), nullable=False, server_default="examtopics-pdf"),
+    sa.Column("ai_profile", postgresql.JSONB, nullable=False, server_default="{}"),
+    sa.Column("quiz_profile", postgresql.JSONB, nullable=False, server_default="{}"),
+    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+    sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+)
+op.create_unique_constraint("uq_exams_owner_slug", "exams", ["owner_id", "slug"])
+op.create_index("ix_exams_owner_sort", "exams", ["owner_id", "sort_order"])
 ```
+
+### 3.3 迁移风险
+
+- 如果不存在管理员用户，迁移应失败并提示先创建管理员用户。
+- 存量 `is_system=true` 词汇如果没有 `user_id`，必须回填为管理员用户 id，避免后续继续存在系统/官方词汇语义。
+- 存量题库只迁移到当前管理员项目，不复制给其他用户。
 
 ---
 
 ## 4. 后端 API 契约
 
-### 4.1 新增依赖：`get_active_exam`
+### 4.1 考试项目解析依赖
 
 `backend/app/api/deps.py`：
 
 ```python
-async def get_active_exam(
+async def get_exam_context(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    x_exam_slug: str | None = Header(None, alias="X-Exam-Slug"),
+    x_exam_slug: str = Header(..., alias="X-Exam-Slug"),
 ) -> Exam:
-    """
-    解析当前请求的考试上下文。
-    优先级：HTTP Header X-Exam-Slug > User.active_exam_id
-    若用户未加入该考试或考试不存在，抛 403/404。
-    """
-    if x_exam_slug:
-        exam = await db.scalar(select(Exam).where(Exam.slug == x_exam_slug))
-        if not exam:
-            raise HTTPException(404, "Exam not found")
-    elif user.active_exam_id:
-        exam = await db.get(Exam, user.active_exam_id)
-    else:
-        raise HTTPException(400, "No active exam. Join an exam first.")
-
-    # 校验加入关系
-    membership = await db.scalar(
-        select(UserExam).where(UserExam.user_id == user.id, UserExam.exam_id == exam.id)
+    """解析当前请求显式声明的考试项目上下文。"""
+    exam = await db.scalar(
+        select(Exam).where(
+            Exam.owner_id == user.id,
+            Exam.slug == x_exam_slug,
+        )
     )
-    if not membership and exam.visibility == "private" and exam.owner_id != user.id:
-        raise HTTPException(403, "You have not joined this exam")
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found")
     return exam
 ```
 
-### 4.2 新增路由
+**规则**：
 
-#### `/api/exams` —— 考试目录与订阅
+- 考试项目范围 API 必须传 `X-Exam-Slug`。
+- 不使用 `users.active_exam_id` 作为 API 隐式兜底。
+- `active_exam_id` 只用于默认进入哪个项目、切换器状态和 `/` 跳转。
+- 管理员只读后台接口使用单独依赖，不复用普通用户的 owner-scoped 解析。
+
+### 4.2 `/api/exams` —— 我的项目
 
 | 方法 | 路径 | 权限 | 用途 |
 |---|---|---|---|
-| GET | `/api/exams` | 已登录 | 列表，query: `?scope=mine` (默认) `\|public` `\|all`(管理员) |
-| GET | `/api/exams/{slug}` | 已登录 | 详情；私有考试仅 owner/member 可见 |
-| POST | `/api/exams` | 已登录 | 创建考试（默认 `visibility=private`，自动加入并置为 owner） |
-| PATCH | `/api/exams/{slug}` | owner/admin | 编辑基本信息与 ai_profile |
-| DELETE | `/api/exams/{slug}` | owner/admin | 仅当 `question_banks` 为空时允许，否则返回 409 |
-| POST | `/api/exams/{slug}/join` | 已登录 | 订阅公开考试（私有考试 403） |
-| DELETE | `/api/exams/{slug}/leave` | 已登录 | 退订；owner 不可退订 |
-| POST | `/api/exams/{slug}/publish` | admin | 将私有考试上架为 public |
-| POST | `/api/exams/{slug}/unpublish` | admin | 公开降级为 private（owner 仍保留） |
+| GET | `/api/exams` | 已登录 | 列出当前用户拥有的考试项目 |
+| POST | `/api/exams` | 已登录 | 创建考试项目，自动设为当前用户拥有 |
+| GET | `/api/exams/{slug}` | owner | 获取自己的考试项目详情 |
+| PATCH | `/api/exams/{slug}` | owner | 编辑基本信息、slug、AI Profile |
+| DELETE | `/api/exams/{slug}` | owner | 删除考试项目及项目内数据 |
 
 **`POST /api/exams` 请求体**：
 
@@ -369,12 +288,19 @@ async def get_active_exam(
   "description": "...",
   "icon": "Briefcase",
   "locale": "en-US",
-  "ai_profile": { "...": "..." },
-  "copy_ai_profile_from": "cipt"   // 可选；若提供则忽略 ai_profile，复制现有 cipt 配置
+  "ai_profile_mode": "default",
+  "copy_ai_profile_from": null,
+  "ai_profile": null
 }
 ```
 
-**响应（统一 ExamRead）**：
+`ai_profile_mode`：
+
+- `default`：使用平台通用 AI Profile。
+- `copy`：复制当前用户已有考试项目的 AI Profile。
+- `custom`：使用请求体里的自定义 AI Profile。
+
+**响应（ExamRead）**：
 
 ```json
 {
@@ -385,85 +311,101 @@ async def get_active_exam(
   "description": "...",
   "icon": "Briefcase",
   "locale": "en-US",
-  "visibility": "private",
+  "sort_order": 0,
   "owner": { "id": 5, "username": "alice" },
-  "is_active": true,
-  "joined": true,
-  "role": "owner",
   "stats": { "bank_count": 0, "question_count": 0, "wrong_count": 0, "progress": 0.0 },
   "ai_profile": { "...": "..." },
   "created_at": "2026-05-24T10:00:00Z"
 }
 ```
 
-#### `/api/account/active-exam` —— 切换当前考试
+### 4.3 `/api/account/active-exam` —— 切换默认项目
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| POST | `/api/account/active-exam` | body: `{ "slug": "pmp" }`；写入 `User.active_exam_id`；返回新的 `ExamRead` |
+| POST | `/api/account/active-exam` | body: `{ "slug": "pmp" }`；校验该 slug 属于当前用户后写入 `users.active_exam_id` |
 
-校验：用户必须已加入该考试，否则 400。
+删除当前 active 考试项目时，清空 `active_exam_id`，不自动选择其他项目。
 
-#### `/api/me` —— 增强响应
+### 4.4 `/api/me` —— 增强响应
 
 ```json
 {
   "id": 1,
   "username": "...",
   "is_admin": false,
-  "active_exam": { "...ExamRead..." },     // 可能为 null（新用户尚未选择）
-  "joined_exam_count": 3
+  "active_exam": { "...ExamRead..." },
+  "exam_count": 3
 }
 ```
 
-完整考试列表通过 `GET /api/exams?scope=mine` 获取，避免 `/api/me` 响应过大。
+### 4.5 管理员只读接口
 
-### 4.3 现有路由改造
+| 方法 | 路径 | 权限 | 用途 |
+|---|---|---|---|
+| GET | `/api/admin/exams` | admin | 只读列出所有用户考试项目和基础统计 |
+| GET | `/api/admin/exams/{id}` | admin | 只读查看某个考试项目详情 |
+| GET | `/api/admin/exams/{id}/banks` | admin | 只读查看题库列表 |
+| GET | `/api/admin/banks/{id}/questions` | admin | 只读查看题目内容 |
+
+本阶段不提供：
+
+- 管理员编辑/删除他人考试项目。
+- 管理员编辑/删除他人题库或题目。
+- 管理员查看用户答题历史。
+
+### 4.6 现有路由改造
 
 | 路由 | 改造 |
 |---|---|
-| `GET /api/banks` | 注入 `Depends(get_active_exam)`，列表 `WHERE exam_id = active_exam.id` |
-| `POST /api/banks/import` | 请求体新增 `exam_id`（必填），落库时绑定；`exam_id` 必须是当前用户加入的考试 |
-| `GET /api/banks/{id}` | 加权限校验：bank 所属 exam 是否对当前用户可见 |
-| `GET /api/wrong` | `JOIN questions q JOIN question_banks b ON q.bank_id = b.id WHERE b.exam_id = :active` |
-| `GET /api/quiz/history` | 同上 |
-| `GET /api/vocab` | 见 §4.4 双层过滤逻辑 |
-| `POST /api/vocab` | 请求体加可选 `exam_id`（不传 = 个人跨考试本；传 = 当前考试） |
-| `POST /api/ai/translate`, `POST /api/ai/explain` | 通过 question→bank→exam 取 `ai_profile`，覆盖全局 prompt |
+| `GET /api/banks` | 注入 `get_exam_context`，列表 `WHERE question_banks.exam_id = exam.id` |
+| `POST /api/banks/import` | 必须在 `X-Exam-Slug` 指定的考试项目中导入 |
+| `GET /api/banks/{id}` | 校验 bank 属于当前用户解析出的 exam |
+| `PATCH/DELETE /api/banks/{id}` | 只允许 owner 管理自己项目内题库 |
+| `GET /api/questions` | 通过 bank→exam 校验 owner 边界 |
+| `GET /api/wrong` | 通过 question→bank→exam 过滤当前考试项目 |
+| `GET /api/quiz/history` | 通过 bank→exam 过滤当前考试项目 |
+| `GET /api/vocab` | 见 §4.7 双层个人词汇查询 |
+| `POST /api/vocab` | 默认添加到当前考试项目专属词汇；可显式保存为跨考试项目个人词汇 |
+| `POST /api/ai/translate`, `POST /api/ai/explain` | 通过 question→bank→exam 取考试项目 AI Profile |
 
-### 4.4 词汇本双层查询（D3 落地）
+### 4.7 词汇本双层查询
 
 **`GET /api/vocab` query 参数**：
 
 | 参数 | 含义 | 默认 |
 |---|---|---|
-| `scope` | `personal` / `exam_official` / `exam_personal` / `all` | `all` |
+| `scope` | `personal` / `exam_personal` / `all` | `all` |
 | `q` | 搜索词 | — |
 | `page`, `page_size` | 分页 | 1, 20 |
 
-**SQL 模板**（`scope=all`）：
+**SQL 模板（scope=all）**：
 
 ```sql
 SELECT * FROM vocabularies
 WHERE
-  (exam_id IS NULL AND user_id = :me)              -- personal
-  OR (exam_id = :active AND user_id IS NULL)       -- exam_official
-  OR (exam_id = :active AND user_id = :me)         -- exam_personal
+  user_id = :me
+  AND (
+    exam_id IS NULL
+    OR exam_id = :active_exam
+  )
 ORDER BY updated_at DESC;
 ```
 
-每条记录响应增加 `scope_label` 字段：`"personal"` / `"exam_official"` / `"exam_personal"`，前端用于 Tab 渲染。
+每条记录响应增加 `scope_label`：
 
-### 4.5 错误码约定
+- `personal`：跨考试项目个人词汇。
+- `exam_personal`：当前考试项目专属词汇。
+
+### 4.8 错误码约定
 
 | HTTP | code | 场景 |
 |---|---|---|
-| 400 | `EXAM_REQUIRED` | 操作需要考试上下文但用户无 active_exam |
-| 403 | `EXAM_NOT_JOINED` | 用户未加入访问的考试 |
-| 403 | `EXAM_PRIVATE` | 试图访问他人私有考试 |
-| 404 | `EXAM_NOT_FOUND` | slug 不存在或已下架 |
-| 409 | `EXAM_HAS_BANKS` | 删除时仍存在题库 |
-| 409 | `BANK_EXAM_MISMATCH` | 试图把题目从一个考试移到另一个（D4 硬约束） |
+| 400 | `EXAM_REQUIRED` | 考试项目范围 API 缺少 `X-Exam-Slug` |
+| 403 | `EXAM_FORBIDDEN` | 当前用户无权访问该考试项目 |
+| 404 | `EXAM_NOT_FOUND` | 当前用户范围内找不到该 slug |
+| 409 | `EXAM_SLUG_EXISTS` | 同一 owner 下 slug 重复 |
+| 409 | `BANK_EXAM_MISMATCH` | 试图把题库或题目移动到另一个考试项目 |
 
 ---
 
@@ -474,234 +416,227 @@ ORDER BY updated_at DESC;
 | 路径 | 组件 | 说明 |
 |---|---|---|
 | `/` | 重定向到 `/exams/{activeSlug}/dashboard` 或 `/onboarding` | |
-| `/onboarding` | `FirstTimeOnboarding.vue` | 新用户首登 |
-| `/exams` | `ExamCatalogPage.vue` | 考试目录（我的 + 可订阅 + 创建入口） |
-| `/exams/new` | `ExamCreatePage.vue` | 创建私有考试 |
-| `/exams/:examSlug/dashboard` | `ExamDashboard.vue` | 当前考试首页 |
+| `/onboarding` | `FirstTimeOnboarding.vue` | 创建第一个考试项目 |
+| `/exams` | `MyExamProjectsPage.vue` | 我的项目列表 |
+| `/exams/new` | `ExamCreatePage.vue` | 新建考试项目 |
+| `/exams/:examSlug/dashboard` | `ExamDashboard.vue` | 当前考试项目首页 |
 | `/exams/:examSlug/banks` | `BankList.vue` | 题库列表 |
-| `/exams/:examSlug/banks/:bankId` | `BankDetail.vue` | |
-| `/exams/:examSlug/quiz/:bankId` | `QuizSession.vue` | 答题（meta: locked=true） |
+| `/exams/:examSlug/banks/:bankId` | `BankDetail.vue` | 题库详情 |
+| `/exams/:examSlug/quiz/:bankId` | `QuizSession.vue` | 答题 |
 | `/exams/:examSlug/wrong` | `WrongBook.vue` | 错题本 |
-| `/exams/:examSlug/vocab` | `VocabBook.vue` | 词汇本（三 Tab） |
-| `/me/overview` | `GlobalOverview.vue` | 跨考试汇总卡片 |
-| `/admin/exams` | `AdminExamList.vue` | 管理员：考试管理 |
-| `/admin/exams/:slug/edit` | `AdminExamEditor.vue` | 编辑（基本信息/AI Profile/上下架） |
+| `/exams/:examSlug/vocab` | `VocabBook.vue` | 词汇本 |
+| `/admin/exams` | `AdminExamList.vue` | 管理员只读：所有用户项目 |
+| `/admin/exams/:id` | `AdminExamDetail.vue` | 管理员只读：项目、题库、题目 |
 
-**兼容性**：旧链接 `/banks`, `/banks/:id`, `/wrong`, `/vocab` 通过路由守卫重定向到带 `examSlug` 的新路径（slug 从 store 取 active 或 `/api/banks/:id` 反查）。
+**不保留旧路由兼容**：
+
+- `/banks`
+- `/banks/:id`
+- `/wrong`
+- `/vocab`
 
 ### 5.2 Pinia Store
 
-#### `stores/exam.ts`
+项目使用纯 JavaScript，store 文件使用 `.js`。
 
-```ts
+`frontend/src/stores/exam.js`：
+
+```js
 export const useExamStore = defineStore('exam', () => {
-  const current = ref<ExamRead | null>(null)
-  const myExams = ref<ExamRead[]>([])
+  const current = ref(null)
+  const myExams = ref([])
   const loaded = ref(false)
 
   async function bootstrap() {
     const me = await api.get('/me')
     current.value = me.active_exam
-    if (me.active_exam) {
-      myExams.value = await api.get('/exams?scope=mine')
-    }
+    myExams.value = await api.get('/exams')
     loaded.value = true
   }
 
-  async function switchTo(slug: string) {
+  async function switchTo(slug, targetRouteKind = null) {
     const exam = await api.post('/account/active-exam', { slug })
     current.value = exam
-    // 失效所有依赖考试上下文的 SWR 缓存
-    await mutateMatching(key => Array.isArray(key) && key.includes('exam-scoped'))
-    router.push(`/exams/${slug}/dashboard`)
+    await refreshExamScopedData()
+    navigateToExam(slug, targetRouteKind)
   }
 
-  async function joinExam(slug: string) { /* POST join, 刷新 myExams */ }
-  async function leaveExam(slug: string) { /* DELETE leave, 处理 active 失效 */ }
-  async function createExam(payload: ExamCreate) { /* POST exams, 自动加入 */ }
+  async function createExam(payload) {
+    const exam = await api.post('/exams', payload)
+    await switchTo(exam.slug, 'dashboard')
+    return exam
+  }
 
-  return { current, myExams, loaded, bootstrap, switchTo, joinExam, leaveExam, createExam }
+  async function deleteExam(slug) {
+    await api.delete(`/exams/${slug}`)
+    myExams.value = myExams.value.filter(exam => exam.slug !== slug)
+    if (current.value?.slug === slug) current.value = null
+  }
+
+  return { current, myExams, loaded, bootstrap, switchTo, createExam, deleteExam }
 })
 ```
 
-#### 全局 axios 拦截器
+### 5.3 Axios 拦截器
 
-```ts
+```js
 axios.interceptors.request.use((config) => {
   const exam = useExamStore()
-  if (exam.current && config.url && !config.url.startsWith('/exams') && !config.url.startsWith('/admin')) {
+  if (isExamScopedApi(config.url) && exam.current) {
     config.headers['X-Exam-Slug'] = exam.current.slug
   }
   return config
 })
 ```
 
-> 后端通过 `X-Exam-Slug` Header 显式确认前端意图，避免"路由切换 + 网络飞行中"出现错配。
+### 5.4 路由守卫
 
-### 5.3 路由守卫
-
-```ts
+```js
 router.beforeEach(async (to) => {
   const exam = useExamStore()
   if (!exam.loaded) await exam.bootstrap()
 
-  // 新用户引导
-  if (!exam.current && to.name !== 'onboarding' && to.name !== 'exam-catalog') {
+  if (!exam.current && to.name !== 'onboarding' && to.name !== 'my-exams') {
     return { name: 'onboarding' }
   }
 
-  // URL 携带的 slug 优先于 store
-  const urlSlug = to.params.examSlug as string | undefined
+  const urlSlug = to.params.examSlug
   if (urlSlug && urlSlug !== exam.current?.slug) {
     try {
-      await exam.switchTo(urlSlug)
+      await exam.switchTo(urlSlug, routeKind(to))
     } catch {
-      return { name: 'exam-catalog' }
+      return { name: 'my-exams' }
     }
-  }
-
-  // 旧链接补 slug
-  if (!urlSlug && to.meta.examScoped) {
-    return { ...to, params: { ...to.params, examSlug: exam.current!.slug } }
   }
 })
 ```
 
-### 5.4 关键组件
+### 5.5 切换考试项目
 
-#### 5.4.1 `ExamSwitcher.vue`（顶栏）
+- 普通页面切换：保留当前页面类型，例如从 CIPT 错题本切换到 PMP 错题本。
+- 答题页切换：离开当前答题页，进入目标项目 dashboard，不在原答题页热切换上下文。
+- 切换后写入 `active_exam_id`。
 
-- shadcn-vue `DropdownMenu`，宽 260px
-- 头部：搜索框（≥6 个考试时出现）
-- 主体：分组「我的考试」+「最近」（可选）
-- 底部：「+ 添加考试」→ `/exams`、「⚙ 管理考试」（管理员）
-- 当前选中项左侧 2px `border-l border-primary`，背景 `bg-accent`
-- 答题中（`route.meta.locked`）禁用按钮，tooltip「答题中无法切换考试」
+### 5.6 “我的项目”页面
 
-#### 5.4.2 `ExamCatalogPage.vue`
+`/exams` 页面只显示当前用户拥有的考试项目。
 
 布局：
-```
+
+```text
 ┌─────────────────────────────────────────┐
-│ 考试目录                                 │
+│ 我的项目                         [+ 新建] │
 │                                         │
-│ 我的考试 (3)                  [+ 创建]  │
 │ ┌─────┐ ┌─────┐ ┌─────┐                │
 │ │CIPT │ │ PMP │ │ ... │                │
+│ │进入 │ │进入 │ │进入 │                │
 │ └─────┘ └─────┘ └─────┘                │
-│                                         │
-│ 可订阅 (5)                              │
-│ ┌─────┐ ┌─────┐ ...                    │
-│ │软考 │ │考研 │                         │
-│ │[+加入]│[+加入]│                       │
-│ └─────┘ └─────┘                        │
 └─────────────────────────────────────────┘
 ```
 
-- Grid: `grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4`
-- 卡片显示：图标、`short_name`、`name`、题量、个人进度、操作按钮（"进入" / "+ 加入"）
+卡片显示：
 
-#### 5.4.3 `ExamCreatePage.vue`
+- 图标
+- `short_name`
+- `name`
+- 题库数量
+- 题目数量
+- 当前项目进度
+- 操作：进入、编辑、删除
+
+### 5.7 首登引导
+
+新用户没有 active exam 时进入 `/onboarding`。
+
+引导目标：创建第一个考试项目。
 
 字段：
 
-- `short_name` *
-- `name` *
-- `slug` *（自动从 short_name 生成，校验唯一）
-- `icon`（lucide 选择器）
-- `description`（textarea）
-- `locale`（下拉）
-- AI Profile 配置：单选「复制 CIPT 配置」/「自定义」
-  - 自定义时展开 prompt 编辑器（textarea，字数提示）
+- `short_name` 必填
+- `name` 必填
+- `slug` 必填，可自动从 `short_name` 生成
+- `icon`
+- `description`
+- `locale`
+- AI Profile：使用平台通用配置 / 复制已有项目 / 自定义
 
-提交后跳到 `/exams/{slug}/dashboard`，自动设为 active。
+创建完成后进入 `/exams/{slug}/dashboard`。
 
-#### 5.4.4 `FirstTimeOnboarding.vue`
+### 5.8 词汇本
 
-- 列出所有 `visibility = public` 考试卡片，单选
-- 底部「我要的考试不在这里」→ 跳到 `/exams/new`
-- 选中并提交后：调 `join` + `active-exam`，进入 dashboard
-
-#### 5.4.5 `VocabBook.vue`（三 Tab）
-
-```
+```text
 词汇本                                    [+ 添加]
-┌────────────────┬────────────────┬──────────────────┐
-│ 我的单词本(跨)  │ CIPT 术语(官方) │ 我在 CIPT 添加的 │
-└────────────────┴────────────────┴──────────────────┘
+┌────────────────────┬────────────────────┐
+│ 我的单词本（跨项目） │ 当前项目词汇        │
+└────────────────────┴────────────────────┘
 ```
 
-- Tab1 调 `?scope=personal`，Tab2 `?scope=exam_official`，Tab3 `?scope=exam_personal`
-- 添加弹窗的「保存到」单选：
-  - "我的单词本（所有考试可见）" → `exam_id = null`
-  - "仅 {currentExam.short_name}" → `exam_id = active_exam.id`
-- 题目页"加入生词本"按钮默认绑定到当前考试
+- Tab1：`scope=personal`
+- Tab2：`scope=exam_personal`
+- 从题目页“加入生词本”默认保存到当前项目词汇。
+- 添加弹窗可选择保存到跨考试项目个人词汇。
 
-#### 5.4.6 `AdminExamEditor.vue`
+### 5.9 管理员只读页面
 
-三 Tab：
+`/admin/exams`：
 
-| Tab | 字段 |
-|---|---|
-| 基本信息 | name, short_name, slug（不可改）, icon, description, locale, is_active, sort_order |
-| AI Profile | translation_prompt, explanation_prompt, vocab_extract_prompt, source_lang, target_lang, model_override |
-| 上下架 | visibility 切换、删除（题库非空时禁用） |
+- 列出所有用户的考试项目。
+- 支持按 owner、项目名、slug 搜索。
+- 展示基础统计：题库数、题目数、更新时间。
+- 不提供编辑、删除、停用、下架操作。
 
-### 5.5 现有页面文案动态化
+`/admin/exams/:id`：
 
-所有出现 "CIPT" 字样的页面替换为 `{{ examStore.current?.short_name }}`：
-
-- 题库列表标题
-- 错题本标题
-- 词汇本 Tab 标题（"CIPT 术语" → `${shortName} 术语`）
-- 仪表盘欢迎语
-
-### 5.6 视觉设计要点
-
-- **不为每门考试引入新主色**，统一使用 design tokens
-- 考试图标用 lucide，染色 `text-muted-foreground`
-- 切换器选中项使用 `bg-accent` + 左侧 `border-l-2 border-primary`
-- 空状态文案双重描述："{考试名} 还没有题库，立即导入第一份"
+- 只读查看项目信息、AI Profile、题库列表、题目内容。
+- 不展示用户答题历史。
 
 ---
 
 ## 6. 权限与可见性矩阵
 
-| 操作 | 普通用户（未加入） | 普通用户（已加入） | 私有考试 owner | 平台 admin |
-|---|---|---|---|---|
-| 列表中看到 public exam | ✓ | ✓ | ✓ | ✓ |
-| 列表中看到 private exam | ✗ | ✗（除非自己 owner） | ✓ | ✓ |
-| 进入 public exam（题库/刷题） | ✗（需先 join） | ✓ | ✓ | ✓ |
-| 进入 private exam | ✗ | ✓（已 join 即视为成员） | ✓ | ✓ |
-| 创建考试 | ✓（默认 private） | — | — | ✓ |
-| 编辑考试基本信息 | ✗ | ✗ | ✓ | ✓ |
-| 编辑 AI Profile | ✗ | ✗ | ✓ | ✓ |
-| 上架/下架（visibility） | ✗ | ✗ | ✗ | ✓ |
-| 删除考试 | ✗ | ✗ | ✓（题库为空） | ✓ |
-| 退出考试 | — | ✓ | ✗（owner 不可退） | ✓ |
-
-**RLS 等价的应用层校验**：所有列表/详情接口在 SQL 上加 `WHERE` 条件而非应用层 if，避免漏判。
+| 操作 | 普通用户 owner | 普通用户非 owner | 管理员访问自己项目 | 管理员访问他人项目 |
+|---|---:|---:|---:|---:|
+| 查看考试项目 | ✓ | ✗ | ✓ | ✓（只读） |
+| 创建考试项目 | ✓ | — | ✓ | — |
+| 编辑考试项目基本信息 | ✓ | ✗ | ✓ | ✗ |
+| 修改 slug | ✓ | ✗ | ✓ | ✗ |
+| 编辑 AI Profile | ✓ | ✗ | ✓ | ✗ |
+| 删除考试项目 | ✓ | ✗ | ✓ | ✗ |
+| 查看题库/题目 | ✓ | ✗ | ✓ | ✓（只读） |
+| 导入题库 | ✓ | ✗ | ✓ | ✗ |
+| 编辑/删除题库 | ✓ | ✗ | ✓ | ✗ |
+| 查看错题/历史 | ✓ | ✗ | ✓ | ✗ |
+| 查看基础统计 | ✓ | ✗ | ✓ | ✓（只读） |
 
 ---
 
-## 7. 兼容性与回滚
+## 7. 兼容性与迁移体验
 
-### 7.1 老用户体验承诺
+### 7.1 存量管理员体验
 
-| 改动 | 老用户感知 |
+| 改动 | 结果 |
 |---|---|
-| 数据迁移 | 全部存量用户自动加入 CIPT，`active_exam_id` 指向 CIPT |
-| 顶栏多了切换器 | 显示 "CIPT"，下拉只有 CIPT 一项 |
-| URL 变化 | 旧 URL 301 重定向，收藏夹仍可用 |
-| 词汇页多了 Tab | 默认进入"CIPT 术语"，原 `is_system=true` 数据已归类 |
-| 错题/题库 | 内容完全相同，仅标题加 "CIPT" 前缀 |
-| AI 翻译/解析 | 行为不变（CIPT.ai_profile 直接复用现有 prompt） |
+| 数据迁移 | 存量 CIPT 题库、题目、系统词汇迁移到管理员用户自有 CIPT 项目 |
+| 登录后默认项目 | 管理员 `active_exam_id` 指向 CIPT 项目 |
+| 题库/错题/词汇 | 在 `/exams/cipt/...` 下继续使用 |
+| 系统词汇 | 变为管理员 CIPT 项目的项目专属词汇 |
+| AI 翻译/解析 | CIPT 项目 AI Profile 复用现有 CIPT prompt |
 
-### 7.2 回滚
+### 7.2 新用户体验
 
-- Alembic `downgrade` 完整反向
-- 前端通过功能开关 `VITE_ENABLE_MULTI_EXAM=false` 隐藏切换器与目录页（路由仍可用）
-- 后端 API 兼容期保留旧路由别名 `/banks` → `/exams/{active}/banks`，至少保留一个版本周期
+| 场景 | 结果 |
+|---|---|
+| 首次登录 | 进入创建第一个考试项目引导 |
+| 没有项目 | 无法进入题库、错题、词汇等项目范围页面 |
+| 创建项目后 | 自动进入项目 dashboard，并写入 active exam |
+| 导入题库 | 必须在当前考试项目中导入 |
+
+### 7.3 不兼容项
+
+- 旧路由不重定向。
+- 旧的全局题库概念消失。
+- 旧的系统词汇/官方术语语义消失。
+- 不提供公开考试项目目录。
 
 ---
 
@@ -711,45 +646,54 @@ router.beforeEach(async (to) => {
 
 **范围**：
 
-- [ ] 新增 `Exam`、`UserExam` 模型与 Pydantic schema
-- [ ] 迁移脚本 `003_add_exams_and_relations.py`
-- [ ] `/api/exams/*`、`/api/account/active-exam` 路由
-- [ ] `get_active_exam` 依赖
-- [ ] 现有路由（banks/wrong/vocab/quiz/ai）注入考试上下文与隐式过滤
-- [ ] AI Profile 抽取（从代码常量迁到 CIPT 行的 ai_profile）
-- [ ] 单元测试覆盖：迁移、权限矩阵、双层词汇查询
+- [ ] 新增 `Exam` 模型与 Pydantic schema。
+- [ ] 迁移脚本 `003_add_user_owned_exams.py`。
+- [ ] `users.active_exam_id`。
+- [ ] `question_banks.exam_id`。
+- [ ] `vocabularies.exam_id`。
+- [ ] 存量 CIPT 数据迁移到当前管理员用户的 CIPT 项目。
+- [ ] `/api/exams` CRUD。
+- [ ] `/api/account/active-exam`。
+- [ ] `get_exam_context` 依赖。
+- [ ] banks/questions/wrong/vocab/quiz/ai 注入考试项目上下文。
+- [ ] AI Profile 抽取到考试项目配置。
+- [ ] 管理员只读 API。
 
-**验收**：旧前端零改动情况下接口行为不变（CIPT 用户无感）。
+**验收**：管理员登录后可进入 `/exams/cipt/...` 查看和使用存量 CIPT 数据；新用户需要创建第一个项目。
 
-### PR-2 · 前端基础（切换器 + Pinia + 主要页面改造）
-
-**范围**：
-
-- [ ] `useExamStore` + `bootstrap` + axios 拦截器
-- [ ] 路由表重构（`/exams/:examSlug/...`），守卫 + 旧链接重定向
-- [ ] `ExamSwitcher.vue` 顶栏挂载
-- [ ] 题库导入弹窗加"所属考试"下拉
-- [ ] 题库/错题本/词汇本/仪表盘标题动态化
-- [ ] `VocabBook.vue` 三 Tab + 添加弹窗作用域选择
-
-**验收**：CIPT 用户主流程零行为变化；浏览器 URL 改为带 slug。
-
-### PR-3 · 考试管理与新用户流程
+### PR-2 · 前端基础（我的项目 + 切换器 + 主要页面改造）
 
 **范围**：
 
-- [ ] `ExamCatalogPage.vue`、`ExamCreatePage.vue`
-- [ ] `FirstTimeOnboarding.vue`
-- [ ] `AdminExamList.vue`、`AdminExamEditor.vue`（含 AI Profile 编辑）
-- [ ] 「+ 加入」 / 「退出」 / 「上架」 / 「下架」 全流程
+- [ ] `useExamStore`。
+- [ ] Axios `X-Exam-Slug` 拦截器。
+- [ ] 路由表改为 `/exams/:examSlug/...`。
+- [ ] 不保留旧路由兼容。
+- [ ] `ExamSwitcher.vue`。
+- [ ] `/exams` 我的项目页面。
+- [ ] `/onboarding` 创建第一个项目。
+- [ ] 题库、错题、词汇、仪表盘标题动态化。
+- [ ] 词汇本双 Tab。
 
-**验收**：能新建第二门考试 PMP，导入题库，刷题 + AI 解析使用其专属 prompt。
+**验收**：用户可创建第二个项目、切换项目、导入题库、项目间数据隔离。
 
-### PR-4（后续 spec）
+### PR-3 · 项目管理与管理员只读后台
 
-- ImporterProfile 抽象（D7）
-- QuizProfile 扩展、新题型（D8）
-- 考试社区市场、订阅评分
+**范围**：
+
+- [ ] 编辑考试项目基本信息、slug、AI Profile。
+- [ ] 删除考试项目及项目内数据。
+- [ ] 管理员 `/admin/exams` 只读列表。
+- [ ] 管理员只读查看项目、题库、题目内容、基础统计。
+
+**验收**：owner 可完整管理自己的项目；管理员可只读排查他人项目但不能修改。
+
+### 后续 spec
+
+- ImporterProfile 抽象。
+- QuizProfile 扩展、新题型。
+- 协作/共享/公开项目能力。
+- 跨考试项目全局概览。
 
 ---
 
@@ -757,28 +701,33 @@ router.beforeEach(async (to) => {
 
 | 风险 | 影响 | 对策 |
 |---|---|---|
-| 用户在两门考试间切换时旧请求落到错误 exam | 数据错乱 | 全局 axios 拦截器带 `X-Exam-Slug`，后端校验与 active_exam 一致 |
-| 创建考试失败但已建关联 | 脏数据 | `POST /api/exams` 整体事务，失败回滚 |
-| AI Profile prompt 配置错误导致 AI 输出异常 | 用户体验下降 | AdminEditor 提供"测试 prompt"按钮（输入样例题→预览输出） |
-| 老前端调用未带 `X-Exam-Slug` | 接口 400 | 后端兜底用 `User.active_exam_id` |
-| owner 退订路径 | 数据孤儿 | 显式禁止 owner 退订；如要让出，先转让 owner |
-| 切换考试时 SWR 缓存未失效 | 显示上一门考试数据 | `mutate` matcher 按 `'exam-scoped'` key 全量失效 |
+| 请求缺少 `X-Exam-Slug` | 后端无法判断项目上下文 | 考试项目范围 API 返回 `EXAM_REQUIRED` |
+| 用户修改 slug 后旧链接失效 | 旧 URL 404 | 产品明确不保留旧 URL 兼容，保持模型简单 |
+| 删除考试项目误删项目内数据 | 数据不可逆 | UI 必须展示项目级数据删除确认；跨项目个人词汇不删除 |
+| 管理员只读越权变成可编辑 | 用户数据所有权被破坏 | 后台接口只提供 GET；服务层明确禁止跨 owner 写操作 |
+| 存量系统词汇语义残留 | 继续出现官方/系统词汇概念 | 迁移时回填为管理员项目专属词汇，后续查询不再使用 `is_system` 语义 |
+| 答题中切换项目导致上下文错乱 | 页面显示旧题但新项目上下文 | 答题页切换项目时离开当前答题页，进入目标项目 dashboard |
+| 管理员用户不存在导致迁移失败 | 存量 CIPT 无 owner | 迁移前检查管理员用户；不存在则失败并提示先创建管理员 |
 
 ---
 
 ## 10. 验收清单
 
-- [ ] 数据库迁移在测试环境成功执行，CIPT 数据完整可查
-- [ ] 老 CIPT 用户登录后看到的题库/错题/词汇与改造前完全一致
-- [ ] 用户可创建私有考试 PMP，导入题库，独立刷题
-- [ ] 切换考试后错题本仅显示当前考试错题（D2 验证）
-- [ ] 词汇本三 Tab 数据划分正确（D3 验证）
-- [ ] 试图通过 API 把题目移到其他考试返回 409（D4 验证）
-- [ ] 普通用户看不到他人私有考试（权限矩阵验证）
-- [ ] 管理员能将私有考试上架为 public
-- [ ] AI 翻译/解析按 exam.ai_profile 走对应 prompt
-- [ ] 切换器在答题中禁用
-- [ ] 旧 URL 301 重定向工作正常
+- [ ] 数据库迁移成功创建管理员自有 CIPT 考试项目。
+- [ ] 存量题库全部绑定到管理员 CIPT 项目。
+- [ ] 存量系统词汇变为管理员 CIPT 项目专属词汇。
+- [ ] 管理员登录后 active exam 指向 CIPT。
+- [ ] 新用户首次登录进入创建第一个考试项目引导。
+- [ ] 用户只能看到自己的考试项目。
+- [ ] 管理员只读后台能看到所有用户项目和题库/题目内容。
+- [ ] 管理员不能编辑或删除他人项目、题库、题目。
+- [ ] 题库导入必须绑定当前考试项目。
+- [ ] 切换项目后题库、错题、词汇只显示当前项目数据。
+- [ ] 跨考试项目个人词汇在所有用户自有项目中可见。
+- [ ] 题目页添加词汇默认保存到当前项目专属词汇。
+- [ ] AI 翻译/解析按当前项目 AI Profile 执行。
+- [ ] 删除项目会删除项目内数据但保留跨考试项目个人词汇。
+- [ ] 旧 URL 不再可用，不做重定向。
 
 ---
 
@@ -791,7 +740,7 @@ class ExamStats(BaseModel):
     bank_count: int
     question_count: int
     wrong_count: int
-    progress: float  # 0.0 ~ 1.0
+    progress: float
 
 class ExamOwner(BaseModel):
     id: int
@@ -805,11 +754,8 @@ class ExamRead(BaseModel):
     description: str | None
     icon: str | None
     locale: str
-    visibility: Literal["public", "private"]
-    owner: ExamOwner | None
-    is_active: bool
-    joined: bool
-    role: Literal["member", "editor", "owner"] | None
+    sort_order: int
+    owner: ExamOwner
     stats: ExamStats
     ai_profile: dict
     created_at: datetime
@@ -818,33 +764,57 @@ class ExamRead(BaseModel):
 ### 11.2 文件影响清单
 
 **后端新增**：
+
 - `backend/app/models/exam.py`
-- `backend/app/models/user_exam.py`
 - `backend/app/schemas/exam.py`
 - `backend/app/api/routes/exams.py`
-- `backend/alembic/versions/003_add_exams_and_relations.py`
+- `backend/app/api/routes/admin_exams.py`
+- `backend/alembic/versions/003_add_user_owned_exams.py`
 
 **后端修改**：
-- `backend/app/models/__init__.py`、`user.py`、`question_bank.py`、`vocabulary.py`
+
+- `backend/app/models/__init__.py`
+- `backend/app/models/user.py`
+- `backend/app/models/question_bank.py`
+- `backend/app/models/vocabulary.py`
 - `backend/app/api/deps.py`
-- `backend/app/api/routes/banks.py`、`wrong.py`、`vocab.py`、`quiz.py`、`ai.py`、`account.py`
-- `backend/app/services/ai_service.py`、`smart_import_service.py`
-- `backend/app/schemas/auth.py`、`bank.py`、`vocab.py`
+- `backend/app/api/routes/banks.py`
+- `backend/app/api/routes/questions.py`
+- `backend/app/api/routes/wrong.py`
+- `backend/app/api/routes/vocab.py`
+- `backend/app/api/routes/quiz.py`
+- `backend/app/api/routes/ai.py`
+- `backend/app/api/routes/account.py`
+- `backend/app/services/ai_service.py`
+- `backend/app/services/import_service.py`
+- `backend/app/services/smart_import_service.py`
+- `backend/app/schemas/auth.py`
+- `backend/app/schemas/bank.py`
+- `backend/app/schemas/vocab.py`
 
 **前端新增**：
-- `frontend/src/stores/exam.ts`
+
+- `frontend/src/stores/exam.js`
 - `frontend/src/components/ExamSwitcher.vue`
-- `frontend/src/views/ExamCatalogPage.vue`、`ExamCreatePage.vue`、`FirstTimeOnboarding.vue`、`ExamDashboard.vue`
-- `frontend/src/views/admin/AdminExamList.vue`、`AdminExamEditor.vue`
-- `frontend/src/views/me/GlobalOverview.vue`
-- `frontend/src/api/exams.ts`
+- `frontend/src/views/MyExamProjectsPage.vue`
+- `frontend/src/views/ExamCreatePage.vue`
+- `frontend/src/views/FirstTimeOnboarding.vue`
+- `frontend/src/views/ExamDashboard.vue`
+- `frontend/src/views/admin/AdminExamList.vue`
+- `frontend/src/views/admin/AdminExamDetail.vue`
+- `frontend/src/api/exams.js`
 
 **前端修改**：
-- `frontend/src/router/index.ts`
-- `frontend/src/App.vue` / `Layout.vue`
-- `frontend/src/api/index.ts`（axios 拦截器）
-- `frontend/src/views/Banks/*`、`Wrong/*`、`Vocab/*`、`Quiz/*`
-- 所有含 "CIPT" 硬编码文案的组件
+
+- `frontend/src/router/index.js`
+- `frontend/src/App.vue` 或布局组件
+- `frontend/src/api/client.js`
+- `frontend/src/views/BankList.vue`
+- `frontend/src/views/BankDetail.vue`
+- `frontend/src/views/WrongBook.vue`
+- `frontend/src/views/VocabBook.vue`
+- `frontend/src/views/QuizSession.vue`
+- 所有含 “CIPT” 硬编码文案的组件
 
 ---
 
