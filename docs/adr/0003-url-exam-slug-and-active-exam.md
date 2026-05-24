@@ -1,4 +1,4 @@
-# Use URL exam slug as page context and active exam as fallback
+# Use URL exam slug as page context and active exam as default state
 
 Exam-scoped pages use the **考试项目标识** in the URL as the page context. Exam project slugs are resolved in the current user's ownership scope and may be changed by the owner as long as they remain unique within that scope. Old URLs are not kept as compatibility redirects after a slug changes. When a user enters a page for a different **考试项目**, the account-level active exam is synchronized to that project after access is validated.
 
