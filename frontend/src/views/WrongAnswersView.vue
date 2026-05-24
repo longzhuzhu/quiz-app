@@ -176,9 +176,10 @@
 
 <script setup>
 import { ref, reactive, computed, watch, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useBankStore } from '../stores/bank'
 import { useQuizStore } from '../stores/quiz'
+import { currentExamPath } from '../utils/examRoutes'
 import client from '../api/client'
 import TranslateButton from '../components/TranslateButton.vue'
 import ExplainButton from '../components/ExplainButton.vue'
@@ -190,6 +191,7 @@ import { ChevronDownIcon, FaceSmileIcon } from '@heroicons/vue/24/outline'
 
 const bankStore = useBankStore()
 const quizStore = useQuizStore()
+const route = useRoute()
 const router = useRouter()
 const toast = useToast()
 
@@ -257,7 +259,7 @@ async function practiceWrong() {
     quizStore.session = res.data.session
     quizStore.questions = res.data.questions
     quizStore.currentIndex = 0
-    router.push(`/quiz/${res.data.session.id}`)
+    router.push(currentExamPath(route, 'quiz', { sessionId: res.data.session.id }))
   } catch (e) {
     toast.error(e.response?.data?.error || '开始错题练习失败')
   }

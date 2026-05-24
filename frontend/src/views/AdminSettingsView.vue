@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="mb-6">
-      <router-link to="/admin/banks"
+      <router-link to="/exams"
         class="inline-flex items-center gap-1 text-sm text-primary-600 dark:text-primary-400 hover:underline">
         <ArrowLeftIcon class="h-4 w-4" />
         返回题库管理

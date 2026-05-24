@@ -2,7 +2,7 @@
   <div class="space-y-6">
     <div>
       <router-link
-        to="/admin/banks"
+        to="/exams"
         class="inline-flex items-center gap-1 text-sm text-primary-600 dark:text-primary-400 hover:underline"
       >
         <ArrowLeftIcon class="h-4 w-4" />

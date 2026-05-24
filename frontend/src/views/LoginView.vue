@@ -64,10 +64,13 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { useExamStore } from '../stores/exam'
+import { examPath } from '../utils/examRoutes'
 import BaseButton from '../components/BaseButton.vue'
 import { UserIcon, LockClosedIcon, EyeIcon, EyeSlashIcon } from '@heroicons/vue/24/outline'
 
 const authStore = useAuthStore()
+const examStore = useExamStore()
 const router = useRouter()
 const username = ref('')
 const password = ref('')
@@ -80,7 +83,9 @@ async function handleLogin() {
   loading.value = true
   try {
     await authStore.login(username.value, password.value)
-    router.push('/')
+    examStore.reset()
+    await examStore.bootstrap()
+    router.push(examStore.current?.slug ? examPath(examStore.current.slug, 'dashboard') : '/onboarding')
   } catch (e) {
     error.value = e.response?.data?.error || '登录失败'
   } finally {

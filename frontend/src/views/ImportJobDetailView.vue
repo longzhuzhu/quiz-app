@@ -2,7 +2,7 @@
   <div>
     <!-- 导航 -->
     <div class="mb-4">
-      <router-link to="/import-jobs"
+      <router-link :to="currentExamPath(route, 'importJobs')"
         class="inline-flex items-center gap-1 text-sm text-primary-600 dark:text-primary-400 hover:underline">
         <ArrowLeftIcon class="h-4 w-4" />
         返回导入任务列表
@@ -82,12 +82,12 @@
       <div class="mb-6 flex gap-2 flex-wrap">
         <BaseButton v-if="job.review_questions > 0"
           variant="secondary"
-          @click="$router.push(`/import-jobs/${job.id}/review`)">
+          @click="router.push(currentExamPath(route, 'importReview', { jobId: job.id }))">
           <ExclamationCircleIcon class="h-4 w-4" />
           复核待审核题目 ({{ job.review_questions }})
         </BaseButton>
         <BaseButton variant="secondary"
-          @click="$router.push(`/import-jobs/${job.id}/auto-handled`)">
+          @click="router.push(currentExamPath(route, 'importAutoHandled', { jobId: job.id }))">
           <ClipboardDocumentListIcon class="h-4 w-4" />
           自动处理记录 ({{ job.auto_handled_questions || 0 }})
         </BaseButton>
@@ -172,13 +172,15 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import client from '../api/client'
+import { currentExamPath } from '../utils/examRoutes'
 import BaseButton from '../components/BaseButton.vue'
 import SkeletonLoader from '../components/SkeletonLoader.vue'
 import { ArrowLeftIcon, ClipboardDocumentListIcon, ExclamationCircleIcon } from '@heroicons/vue/24/outline'
 
 const route = useRoute()
+const router = useRouter()
 const jobId = route.params.jobId
 const job = ref(null)
 const chunks = ref([])

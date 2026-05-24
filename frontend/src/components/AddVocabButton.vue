@@ -69,9 +69,11 @@ async function submit() {
   saving.value = true
   message.value = ''
   try {
-    const res = await client.post('/vocab/personal', {
+    const res = await client.post('/vocab', {
       term: term.value.trim(),
       auto_translate: true,
+    }, {
+      params: { scope: 'exam_personal' },
     })
     const w = res.data
     messageOk.value = true

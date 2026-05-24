@@ -1,7 +1,10 @@
 <template>
   <div>
     <!-- 页面标题 -->
-    <h1 class="mb-6 text-2xl font-bold text-gray-900 dark:text-white">题库列表</h1>
+    <div class="mb-6">
+      <p class="text-sm text-primary-600 dark:text-primary-400">{{ examStore.current?.short_name || '考试项目' }}</p>
+      <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ examStore.current?.name || '项目首页' }}</h1>
+    </div>
 
     <!-- 统计仪表盘 - 4列 -->
     <div class="mb-8 grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -48,7 +51,7 @@
       </div>
 
       <!-- 待攻克错题 -->
-      <router-link to="/wrong" class="relative overflow-hidden rounded-xl bg-white dark:bg-slate-800 shadow-card p-5 hover:shadow-card-hover transition-shadow cursor-pointer">
+      <router-link :to="currentExamPath(route, 'wrong')" class="relative overflow-hidden rounded-xl bg-white dark:bg-slate-800 shadow-card p-5 hover:shadow-card-hover transition-shadow cursor-pointer">
         <div class="absolute top-0 left-0 right-0 h-1 bg-rose-500 rounded-t-xl"></div>
         <div class="flex items-center gap-3">
           <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-rose-100 dark:bg-rose-900/30">
@@ -139,9 +142,11 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useBankStore } from '../stores/bank'
 import { useQuizStore } from '../stores/quiz'
+import { useExamStore } from '../stores/exam'
+import { currentExamPath } from '../utils/examRoutes'
 import { useToast } from '../composables/useToast'
 import client from '../api/client'
 import BaseButton from '../components/BaseButton.vue'
@@ -151,6 +156,8 @@ import { FolderIcon, DocumentTextIcon, CheckBadgeIcon, ExclamationTriangleIcon }
 
 const bankStore = useBankStore()
 const quizStore = useQuizStore()
+const examStore = useExamStore()
+const route = useRoute()
 const router = useRouter()
 const toast = useToast()
 const wrongStats = ref({})
@@ -212,13 +219,13 @@ function formatSessionDate(value) {
 function continueLastSession() {
   const sessionId = lastIncompleteSession.value?.id
   if (sessionId == null) return
-  router.push(`/quiz/${sessionId}`)
+  router.push(currentExamPath(route, 'quiz', { sessionId }))
 }
 
 async function startQuiz(bank, mode) {
   try {
     await quizStore.startQuiz(bank.id, mode)
-    router.push(`/quiz/${quizStore.session.id}`)
+    router.push(currentExamPath(route, 'quiz', { sessionId: quizStore.session.id }))
   } catch (e) {
     toast.error(e.response?.data?.error || '开始答题失败')
   }
@@ -234,7 +241,7 @@ async function startExam() {
   showExamModal.value = false
   try {
     await quizStore.startQuiz(examBank.value.id, 'exam', examQuestionCount.value)
-    router.push(`/quiz/${quizStore.session.id}`)
+    router.push(currentExamPath(route, 'quiz', { sessionId: quizStore.session.id }))
   } catch (e) {
     toast.error(e.response?.data?.error || '开始考试失败')
   }
