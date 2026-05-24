@@ -206,6 +206,96 @@ def test_process_chunk_normal_path_no_retry_no_regression(
     assert job.failed_chunks == 0
 
 
+def test_process_chunk_l1_valid_but_incomplete_triggers_l2_fallback(
+    monkeypatch, patch_io, fake_db_factory, chunk_factory, import_job_factory,
+):
+    """L1 返回合法 JSON 但漏题时，应在保存前改走 L2，避免多题 chunk 只入库 1 题。"""
+    qnos = [101, 102, 103, 104]
+    chunk = chunk_factory(text=_make_chunk_text(qnos))
+    job = import_job_factory()
+    db = fake_db_factory()
+
+    call_state = {"l1_calls": 0, "l2_calls": 0}
+
+    def fake_call(messages, db_, scene, timeout):
+        user_content = next(m["content"] for m in messages if m["role"] == "user")
+        is_l1 = sum(f"Question #{q}" in user_content for q in qnos) >= 2
+        if is_l1:
+            call_state["l1_calls"] += 1
+            return _make_response_text([101])
+        call_state["l2_calls"] += 1
+        for q in qnos:
+            if f"Question #{q}" in user_content:
+                return _make_response_text([q])
+        raise AssertionError("L2 segment did not include a known qno marker")
+
+    monkeypatch.setattr(svc, "call_ai_api", fake_call)
+
+    svc._process_chunk(
+        db=db, chunk=chunk, import_job=job,
+        auto_import=True, use_llm_cache=True, seen_signatures=set(),
+    )
+
+    assert call_state == {"l1_calls": 1, "l2_calls": 4}
+    assert chunk.status == "parsed_fallback"
+    assert chunk.issues_json["retry_count"] == 0
+    assert chunk.issues_json["fallback_used"] is True
+    assert chunk.issues_json["per_question_failures"] == []
+    assert chunk.issues_json["fallback_meta"]["reason"] == "l1_incomplete_response"
+    assert chunk.issues_json["fallback_meta"]["total_segments"] == 4
+    assert chunk.issues_json["fallback_meta"]["succeeded"] == 4
+    assert chunk.issues_json["fallback_meta"]["failed"] == 0
+    assert chunk.issues_json["chunk_issues"][0]["code"] == "L1_INCOMPLETE_RESPONSE"
+    assert len(patch_io["store_cache"]) == 0, "不完整 L1 响应不应写入 chunk 级缓存"
+    assert patch_io["save_parsed"] == ["101", "102", "103", "104"]
+    assert job.failed_chunks == 0
+
+
+def test_process_chunk_cached_incomplete_response_bypasses_cache_and_falls_back(
+    monkeypatch, patch_io, fake_db_factory, chunk_factory, import_job_factory,
+):
+    """历史缓存中若存在不完整 L1 响应，也应绕过缓存走 L2，避免低识别率固化。"""
+    qnos = [201, 202, 203]
+    chunk = chunk_factory(text=_make_chunk_text(qnos))
+    job = import_job_factory()
+    db = fake_db_factory()
+
+    monkeypatch.setattr(
+        svc,
+        "_lookup_llm_cache",
+        lambda db_, key: {
+            "request_json": {"messages": []},
+            "response_text": _make_response_text([201]),
+        },
+    )
+
+    call_state = {"l2_calls": 0}
+
+    def fake_call(messages, db_, scene, timeout):
+        call_state["l2_calls"] += 1
+        assert timeout == svc.L2_PER_QUESTION_TIMEOUT
+        user_content = next(m["content"] for m in messages if m["role"] == "user")
+        for q in qnos:
+            if f"Question #{q}" in user_content:
+                return _make_response_text([q])
+        raise AssertionError("L2 segment did not include a known qno marker")
+
+    monkeypatch.setattr(svc, "call_ai_api", fake_call)
+
+    svc._process_chunk(
+        db=db, chunk=chunk, import_job=job,
+        auto_import=True, use_llm_cache=True, seen_signatures=set(),
+    )
+
+    assert call_state == {"l2_calls": 3}
+    assert chunk.status == "parsed_fallback"
+    assert chunk.issues_json["fallback_used"] is True
+    assert chunk.issues_json["fallback_meta"]["reason"] == "l1_incomplete_response"
+    assert chunk.issues_json["chunk_issues"][0]["code"] == "L1_INCOMPLETE_RESPONSE"
+    assert patch_io["save_parsed"] == ["201", "202", "203"]
+    assert len(patch_io["store_cache"]) == 0
+
+
 # ─── TC-2 ───────────────────────────────────────────────────────────
 
 

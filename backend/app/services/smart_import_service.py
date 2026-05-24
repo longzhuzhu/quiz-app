@@ -88,13 +88,15 @@ QUESTION_SPLIT_PATTERNS = [
 
 # 答案键检测模式
 ANSWER_KEY_PATTERN = re.compile(
-    r'(?:Answer\s*Key|Answers?\s*:|ANSWER\s*KEY|正确答案)[:\s]*\n([\s\S]+?)$',
+    # 仅识别成段答案键标题；不要把题目解析里的单题 ``Answer:`` 当成答案键，
+    # 否则会从第一道题答案处截断后续所有题目。
+    r'(?:^|\n)\s*(?:Answer\s*Key|Answers\s*:|ANSWER\s*KEY|正确答案)[:\s]*\n([\s\S]+?)$',
     re.IGNORECASE,
 )
 
 # 答案键条目解析
 ANSWER_ENTRY_PATTERN = re.compile(
-    r'(\d{1,4})[.\s)]+\s*([A-Ea-e](?:\s*[,，]\s*[A-Ea-e])*|True|False)',
+    r'(\d{1,4})[.\s):：-]+\s*([A-Ea-e](?:\s*[,，]\s*[A-Ea-e])*|True|False)',
     re.IGNORECASE,
 )
 
@@ -142,10 +144,23 @@ def _content_equivalent_for_backfill(current_content: str | None, parsed_content
 def _question_signature(
     question_type: str, content: str, options: list, correct_answer: list
 ) -> tuple:
-    """生成题目唯一签名，用于去重（复用旧版逻辑，增强 options/answer 排序归一化）"""
+    """生成题目唯一签名，用于去重（复用旧版逻辑，增强 options/answer 排序归一化）。"""
+
+    def _option_label(opt: dict) -> str:
+        return str(opt.get("label", opt.get("key", "")) or "").strip().upper()
+
     normalized_options = (
         json.dumps(
-            sorted(options, key=lambda o: o.get("label", o.get("key", ""))),
+            sorted(
+                [
+                    {
+                        "label": _option_label(opt),
+                        "text": opt.get("text", ""),
+                    }
+                    for opt in options
+                ],
+                key=lambda o: o.get("label", ""),
+            ),
             sort_keys=True, ensure_ascii=False, separators=(",", ":"),
         )
         if isinstance(options, list)
@@ -232,21 +247,25 @@ def create_smart_import_job(
     # 保存文件（先保存以获取 file_hash）
     file_path, file_hash = save_upload_file(file_bytes, filename)
 
-    # 同文件重复导入检测
-    if not force:
-        dup_job = (
-            db.query(ImportJob)
-            .filter_by(bank_id=bank_id, file_hash=file_hash)
-            .filter(ImportJob.status.in_(["completed", "partial_imported", "parsing", "extracting", "chunking", "validating", "review_required", "unimported"]))
-            .first()
-        )
-        if dup_job:
-            return {
-                "error": "该文件已导入过",
-                "duplicate_of": dup_job.id,
-                "existing_status": dup_job.status,
-                "hint": "使用 force=true 强制重新导入",
-            }
+    # 同文件重复导入仅记录溯源信息，不再硬阻断。
+    # 去重边界在题目级：run_smart_import 会把题库现有 Question 签名加入 seen_signatures，
+    # _save_parsed_question 命中后写入 duplicate/skipped 审计记录，避免重复写正式题库。
+    duplicate_file_job = (
+        db.query(ImportJob)
+        .filter_by(bank_id=bank_id, file_hash=file_hash)
+        .order_by(ImportJob.id.desc())
+        .first()
+    )
+    config_json = {
+        "auto_import": auto_import,
+        "use_llm_cache": use_llm_cache,
+    }
+    if duplicate_file_job:
+        config_json = {
+            **config_json,
+            "duplicate_file_of": duplicate_file_job.id,
+            "duplicate_file_status": duplicate_file_job.status,
+        }
 
     # 创建 ImportJob
     import_job = ImportJob(
@@ -256,10 +275,7 @@ def create_smart_import_job(
         file_hash=file_hash,
         file_type=file_type,
         status="pending",
-        config_json={
-            "auto_import": auto_import,
-            "use_llm_cache": use_llm_cache,
-        },
+        config_json=config_json,
         created_by=user_id,
     )
     db.add(import_job)
@@ -379,12 +395,14 @@ def run_smart_import(db: Session, background_job: BackgroundJob) -> None:
             if norm is not None:
                 expected_qnos.add(norm)
 
-    # 将 answer_key_text 与 expected_qnos 一并持久化到 config_json
-    config = import_job.config_json or {}
+    # 将 answer_key_text 与 expected_qnos 一并持久化到 config_json。
+    # 使用新 dict 重新赋值，避免 JSONB 就地变更导致脏检测丢失。
+    config = {
+        **(import_job.config_json or {}),
+        "expected_qnos": sorted(expected_qnos, key=_qno_sort_key),
+    }
     if answer_key_text:
-        config["answer_key_text"] = answer_key_text
-    config["expected_qnos"] = sorted(expected_qnos, key=_qno_sort_key)
-    # 重新赋值触发 SQLAlchemy JSONB dirty 检测（与 PR-3 等位姿势一致）
+        config = {**config, "answer_key_text": answer_key_text}
     import_job.config_json = config
 
     db.commit()
@@ -519,6 +537,7 @@ def _process_chunk(
             auto_import=auto_import,
             seen_signatures=seen_signatures,
             imported_qnos=imported_qnos,
+            bg_job=bg_job,
         )
         return
 
@@ -530,20 +549,24 @@ def _process_chunk(
     # 3) L1 整 chunk 调用（含最多 1 次重试）
     retry_count = 0
     fallback_used = False
+    fallback_reason: str | None = None
     per_question_failures: list[dict] = []
     merged_questions: list[dict] = []
     response_text: str | None = None
+    extra_chunk_issues: list[dict] = []
 
     try:
         response_text, retry_count = _call_llm_with_l1_retry(messages, db, timeout=120.0)
     except RETRYABLE_HTTP_EXC:
         # httpx.TimeoutException / httpx.HTTPError：L1 用尽 → 进 L2
         fallback_used = True
+        fallback_reason = "l1_retry_exhausted"
         retry_count = L1_MAX_RETRIES
     except ValueError as exc:
         if _is_retryable_value_error(exc):
             # 5xx ValueError：L1 用尽 → 进 L2
             fallback_used = True
+            fallback_reason = "l1_retry_exhausted"
             retry_count = L1_MAX_RETRIES
         else:
             # 4xx / API Key 缺失：硬失败，不进 L2
@@ -558,7 +581,7 @@ def _process_chunk(
             db.commit()
             raise
 
-    # 4) L2 单题降级（仅 fallback_used 时执行）
+    # 4) 如 L1 已决定降级，先执行 L2 单题降级。
     if fallback_used:
         merged_questions, per_question_failures = _run_per_question_fallback(
             chunk_text=chunk_text,
@@ -568,19 +591,7 @@ def _process_chunk(
             chunk=chunk,
             started_at=chunk_started_at,
         )
-        # 拼装 chunk 级伪响应，便于下游 _parse_llm_response 复用解析逻辑
-        response_text = json.dumps(
-            {
-                "questions": merged_questions,
-                "chunk_issues": [],
-                "_fallback_meta": {
-                    "total_segments": len(merged_questions) + len(per_question_failures),
-                    "succeeded": len(merged_questions),
-                    "failed": len(per_question_failures),
-                },
-            },
-            ensure_ascii=False,
-        )
+        response_text = _build_fallback_response_text(merged_questions, per_question_failures)
 
     # 5) 解析 LLM 响应（L1 路径可能失败；L2 路径自构造，保证可解析）
     try:
@@ -598,6 +609,42 @@ def _process_chunk(
         chunk.llm_response_json = {"raw": (response_text or "")[:2000]}
         db.commit()
         raise
+
+    # 5.1) L1 完整性检查：合法 JSON 但题量明显少于 chunk 内可检测题号段时，
+    #      视为 chunk 级 LLM 漏题，改走 L2 单题降级。此时尚未保存任何题目，
+    #      可安全丢弃不完整 L1 结果，避免重复写入。
+    if not fallback_used:
+        expected_segments = _split_by_single_question(chunk_text)
+        expected_count = len(expected_segments)
+        actual_count = len(llm_result.questions)
+        if expected_count > 0 and actual_count < expected_count:
+            fallback_used = True
+            fallback_reason = "l1_incomplete_response"
+            extra_chunk_issues.append({
+                "code": "L1_INCOMPLETE_RESPONSE",
+                "severity": "MEDIUM",
+                "detail": (
+                    f"L1 returned {actual_count} questions, "
+                    f"but chunk contains {expected_count} detectable question segments; "
+                    "switched to L2 per-question fallback"
+                ),
+                "expected_segments": expected_count,
+                "actual_questions": actual_count,
+            })
+            logger.warning(
+                "[smart_import] chunk_no=%s L1 incomplete response: expected_segments=%d actual_questions=%d; entering L2 fallback",
+                chunk.chunk_no, expected_count, actual_count,
+            )
+            merged_questions, per_question_failures = _run_per_question_fallback(
+                chunk_text=chunk_text,
+                answer_key_text=answer_key_text,
+                db=db,
+                bg_job=bg_job,
+                chunk=chunk,
+                started_at=chunk_started_at,
+            )
+            response_text = _build_fallback_response_text(merged_questions, per_question_failures)
+            llm_result = _parse_llm_response(response_text or "")
 
     # 6) 写 llm_response_json（结构化便于排查）
     try:
@@ -636,8 +683,11 @@ def _process_chunk(
             "failed": len(per_question_failures),
             "elapsed_seconds": round(time.monotonic() - chunk_started_at, 2),
         }
-    if llm_result.chunk_issues:
-        issues_payload["chunk_issues"] = llm_result.chunk_issues
+        if fallback_reason:
+            issues_payload["fallback_meta"]["reason"] = fallback_reason
+    chunk_issues = extra_chunk_issues + (llm_result.chunk_issues or [])
+    if chunk_issues:
+        issues_payload["chunk_issues"] = chunk_issues
     chunk.issues_json = issues_payload
 
     # 9) 缓存写入（仅 L1 路径成功 / L1 重试成功；L2 路径与失败路径都不写）
@@ -676,6 +726,7 @@ def _process_chunk_cached(
     auto_import: bool,
     seen_signatures: set | None,
     imported_qnos: set[str] | None = None,
+    bg_job: BackgroundJob | None = None,
 ) -> None:
     """处理 LlmParseCache 命中的 chunk：直接复用历史响应，跳过 LLM 调用。"""
     response_text = cached.get("response_text", "")
@@ -696,13 +747,76 @@ def _process_chunk_cached(
         db.commit()
         raise
 
-    chunk.status = "parsed_cached"
-    if llm_result.chunk_issues:
+    expected_segments = _split_by_single_question(chunk_text)
+    expected_count = len(expected_segments)
+    actual_count = len(llm_result.questions)
+    if expected_count > 0 and actual_count < expected_count:
+        logger.warning(
+            "[smart_import] chunk_no=%s cached L1 response incomplete: expected_segments=%d actual_questions=%d; bypassing cache and entering L2 fallback",
+            chunk.chunk_no, expected_count, actual_count,
+        )
+        config = import_job.config_json or {}
+        answer_key_text = config.get("answer_key_text", "")
+        started_at = time.monotonic()
+        merged_questions, per_question_failures = _run_per_question_fallback(
+            chunk_text=chunk_text,
+            answer_key_text=answer_key_text,
+            db=db,
+            bg_job=bg_job,
+            chunk=chunk,
+            started_at=started_at,
+        )
+        response_text = _build_fallback_response_text(merged_questions, per_question_failures)
+        llm_result = _parse_llm_response(response_text)
+        try:
+            chunk.llm_response_json = json.loads(response_text)
+        except json.JSONDecodeError:
+            chunk.llm_response_json = {"raw": response_text[:2000]}
+
+        if not merged_questions:
+            chunk.status = "failed"
+            import_job.failed_chunks = (import_job.failed_chunks or 0) + 1
+        elif per_question_failures:
+            chunk.status = "parsed_partial"
+            import_job.failed_chunks = (import_job.failed_chunks or 0) + 1
+        else:
+            chunk.status = "parsed_fallback"
+
         chunk.issues_json = {
             **(chunk.issues_json or {}),
-            "chunk_issues": llm_result.chunk_issues,
+            "retry_count": 0,
+            "fallback_used": True,
+            "per_question_failures": per_question_failures,
+            "fallback_meta": {
+                "total_segments": len(merged_questions) + len(per_question_failures),
+                "succeeded": len(merged_questions),
+                "failed": len(per_question_failures),
+                "elapsed_seconds": round(time.monotonic() - started_at, 2),
+                "reason": "l1_incomplete_response",
+            },
+            "chunk_issues": [{
+                "code": "L1_INCOMPLETE_RESPONSE",
+                "severity": "MEDIUM",
+                "detail": (
+                    f"Cached L1 response returned {actual_count} questions, "
+                    f"but chunk contains {expected_count} detectable question segments; "
+                    "switched to L2 per-question fallback"
+                ),
+                "expected_segments": expected_count,
+                "actual_questions": actual_count,
+            }] + (llm_result.chunk_issues or []),
         }
-    db.commit()
+        db.commit()
+        if chunk.status == "failed":
+            return
+    else:
+        chunk.status = "parsed_cached"
+        if llm_result.chunk_issues:
+            chunk.issues_json = {
+                **(chunk.issues_json or {}),
+                "chunk_issues": llm_result.chunk_issues,
+            }
+        db.commit()
 
     for parsed_q in llm_result.questions:
         _save_parsed_question(
@@ -715,6 +829,25 @@ def _process_chunk_cached(
             seen_signatures=seen_signatures,
             imported_qnos=imported_qnos,
         )
+
+
+def _build_fallback_response_text(
+    merged_questions: list[dict],
+    per_question_failures: list[dict],
+) -> str:
+    """把 L2 单题降级结果拼成 chunk 级伪响应，复用下游 Pydantic 解析逻辑。"""
+    return json.dumps(
+        {
+            "questions": merged_questions,
+            "chunk_issues": [],
+            "_fallback_meta": {
+                "total_segments": len(merged_questions) + len(per_question_failures),
+                "succeeded": len(merged_questions),
+                "failed": len(per_question_failures),
+            },
+        },
+        ensure_ascii=False,
+    )
 
 
 def _call_llm_with_l1_retry(
@@ -1041,7 +1174,9 @@ def _save_parsed_question(
     elif auto_import:
         question = _write_question_to_bank(db, parsed_question, import_job.bank_id)
         if parsed_question.import_status == "skipped":
-            parsed_question.imported_question_id = question.id if question else None
+            # _write_question_to_bank 的双重保险命中重复题时，会保留当前解析记录为
+            # duplicate/skipped，并且不关联已有正式题，避免被计入已导入题。
+            pass
         else:
             parsed_question.import_status = "imported"
             parsed_question.review_status = "auto_accepted"
@@ -1120,7 +1255,16 @@ def _write_question_to_bank(
             logger.info("题库 %d 已存在相同题目 (id=%d)，跳过写入", bank_id, existing.id)
             parsed_question.import_status = "skipped"
             parsed_question.review_status = "duplicate"
-            parsed_question.imported_question_id = existing.id
+            parsed_question.imported_question_id = None
+            parsed_question.issues_json = {
+                "issues": ["DUPLICATE"],
+                "details": [{
+                    "code": "DUPLICATE",
+                    "severity": "LOW",
+                    "reason": "content",
+                    "detail": "与已有题目重复",
+                }],
+            }
             db.flush()
             return existing
 
@@ -1133,7 +1277,9 @@ def _write_question_to_bank(
         content=full_content,
         options=options,
         correct_answer=correct_answer_str,
-        explanation=parsed_question.explanation,
+        # 正式题目的解析字段只表示用户主动生成的 AI 解析；导入解析仅保留在 ImportParsedQuestion.explanation。
+        explanation=None,
+        explanation_zh=None,
         order_index=max_order + 1,
     )
     db.add(question)
@@ -2037,6 +2183,14 @@ def _auto_handled_counts(db: Session, import_job_id: int) -> dict:
     }
 
 
+def _duplicate_skipped_count(db: Session, import_job_id: int) -> int:
+    return db.query(func.count(ImportParsedQuestion.id)).filter_by(
+        import_job_id=import_job_id,
+        review_status="duplicate",
+        import_status="skipped",
+    ).scalar() or 0
+
+
 def _finalize_import(db: Session, import_job: ImportJob) -> None:
     """导入完成后的汇总处理"""
     import_job = db.get(ImportJob, import_job.id)
@@ -2050,6 +2204,7 @@ def _finalize_import(db: Session, import_job: ImportJob) -> None:
     total_failed = import_job.failed_chunks or 0
     auto_counts = _auto_handled_counts(db, import_job.id)
     total_auto_skipped = auto_counts["auto_skipped"]
+    total_duplicate_skipped = _duplicate_skipped_count(db, import_job.id)
 
     # 生成摘要
     summary = {
@@ -2058,22 +2213,28 @@ def _finalize_import(db: Session, import_job: ImportJob) -> None:
         "total_review": total_review,
         "total_failed": total_failed,
         **auto_counts,
+        "duplicate_skipped": total_duplicate_skipped,
         "auto_import_rate": round(total_imported / total_parsed, 4) if total_parsed > 0 else 0,
     }
     import_job.summary_json = summary
 
-    # 确定最终状态
-    if total_review > 0 and total_imported > 0:
+    # 确定最终状态。失败 chunk 优先标记为 partial_imported，避免被待复核、
+    # auto_skipped 或 duplicate/skipped 的未入库语义覆盖。
+    if total_failed > 0:
+        import_job.status = "partial_imported"
+    elif total_review > 0 and total_imported > 0:
         import_job.status = "partial_imported"
     elif total_review > 0:
         import_job.status = "review_required"
-    elif total_failed > 0:
-        import_job.status = "partial_imported"
     elif total_imported > 0 and total_auto_skipped > 0:
         import_job.status = "partial_imported"
     elif total_imported > 0:
         import_job.status = "imported"
-    elif total_auto_skipped > 0 and total_parsed > 0:
+    elif total_parsed > 0 and (total_auto_skipped > 0 or total_duplicate_skipped > 0):
+        import_job.status = "unimported"
+    elif total_parsed > 0:
+        # 兜底：已有解析记录但没有新增入库/待复核/失败时，不应显示为"已入库"。
+        # 典型场景是重复文件重导入，全部解析题都被 duplicate/skipped。
         import_job.status = "unimported"
     else:
         import_job.status = "imported"

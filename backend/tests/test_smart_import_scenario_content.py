@@ -36,6 +36,7 @@ from app.models.vocabulary import Vocabulary  # noqa: E402,F401
 from app.schemas.llm_parse import ParsedOption, ParsedQuestion  # noqa: E402
 from app.services import smart_import_service as svc  # noqa: E402
 from scripts.backfill_scenario_question_content import backfill_scenario_question_content  # noqa: E402
+from scripts.clear_question_explanations import clear_question_explanations  # noqa: E402
 
 
 SCENARIO = "SCENARIO\nAn organization discovers that customer data was exposed during a vendor migration."
@@ -84,7 +85,362 @@ def bank_and_job(db_session):
     return bank, job, chunk
 
 
-def _parsed_question(*, scenario: str | None = SCENARIO, qno: str = "247") -> ParsedQuestion:
+def test_create_smart_import_job_allows_duplicate_file_hash(db_session, bank_and_job, monkeypatch):
+    bank, existing_job, _chunk = bank_and_job
+    existing_job.status = "review_required"
+    db_session.commit()
+    monkeypatch.setattr(
+        svc,
+        "save_upload_file",
+        lambda file_bytes, filename: ("/tmp/duplicate.pdf", existing_job.file_hash),
+    )
+
+    result = svc.create_smart_import_job(
+        db=db_session,
+        bank_id=bank.id,
+        file_bytes=b"same pdf content",
+        filename="duplicate.pdf",
+        user_id=1,
+    )
+
+    assert "error" not in result
+    new_job = db_session.get(ImportJob, result["import_job_id"])
+    assert new_job.id != existing_job.id
+    assert new_job.config_json["duplicate_file_of"] == existing_job.id
+    assert new_job.config_json["duplicate_file_status"] == "review_required"
+    assert new_job.background_job_id == result["background_job_id"]
+
+
+def test_duplicate_file_question_content_is_skipped_without_new_question(db_session, bank_and_job):
+    bank, job, chunk = bank_and_job
+    existing_question = Question(
+        bank_id=bank.id,
+        question_type="single",
+        content=FULL_CONTENT,
+        options=[
+            {"key": "A", "text": "Notify regulators and affected customers"},
+            {"key": "B", "text": "Ignore the incident"},
+            {"key": "C", "text": "Delete all records"},
+            {"key": "D", "text": "Wait for a complaint"},
+        ],
+        correct_answer="A",
+        order_index=0,
+    )
+    db_session.add(existing_question)
+    db_session.commit()
+    seen_signatures = {
+        svc._question_signature(
+            existing_question.question_type,
+            existing_question.content,
+            existing_question.options,
+            ["A"],
+        )
+    }
+
+    svc._save_parsed_question(
+        db_session,
+        _parsed_question(),
+        job,
+        chunk,
+        chunk_text=chunk.chunk_text,
+        auto_import=True,
+        seen_signatures=seen_signatures,
+    )
+
+    assert db_session.query(Question).filter_by(bank_id=bank.id).count() == 1
+    parsed = db_session.query(ImportParsedQuestion).one()
+    assert parsed.review_status == "duplicate"
+    assert parsed.import_status == "skipped"
+    assert parsed.imported_question_id is None
+    assert parsed.issues_json["details"][0]["reason"] == "content"
+    assert job.imported_questions == 0
+
+
+def test_inline_answer_blocks_do_not_strip_following_questions():
+    text = """
+Question 1
+Which identifier should be used?
+Options:
+A- Driver license
+B- Email
+Answer:
+A
+Explanation:
+Option A is strongest. References mention 4.1 controls, section 1.2, and article 7.
+Question 2
+Which control helps most?
+Options:
+A- Logging
+B- None
+Answer:
+A
+Explanation:
+Logging helps.
+"""
+
+    answer_key = svc._extract_answer_key(svc._normalize_text(text))
+    segments = svc._split_by_question_markers(svc._normalize_text(text))
+
+    assert answer_key == {}
+    assert len(svc._split_by_single_question(segments[0]["text"])) == 2
+    assert "Question 2" in segments[0]["text"]
+
+
+def test_answer_key_detection_supports_common_terminal_formats():
+    answer_key_text = """
+Question 1
+Which identifier should be used?
+A. Driver license
+B. Email
+Question 2
+Which control helps most?
+A. Logging
+B. None
+Question 3
+Which notice is required?
+A. Privacy notice
+B. No notice
+
+Answer Key:
+1: A
+2. B
+3) True
+"""
+    answers_colon_text = """
+Question 1
+Which identifier should be used?
+A. Driver license
+B. Email
+
+Answers:
+1 A
+2: B
+3. C
+"""
+
+    assert svc._extract_answer_key(svc._normalize_text(answer_key_text)) == {1: "A", 2: "B", 3: "TRUE"}
+    assert svc._extract_answer_key(svc._normalize_text(answers_colon_text)) == {1: "A", 2: "B", 3: "C"}
+
+
+def test_duplicate_cached_chunk_preserves_each_duplicate_parsed_record(db_session, bank_and_job, monkeypatch):
+    bank, job, chunk = bank_and_job
+    chunk.chunk_text = """
+Question #1
+Which identifier should be used?
+A. Driver license
+B. Email
+Question #2
+Which control helps most?
+A. Logging
+B. None
+Question #3
+Which notice is required?
+A. Privacy notice
+B. No notice
+"""
+    existing_questions = [
+        Question(
+            bank_id=bank.id,
+            question_type="single",
+            content=content,
+            options=[{"key": "A", "text": option_a}, {"key": "B", "text": option_b}],
+            correct_answer="A",
+            order_index=index,
+        )
+        for index, (content, option_a, option_b) in enumerate([
+            ("Which identifier should be used?", "Driver license", "Email"),
+            ("Which control helps most?", "Logging", "None"),
+            ("Which notice is required?", "Privacy notice", "No notice"),
+        ])
+    ]
+    db_session.add_all(existing_questions)
+    db_session.commit()
+    seen_signatures = {
+        svc._question_signature(q.question_type, q.content, q.options, ["A"])
+        for q in existing_questions
+    }
+    cached_questions = [
+        {
+            "source_question_no": str(index),
+            "question_type": "single",
+            "scenario": None,
+            "content": content,
+            "options": [
+                {"label": "A", "text": option_a},
+                {"label": "B", "text": option_b},
+            ],
+            "correct_answer": ["A"],
+            "explanation": "",
+            "references": [],
+            "confidence": 0.95,
+            "issues": [],
+        }
+        for index, (content, option_a, option_b) in enumerate([
+            ("Which identifier should be used?", "Driver license", "Email"),
+            ("Which control helps most?", "Logging", "None"),
+            ("Which notice is required?", "Privacy notice", "No notice"),
+        ], start=1)
+    ]
+    monkeypatch.setattr(svc, "_write_reconciliation", lambda db, import_job: None)
+
+    svc._process_chunk_cached(
+        db=db_session,
+        chunk=chunk,
+        cached={"response_text": json.dumps({"questions": cached_questions, "chunk_issues": []})},
+        import_job=job,
+        chunk_text=chunk.chunk_text,
+        auto_import=True,
+        seen_signatures=seen_signatures,
+    )
+    svc._finalize_import(db_session, job)
+
+    parsed_rows = db_session.query(ImportParsedQuestion).order_by(ImportParsedQuestion.id).all()
+    assert len(parsed_rows) == 3
+    assert [pq.source_question_no for pq in parsed_rows] == ["1", "2", "3"]
+    assert {pq.review_status for pq in parsed_rows} == {"duplicate"}
+    assert {pq.import_status for pq in parsed_rows} == {"skipped"}
+    assert db_session.query(Question).filter_by(bank_id=bank.id).count() == 3
+    assert job.imported_questions == 0
+    assert job.status == "unimported"
+    assert job.summary_json["duplicate_skipped"] == 3
+
+
+def test_duplicate_non_cached_chunk_preserves_each_duplicate_parsed_record(db_session, bank_and_job, monkeypatch):
+    bank, job, chunk = bank_and_job
+    question_rows = [
+        ("1", "Which identifier should be used?", "Driver license", "Email"),
+        ("2", "Which control helps most?", "Logging", "None"),
+        ("3", "Which notice is required?", "Privacy notice", "No notice"),
+    ]
+    chunk.chunk_text = "\n".join(
+        f"Question #{qno}\n{content}\nA. {option_a}\nB. {option_b}"
+        for qno, content, option_a, option_b in question_rows
+    )
+    existing_questions = [
+        Question(
+            bank_id=bank.id,
+            question_type="single",
+            content=content,
+            options=[{"key": "A", "text": option_a}, {"key": "B", "text": option_b}],
+            correct_answer="A",
+            order_index=index,
+        )
+        for index, (_qno, content, option_a, option_b) in enumerate(question_rows)
+    ]
+    db_session.add_all(existing_questions)
+    db_session.commit()
+    seen_signatures = {
+        svc._question_signature(q.question_type, q.content, q.options, ["A"])
+        for q in existing_questions
+    }
+    llm_questions = [
+        {
+            "source_question_no": qno,
+            "question_type": "single",
+            "scenario": None,
+            "content": content,
+            "options": [{"label": "A", "text": option_a}, {"label": "B", "text": option_b}],
+            "correct_answer": ["A"],
+            "explanation": "",
+            "references": [],
+            "confidence": 0.95,
+            "issues": [],
+        }
+        for qno, content, option_a, option_b in question_rows
+    ]
+    monkeypatch.setattr(
+        svc,
+        "call_ai_api",
+        lambda messages, db, scene="default", timeout=60.0: json.dumps({"questions": llm_questions, "chunk_issues": []}),
+    )
+    monkeypatch.setattr(svc, "_write_reconciliation", lambda db, import_job: None)
+
+    svc._process_chunk(
+        db=db_session,
+        chunk=chunk,
+        import_job=job,
+        auto_import=True,
+        use_llm_cache=False,
+        seen_signatures=seen_signatures,
+    )
+    svc._finalize_import(db_session, job)
+
+    parsed_rows = db_session.query(ImportParsedQuestion).order_by(ImportParsedQuestion.id).all()
+    assert len(parsed_rows) == 3
+    assert [pq.source_question_no for pq in parsed_rows] == ["1", "2", "3"]
+    assert {pq.review_status for pq in parsed_rows} == {"duplicate"}
+    assert {pq.import_status for pq in parsed_rows} == {"skipped"}
+    assert db_session.query(Question).filter_by(bank_id=bank.id).count() == 3
+    assert job.status == "unimported"
+    assert job.summary_json["duplicate_skipped"] == 3
+
+
+def test_question_signature_normalizes_option_key_label_and_label_case():
+    from_question_table = svc._question_signature(
+        "single",
+        FULL_CONTENT,
+        [
+            {"key": "A", "text": "Notify regulators and affected customers"},
+            {"key": "B", "text": "Ignore the incident"},
+        ],
+        ["A"],
+    )
+    from_llm_parse = svc._question_signature(
+        "single",
+        FULL_CONTENT,
+        [
+            {"label": " b ", "text": "Ignore the incident"},
+            {"label": " a ", "text": "Notify regulators and affected customers"},
+        ],
+        ["a"],
+    )
+
+    assert from_question_table == from_llm_parse
+
+
+def test_write_question_duplicate_fallback_records_content_reason(db_session, bank_and_job):
+    bank, job, chunk = bank_and_job
+    existing_question = Question(
+        bank_id=bank.id,
+        question_type="single",
+        content=FULL_CONTENT,
+        options=[
+            {"key": "A", "text": "Notify regulators and affected customers"},
+            {"key": "B", "text": "Ignore the incident"},
+            {"key": "C", "text": "Delete all records"},
+            {"key": "D", "text": "Wait for a complaint"},
+        ],
+        correct_answer="A",
+        order_index=0,
+    )
+    db_session.add(existing_question)
+    db_session.commit()
+
+    svc._save_parsed_question(
+        db_session,
+        _parsed_question(),
+        job,
+        chunk,
+        chunk_text=chunk.chunk_text,
+        auto_import=True,
+        seen_signatures=None,
+    )
+
+    assert db_session.query(Question).filter_by(bank_id=bank.id).count() == 1
+    parsed = db_session.query(ImportParsedQuestion).one()
+    assert parsed.review_status == "duplicate"
+    assert parsed.import_status == "skipped"
+    assert parsed.imported_question_id is None
+    assert parsed.issues_json["details"][0]["reason"] == "content"
+    assert job.imported_questions == 0
+
+
+def _parsed_question(
+    *,
+    scenario: str | None = SCENARIO,
+    qno: str = "247",
+    explanation: str = "",
+) -> ParsedQuestion:
     return ParsedQuestion(
         source_question_no=qno,
         question_type="single",
@@ -97,14 +453,20 @@ def _parsed_question(*, scenario: str | None = SCENARIO, qno: str = "247") -> Pa
             ParsedOption(label="D", text="Wait for a complaint"),
         ],
         correct_answer=["A"],
-        explanation="",
+        explanation=explanation,
         references=[],
         confidence=0.96,
         issues=[],
     )
 
 
-def _parsed_row(job: ImportJob, chunk: ImportChunk, *, scenario: str | None = SCENARIO) -> ImportParsedQuestion:
+def _parsed_row(
+    job: ImportJob,
+    chunk: ImportChunk,
+    *,
+    scenario: str | None = SCENARIO,
+    explanation: str | None = None,
+) -> ImportParsedQuestion:
     return ImportParsedQuestion(
         import_job_id=job.id,
         chunk_id=chunk.id,
@@ -119,6 +481,7 @@ def _parsed_row(job: ImportJob, chunk: ImportChunk, *, scenario: str | None = SC
             {"key": "D", "text": "Wait for a complaint"},
         ],
         correct_answer=["A"],
+        explanation=explanation,
         llm_confidence=0.96,
         final_confidence=0.96,
         review_status="pending",
@@ -131,7 +494,7 @@ def test_auto_import_writes_full_scenario_content(db_session, bank_and_job):
 
     svc._save_parsed_question(
         db_session,
-        _parsed_question(),
+        _parsed_question(explanation="导入解析：应仅保留在导入解析记录中"),
         job,
         chunk,
         chunk_text=chunk.chunk_text,
@@ -142,13 +505,16 @@ def test_auto_import_writes_full_scenario_content(db_session, bank_and_job):
     question = db_session.query(Question).one()
     parsed = db_session.query(ImportParsedQuestion).one()
     assert question.content == FULL_CONTENT
+    assert question.explanation is None
+    assert question.explanation_zh is None
     assert parsed.scenario_text == SCENARIO
     assert parsed.content == CONTENT
+    assert parsed.explanation == "导入解析：应仅保留在导入解析记录中"
 
 
 def test_review_accept_writes_full_scenario_content(db_session, bank_and_job, monkeypatch):
     bank, job, chunk = bank_and_job
-    parsed = _parsed_row(job, chunk)
+    parsed = _parsed_row(job, chunk, explanation="复核导入解析：不应写入正式题目")
     db_session.add(parsed)
     db_session.flush()
     review = ImportReviewItem(
@@ -166,6 +532,9 @@ def test_review_accept_writes_full_scenario_content(db_session, bank_and_job, mo
 
     question = db_session.get(Question, result["question_id"])
     assert question.content == FULL_CONTENT
+    assert question.explanation is None
+    assert question.explanation_zh is None
+    assert parsed.explanation == "复核导入解析：不应写入正式题目"
     assert parsed.import_status == "imported"
     assert review.status == "accepted"
 
@@ -197,7 +566,7 @@ def test_run_reparse_writes_full_scenario_content(db_session, bank_and_job, monk
                     {"label": "D", "text": "Wait for a complaint"},
                 ],
                 "correct_answer": ["A"],
-                "explanation": "",
+                "explanation": "reparse 导入解析：仅保留在导入解析记录中",
                 "references": [],
                 "confidence": 0.96,
                 "issues": [],
@@ -212,7 +581,11 @@ def test_run_reparse_writes_full_scenario_content(db_session, bank_and_job, monk
     svc.run_reparse(db_session, bg_job)
 
     question = db_session.query(Question).one()
+    parsed = db_session.query(ImportParsedQuestion).one()
     assert question.content == FULL_CONTENT
+    assert question.explanation is None
+    assert question.explanation_zh is None
+    assert parsed.explanation == "reparse 导入解析：仅保留在导入解析记录中"
 
 
 def test_leading_scenario_material_is_attached_to_first_question():
@@ -350,6 +723,97 @@ def test_finalize_import_marks_all_auto_skipped_as_unimported(db_session, bank_a
     assert job.status == "unimported"
     assert job.summary_json["auto_skipped"] == 1
     assert job.summary_json["auto_handled"] == 1
+
+
+def test_finalize_import_failed_chunks_take_priority_over_unimported(db_session, bank_and_job, monkeypatch):
+    _bank, job, chunk = bank_and_job
+    job.failed_chunks = 1
+    duplicate = ImportParsedQuestion(
+        import_job_id=job.id,
+        chunk_id=chunk.id,
+        source_question_no="1",
+        question_type="single",
+        content="Which identifier should be used?",
+        options_json=[{"key": "A", "text": "Driver license"}, {"key": "B", "text": "Email"}],
+        correct_answer=["A"],
+        review_status="duplicate",
+        import_status="skipped",
+        issues_json={"details": [{"code": "DUPLICATE", "reason": "content"}]},
+    )
+    db_session.add(duplicate)
+    job.parsed_questions = 1
+    monkeypatch.setattr(svc, "_write_reconciliation", lambda db, import_job: None)
+
+    svc._finalize_import(db_session, job)
+
+    db_session.refresh(job)
+    assert job.status == "partial_imported"
+    assert job.summary_json["duplicate_skipped"] == 1
+
+
+def test_clear_question_explanations_dry_run_apply_and_preserves_import_parse_explanations(db_session, bank_and_job):
+    bank, job, chunk = bank_and_job
+    question_with_both = Question(
+        bank_id=bank.id,
+        question_type="single",
+        content="Question with both explanations",
+        options=[{"key": "A", "text": "Yes"}, {"key": "B", "text": "No"}],
+        correct_answer="A",
+        explanation="AI explanation",
+        explanation_zh="中文 AI 解析",
+        order_index=0,
+    )
+    question_with_zh_only = Question(
+        bank_id=bank.id,
+        question_type="single",
+        content="Question with zh explanation only",
+        options=[{"key": "A", "text": "Yes"}, {"key": "B", "text": "No"}],
+        correct_answer="A",
+        explanation=None,
+        explanation_zh="仅中文 AI 解析",
+        order_index=1,
+    )
+    question_without_explanation = Question(
+        bank_id=bank.id,
+        question_type="single",
+        content="Question without explanations",
+        options=[{"key": "A", "text": "Yes"}, {"key": "B", "text": "No"}],
+        correct_answer="A",
+        explanation=None,
+        explanation_zh=None,
+        order_index=2,
+    )
+    parsed = _parsed_row(job, chunk, explanation="导入解析必须保留")
+    db_session.add_all([question_with_both, question_with_zh_only, question_without_explanation, parsed])
+    db_session.commit()
+
+    dry_run = clear_question_explanations(db_session, apply=False)
+    db_session.refresh(question_with_both)
+    db_session.refresh(question_with_zh_only)
+    db_session.refresh(parsed)
+
+    assert dry_run.matched == 2
+    assert dry_run.updated == 0
+    assert question_with_both.explanation == "AI explanation"
+    assert question_with_both.explanation_zh == "中文 AI 解析"
+    assert question_with_zh_only.explanation_zh == "仅中文 AI 解析"
+    assert parsed.explanation == "导入解析必须保留"
+
+    applied = clear_question_explanations(db_session, apply=True)
+    db_session.refresh(question_with_both)
+    db_session.refresh(question_with_zh_only)
+    db_session.refresh(question_without_explanation)
+    db_session.refresh(parsed)
+
+    assert applied.matched == 2
+    assert applied.updated == 2
+    assert question_with_both.explanation is None
+    assert question_with_both.explanation_zh is None
+    assert question_with_zh_only.explanation is None
+    assert question_with_zh_only.explanation_zh is None
+    assert question_without_explanation.explanation is None
+    assert question_without_explanation.explanation_zh is None
+    assert parsed.explanation == "导入解析必须保留"
 
 
 def test_history_backfill_dry_run_apply_and_safety_conditions(db_session, bank_and_job):
