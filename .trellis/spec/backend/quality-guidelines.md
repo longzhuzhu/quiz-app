@@ -343,6 +343,115 @@ curl -s http://localhost:5003/api/quiz/recent-accuracy \
 
 ---
 
+## 用户自有考试项目：后端上下文隔离
+
+### 1. Scope / Trigger
+
+- Trigger: 新增或修改任何考试项目内数据的 FastAPI 路由、service、migration 或后台任务。
+- 适用范围：题库、题目、错题、答题会话、词汇、AI 翻译/解析、导入任务、后台任务。
+- 核心规则：exam-scoped API 必须显式依赖 `X-Exam-Slug + 当前认证用户`，不得用 `active_exam_id` 隐式兜底。
+
+### 2. Signatures
+
+- 上下文依赖：
+  ```python
+  def get_exam_context(
+      current_user: User = Depends(get_current_user),
+      db: Session = Depends(get_db),
+      x_exam_slug: str | None = Header(None, alias="X-Exam-Slug"),
+  ) -> Exam:
+      ...
+  ```
+- 路由签名：exam-scoped endpoint 必须包含 `exam: Exam = Depends(get_exam_context)`。
+- DB 归属：
+  - `exams.owner_id -> users.id`
+  - `users.active_exam_id -> exams.id`，仅表示默认/上次项目。
+  - `question_banks.exam_id -> exams.id`，题目通过 bank 推导项目归属。
+  - `vocabularies.exam_id NULL` 表示跨考试项目个人词汇，非空表示项目专属个人词汇。
+- AI Profile：`Question -> QuestionBank -> Exam.ai_profile`。
+- 迁移：存量 CIPT 数据迁入指定管理员用户的 `cipt` 考试项目；若指定用户不存在或非管理员，migration 必须失败。
+
+### 3. Contracts
+
+- 请求头：所有 exam-scoped API 必须要求 `X-Exam-Slug: <slug>`。
+- 用户边界：`slug` 只在当前用户拥有的考试项目内解析，管理员身份不得让普通业务 API 跨 owner 访问数据。
+- `active_exam_id`：只用于账号信息和 UI 默认选择，不参与后端 exam-scoped API 的自动解析。
+- 题库/题目/导入任务：必须先确认所属 bank/job 在当前 `exam.id` 下，再读取、写入、删除或启动后台处理。
+- 词汇：业务 API 只暴露个人词汇语义；不得新增 `professional`、`system`、official vocabulary 兼容端点。
+- AI：翻译和解析 prompt 从当前题目所属考试项目的 `ai_profile` 读取，缺字段时才使用代码内默认 prompt。
+- 管理员只读 API：可查看所有考试项目及其题库/题目，不得写入、删除他人数据，也不得暴露用户答题历史。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+|------|------|
+| 缺少 `Authorization` | 401 |
+| 缺少或空白 `X-Exam-Slug` | 400，`detail="EXAM_REQUIRED"` |
+| `X-Exam-Slug` 不属于当前用户 | 404，`detail="EXAM_NOT_FOUND"` |
+| bank/question/job 不属于当前 exam | 404 |
+| 使用 `active_exam_id` 代替请求头解析上下文 | 禁止 |
+| migration 指定 owner 不存在或非管理员 | migration 失败并提示 operator |
+| 新增 professional/system vocabulary API | 禁止 |
+
+### 5. Good/Base/Bad Cases
+
+- Good: `GET /api/banks` 带有效 token 和 `X-Exam-Slug: cipt`，只返回当前用户 `cipt` 项目内题库。
+- Base: `/api/auth/me` 可返回 `active_exam`，但 `/api/banks` 仍必须要求 `X-Exam-Slug`。
+- Bad: `db.get(QuestionBank, bank_id)` 后直接操作，未校验 `bank.exam_id == exam.id`。
+- Bad: 普通用户业务 API 因 `current_user.is_admin` 允许读取他人考试项目。
+
+### 6. Tests Required
+
+- API smoke: 缺少 `X-Exam-Slug` 请求任一 exam-scoped endpoint，断言 400 `EXAM_REQUIRED`。
+- API smoke: 使用不属于当前用户的 slug，断言 404 `EXAM_NOT_FOUND`。
+- Route isolation: bank/question/job/wrong/quiz/vocab/ai endpoint 对跨项目 ID 返回 404。
+- Migration: 在真实 PostgreSQL 上执行 `alembic upgrade head`，断言存量 bank、system vocabulary、active exam 迁移到指定 owner 的 `cipt` 项目。
+- Vocabulary: `scope=personal|exam_personal|all` 只返回当前用户词汇，且无 professional/system API 路径。
+- AI: 翻译/解析从题目所属 exam 的 `ai_profile` 取 prompt，跨项目 question ID 返回 404。
+- Admin read-only: 管理员可读取所有 exams/banks/questions，但没有写/删他人数据和用户 quiz history endpoint。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+@router.get("/{bank_id}")
+def get_bank(bank_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return db.get(QuestionBank, bank_id)
+```
+
+```python
+@router.get("")
+def list_banks(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    exam_id = current_user.active_exam_id
+    return db.query(QuestionBank).filter_by(exam_id=exam_id).all()
+```
+
+#### Correct
+
+```python
+@router.get("/{bank_id}")
+def get_bank(
+    bank_id: int,
+    exam: Exam = Depends(get_exam_context),
+    db: Session = Depends(get_db),
+):
+    bank = get_bank_in_exam_or_404(db, bank_id, exam)
+    return bank_to_dict(bank)
+```
+
+```python
+@router.get("")
+def list_banks(
+    exam: Exam = Depends(get_exam_context),
+    db: Session = Depends(get_db),
+):
+    banks = db.query(QuestionBank).filter_by(exam_id=exam.id).all()
+    return [bank_to_dict(bank) for bank in banks]
+```
+
+---
+
 ## 常见问题
 
 ### Flask 服务层返回 `{"error": "..."}` dict 让路由猜测状态码
