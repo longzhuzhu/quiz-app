@@ -5,11 +5,11 @@
     <!-- 统计卡片 -->
     <div class="mb-8 grid gap-4 md:grid-cols-3">
       <div class="rounded-card-lg bg-white dark:bg-slate-800 p-5 shadow-card hover:shadow-card-hover transition-shadow cursor-pointer"
-        :class="{ 'ring-2 ring-primary-500': activeTab === 'professional' }"
-        @click="activeTab = 'professional'">
-        <div class="text-sm text-gray-500 dark:text-gray-400">专业词汇</div>
-        <div class="mt-1 text-2xl font-bold text-primary-600 dark:text-primary-400">{{ stats.professional || 0 }}</div>
-        <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">CIPT 考试核心术语</p>
+        :class="{ 'ring-2 ring-primary-500': activeTab === 'exam_personal' }"
+        @click="activeTab = 'exam_personal'">
+        <div class="text-sm text-gray-500 dark:text-gray-400">项目词汇</div>
+        <div class="mt-1 text-2xl font-bold text-primary-600 dark:text-primary-400">{{ stats.exam_personal || 0 }}</div>
+        <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">当前考试项目核心术语</p>
       </div>
       <div class="rounded-card-lg bg-white dark:bg-slate-800 p-5 shadow-card hover:shadow-card-hover transition-shadow cursor-pointer"
         :class="{ 'ring-2 ring-primary-500': activeTab === 'personal' }"
@@ -27,29 +27,15 @@
       </div>
     </div>
 
-    <!-- ========== 专业词汇 ========== -->
-    <div v-if="activeTab === 'professional'">
+    <!-- ========== 项目词汇 ========== -->
+    <div v-if="activeTab === 'exam_personal'">
       <div class="mb-4 flex items-center justify-between gap-2 flex-wrap">
-        <h2 class="text-lg font-semibold text-gray-800 dark:text-white">专业词汇</h2>
+        <h2 class="text-lg font-semibold text-gray-800 dark:text-white">项目词汇</h2>
         <div class="flex items-center gap-2">
-          <BaseButton v-if="isAdmin && professionalUntranslatedCount > 0" @click="batchTranslate" :disabled="translating" size="sm">
-            {{ translating ? `翻译中... ${professionalJobState.progressDone}/${professionalJobState.progressTotal}` : `批量翻译（${professionalUntranslatedCount}）` }}
-          </BaseButton>
-          <BaseButton v-if="isAdmin" @click="importIAPP" :disabled="importing" variant="secondary" size="sm">
-            {{ importing ? '导入中...' : '从 IAPP 导入' }}
-          </BaseButton>
           <BaseButton v-if="isAdmin" @click="showAddForm = !showAddForm" size="sm">
             {{ showAddForm ? '取消' : '添加词汇' }}
           </BaseButton>
         </div>
-      </div>
-
-      <!-- 翻译进度 -->
-      <div v-if="translating" class="mb-4 rounded-card bg-teal-50 dark:bg-teal-900/20 px-4 py-3 text-sm text-teal-700 dark:text-teal-300">
-        正在翻译... 已完成 {{ professionalJobState.progressDone }} / 共 {{ professionalJobState.progressTotal }} 个
-      </div>
-      <div v-if="professionalJobError" class="mb-4 rounded-card bg-red-50 dark:bg-red-900/20 px-4 py-3 text-sm text-red-700 dark:text-red-300">
-        翻译失败：{{ professionalJobError }}
       </div>
 
       <!-- 搜索框 -->
@@ -61,12 +47,12 @@
       <div class="mb-4 flex flex-wrap gap-2">
         <button
           v-for="option in masteredFilterOptions"
-          :key="`professional-${option.value}`"
+          :key="`exam_personal-${option.value}`"
           class="rounded-full px-3 py-1.5 text-sm font-medium transition-colors"
-          :class="professionalMasteredFilter === option.value
+          :class="examPersonalMasteredFilter === option.value
             ? 'bg-primary-600 text-white dark:bg-primary-500'
             : 'bg-white text-gray-600 shadow-card hover:text-primary-600 dark:bg-slate-800 dark:text-gray-300 dark:hover:text-primary-400'"
-          @click="professionalMasteredFilter = option.value"
+          @click="examPersonalMasteredFilter = option.value"
         >
           {{ option.label }}
         </button>
@@ -80,16 +66,16 @@
           <input v-model="newWord.definition" placeholder="英文释义（可选）" class="rounded-card border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" />
           <input v-model="newWord.definition_zh" placeholder="中文释义（可选）" class="rounded-card border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" />
         </div>
-        <BaseButton @click="addWord('professional')" :disabled="!newWord.term.trim()" size="sm" class="mt-3">
+        <BaseButton @click="addWord('exam_personal')" :disabled="!newWord.term.trim()" size="sm" class="mt-3">
           确认添加
         </BaseButton>
       </div>
 
       <div v-if="loadingPro" class="text-center text-gray-500 dark:text-gray-400 py-12">加载中...</div>
-      <div v-else-if="filteredProfessional.length === 0 && searchQuery" class="py-12 text-center text-gray-400 dark:text-gray-500">
+      <div v-else-if="filteredExamPersonal.length === 0 && searchQuery" class="py-12 text-center text-gray-400 dark:text-gray-500">
         没有找到匹配「{{ searchQuery }}」的术语
       </div>
-      <div v-else-if="professionalWords.length === 0" class="py-12 text-center text-gray-400 dark:text-gray-500">暂无专业词汇</div>
+      <div v-else-if="examPersonalWords.length === 0" class="py-12 text-center text-gray-400 dark:text-gray-500">暂无项目词汇</div>
       <template v-else>
         <!-- A-Z 导航条 -->
         <div class="mb-4 flex flex-wrap gap-1" v-if="!searchQuery">
@@ -144,8 +130,8 @@
                         v-if="w.can_mark_mastered"
                         :variant="w.is_mastered ? 'secondary' : 'primary'"
                         size="sm"
-                        :loading="Boolean(vocabProgressLoading[`professional:${w.id}`])"
-                        @click.stop="toggleVocabMastery(w, 'professional')"
+                        :loading="Boolean(vocabProgressLoading[`exam_personal:${w.id}`])"
+                        @click.stop="toggleVocabMastery(w, 'exam_personal')"
                       >
                         {{ w.is_mastered ? '取消掌握' : '掌握' }}
                       </BaseButton>
@@ -153,7 +139,7 @@
                         fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
                       </svg>
-                      <BaseButton v-if="w.can_delete" variant="danger" size="sm" @click.stop="confirmDeleteWord(w.id, 'professional')">
+                      <BaseButton v-if="w.can_delete" variant="danger" size="sm" @click.stop="confirmDeleteWord(w.id, 'exam_personal')">
                         删除
                       </BaseButton>
                     </div>
@@ -447,15 +433,6 @@
       @cancel="deleteConfirm.open = false"
     />
 
-    <!-- 导入确认对话框 -->
-    <ConfirmDialog
-      :open="importConfirm.open"
-      title="导入词汇"
-      message="从 IAPP 网站导入隐私专业词汇？已存在的术语会自动跳过。"
-      confirm-text="开始导入"
-      @confirm="doImportIAPP"
-      @cancel="importConfirm.open = false"
-    />
   </div>
 </template>
 
@@ -475,12 +452,11 @@ const bankStore = useBankStore()
 const isAdmin = authStore.isAdmin
 const toast = useToast()
 
-const activeTab = ref('professional')
+const activeTab = ref('exam_personal')
 const stats = ref({})
-const professionalWords = ref([])
+const examPersonalWords = ref([])
 const personalWords = ref([])
-const professionalUntranslatedCount = ref(0)
-const professionalMasteredFilter = ref('all')
+const examPersonalMasteredFilter = ref('all')
 const personalMasteredFilter = ref('all')
 const frequentMasteredFilter = ref('all')
 const banks = ref([])
@@ -496,11 +472,6 @@ const frequentTotalPages = ref(1)
 const frequentTopLimit = ref(5000)
 const frequentUntranslatedCount = ref(0)
 const showAddForm = ref(false)
-const importing = ref(false)
-const translating = ref(false)
-const professionalJobState = reactive({ progressDone: 0, progressTotal: 0 })
-const professionalJobError = ref('')
-let professionalPollTimer = null
 const translatingFrequent = ref(false)
 const frequentJobState = reactive({ progressDone: 0, progressTotal: 0 })
 const frequentJobError = ref('')
@@ -559,10 +530,10 @@ const frequentPageOptions = computed(() =>
   Array.from({ length: frequentTotalPages.value }, (_, index) => index + 1)
 )
 
-const filteredProfessional = computed(() => {
+const filteredExamPersonal = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
-  if (!q) return professionalWords.value
-  return professionalWords.value.filter(w =>
+  if (!q) return examPersonalWords.value
+  return examPersonalWords.value.filter(w =>
     w.term.toLowerCase().includes(q) ||
     (w.term_zh && w.term_zh.includes(q)) ||
     (w.definition && w.definition.toLowerCase().includes(q))
@@ -571,9 +542,9 @@ const filteredProfessional = computed(() => {
 
 const proGrouped = computed(() => {
   if (searchQuery.value.trim()) {
-    return groupByLetter(filteredProfessional.value)
+    return groupByLetter(filteredExamPersonal.value)
   }
-  return groupByLetter(professionalWords.value)
+  return groupByLetter(examPersonalWords.value)
 })
 
 // 个人单词按字母排序后分组
@@ -609,20 +580,10 @@ function scrollToTop() {
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
-function wordNeedsTranslation(word) {
-  if (!word.term_zh?.trim()) {
-    return true
-  }
-  if (word.definition?.trim() && !word.definition_zh?.trim()) {
-    return true
-  }
-  return false
-}
-
 // 监听滚动，更新当前字母高亮和回到顶部按钮
 function onScroll() {
   showBackTop.value = window.scrollY > 400
-  const tab = activeTab.value === 'professional' ? 'pro' : 'personal'
+  const tab = activeTab.value === 'exam_personal' ? 'pro' : 'personal'
   const refs = letterRefs[tab]
   let current = ''
   for (const letter of LETTERS) {
@@ -645,32 +606,33 @@ async function fetchStats() {
   } catch {}
 }
 
-async function fetchProfessional() {
+async function fetchExamPersonal() {
   loadingPro.value = true
   try {
-    const res = await client.get('/vocab/professional', {
-      params: buildMasteredFilterParams(professionalMasteredFilter.value),
+    const res = await client.get('/vocab', {
+      params: {
+        scope: 'exam_personal',
+        page_size: 100,
+        ...buildMasteredFilterParams(examPersonalMasteredFilter.value),
+      },
     })
-    professionalWords.value = res.data
+    examPersonalWords.value = res.data.items || []
   } finally {
     loadingPro.value = false
   }
 }
 
-async function refreshProfessionalTranslationCount() {
-  try {
-    const res = await client.get('/vocab/professional')
-    professionalUntranslatedCount.value = (res.data || []).filter(wordNeedsTranslation).length
-  } catch {}
-}
-
 async function fetchPersonal() {
   loadingPersonal.value = true
   try {
-    const res = await client.get('/vocab/personal', {
-      params: buildMasteredFilterParams(personalMasteredFilter.value),
+    const res = await client.get('/vocab', {
+      params: {
+        scope: 'personal',
+        page_size: 100,
+        ...buildMasteredFilterParams(personalMasteredFilter.value),
+      },
     })
-    personalWords.value = res.data
+    personalWords.value = res.data.items || []
   } finally {
     loadingPersonal.value = false
   }
@@ -734,8 +696,8 @@ async function toggleVocabMastery(item, type) {
     const res = await client.put(`/vocab/items/${item.id}/progress`, {
       is_mastered: nextState,
     })
-    if (type === 'professional') {
-      await fetchProfessional()
+    if (type === 'exam_personal') {
+      await fetchExamPersonal()
     } else {
       await fetchPersonal()
     }
@@ -777,12 +739,12 @@ function setFrequentMasteredFilter(value) {
 
 async function addWord(type) {
   try {
-    const url = type === 'professional' ? '/vocab/professional' : '/vocab/personal'
-    const res = await client.post(url, { ...newWord })
-    if (type === 'professional') {
-      professionalWords.value.unshift(res.data)
-      professionalWords.value.sort((a, b) => a.term.localeCompare(b.term))
-      professionalUntranslatedCount.value += res.data.term_zh ? 0 : 1
+    const res = await client.post('/vocab', { ...newWord }, {
+      params: { scope: type === 'exam_personal' ? 'exam_personal' : 'personal' },
+    })
+    if (type === 'exam_personal') {
+      examPersonalWords.value.unshift(res.data)
+      examPersonalWords.value.sort((a, b) => a.term.localeCompare(b.term))
     } else {
       personalWords.value.unshift(res.data)
     }
@@ -817,14 +779,9 @@ async function doDeleteWord() {
       })
       await fetchFrequent()
     } else {
-      const url = type === 'professional' ? `/vocab/professional/${id}` : `/vocab/personal/${id}`
-      await client.delete(url)
-      if (type === 'professional') {
-        const removedWord = professionalWords.value.find(w => w.id === id)
-        professionalWords.value = professionalWords.value.filter(w => w.id !== id)
-        if (removedWord && !removedWord.term_zh) {
-          professionalUntranslatedCount.value = Math.max(professionalUntranslatedCount.value - 1, 0)
-        }
+      await client.delete(`/vocab/items/${id}`)
+      if (type === 'exam_personal') {
+        examPersonalWords.value = examPersonalWords.value.filter(w => w.id !== id)
       } else {
         personalWords.value = personalWords.value.filter(w => w.id !== id)
       }
@@ -848,135 +805,8 @@ async function doDeleteWord() {
   }
 }
 
-// 导入确认流程
-function importIAPP() {
-  importConfirm.open = true
-}
-
-async function doImportIAPP() {
-  importConfirm.open = false
-  importing.value = true
-  try {
-    const res = await client.post('/vocab/professional/import-iapp')
-    toast.success(res.data.message)
-    await fetchProfessional()
-    await refreshProfessionalTranslationCount()
-    await fetchStats()
-  } catch (e) {
-    toast.error(e.response?.data?.error || '导入失败')
-  } finally {
-    importing.value = false
-  }
-}
-
-// ─── 异步批量翻译：专业词汇 ───
-
-const JOB_TYPE_PROFESSIONAL = 'professional_vocab_translate'
 const JOB_TYPE_FREQUENT = 'bank_frequent_translate'
 const JOB_POLL_INTERVAL = 3000
-
-async function batchTranslate() {
-  if (translating.value) return
-  translating.value = true
-  professionalJobError.value = ''
-  professionalJobState.progressDone = 0
-  professionalJobState.progressTotal = professionalUntranslatedCount.value
-
-  try {
-    const res = await client.post('/jobs', { job_type: JOB_TYPE_PROFESSIONAL })
-    const { result, job, message } = res.data
-
-    if (result === 'no_work') {
-      toast.info(message)
-      translating.value = false
-      return
-    }
-
-    if (job) {
-      professionalJobState.progressTotal = job.progress_total || professionalJobState.progressTotal
-      professionalJobState.progressDone = job.progress_done || 0
-    }
-
-    if (result === 'existing') {
-      toast.info(message)
-    } else {
-      toast.success(message)
-    }
-
-    startProfessionalPolling()
-  } catch (e) {
-    professionalJobError.value = e.response?.data?.detail || e.response?.data?.error || '创建翻译任务失败'
-    translating.value = false
-  }
-}
-
-function startProfessionalPolling() {
-  stopProfessionalPolling()
-  professionalPollTimer = setInterval(pollProfessionalJob, JOB_POLL_INTERVAL)
-  pollProfessionalJob()
-}
-
-function stopProfessionalPolling() {
-  if (professionalPollTimer) {
-    clearInterval(professionalPollTimer)
-    professionalPollTimer = null
-  }
-}
-
-async function pollProfessionalJob() {
-  try {
-    const res = await client.get('/jobs/active', {
-      params: { job_type: JOB_TYPE_PROFESSIONAL },
-    })
-    const job = res.data.job
-    if (!job) {
-      stopProfessionalPolling()
-      translating.value = false
-      await fetchProfessional()
-      await refreshProfessionalTranslationCount()
-      return
-    }
-
-    professionalJobState.progressDone = job.progress_done || 0
-    professionalJobState.progressTotal = job.progress_total || professionalJobState.progressTotal
-
-    if (job.status === 'completed') {
-      stopProfessionalPolling()
-      translating.value = false
-      toast.success('批量翻译完成')
-      await fetchProfessional()
-      await refreshProfessionalTranslationCount()
-    } else if (job.status === 'failed') {
-      stopProfessionalPolling()
-      translating.value = false
-      professionalJobError.value = job.last_error || '翻译任务失败'
-      toast.error(professionalJobError.value)
-      await fetchProfessional()
-      await refreshProfessionalTranslationCount()
-    }
-  } catch (e) {
-    stopProfessionalPolling()
-    translating.value = false
-    professionalJobError.value = e.response?.data?.detail || '查询任务状态失败'
-  }
-}
-
-async function checkProfessionalJobOnLoad() {
-  if (!isAdmin) return
-  try {
-    const res = await client.get('/jobs/active', {
-      params: { job_type: JOB_TYPE_PROFESSIONAL },
-    })
-    const job = res.data.job
-    if (job && (job.status === 'queued' || job.status === 'running')) {
-      translating.value = true
-      professionalJobState.progressDone = job.progress_done || 0
-      professionalJobState.progressTotal = job.progress_total || 0
-      professionalJobError.value = ''
-      startProfessionalPolling()
-    }
-  } catch {}
-}
 
 // ─── 异步批量翻译：高频词汇 ───
 
@@ -1093,7 +923,7 @@ watch(activeTab, () => {
   showAddForm.value = false
 })
 
-watch(professionalMasteredFilter, fetchProfessional)
+watch(examPersonalMasteredFilter, fetchExamPersonal)
 watch(personalMasteredFilter, fetchPersonal)
 
 watch(selectedBankId, () => {
@@ -1117,17 +947,14 @@ watch(frequentPage, fetchFrequent)
 onMounted(async () => {
   await fetchBanks()
   fetchStats()
-  fetchProfessional()
-  refreshProfessionalTranslationCount()
+  fetchExamPersonal()
   fetchPersonal()
-  checkProfessionalJobOnLoad()
   checkFrequentJobOnLoad()
   window.addEventListener('scroll', onScroll, { passive: true })
 })
 
 onUnmounted(() => {
   window.removeEventListener('scroll', onScroll)
-  stopProfessionalPolling()
   stopFrequentPolling()
 })
 

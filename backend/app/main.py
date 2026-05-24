@@ -47,6 +47,9 @@ def create_app() -> FastAPI:
     from app.api.routes.auth import router as auth_router
     from app.api.routes.account import router as account_router
     from app.api.routes.admin_users import router as admin_users_router
+    from app.api.routes.admin_exams import router as admin_exams_router
+    from app.api.routes.admin_banks import router as admin_banks_router
+    from app.api.routes.exams import router as exams_router
     from app.api.routes.banks import router as banks_router
     from app.api.routes.questions import router as questions_router
     from app.api.routes.quiz import router as quiz_router
@@ -61,7 +64,10 @@ def create_app() -> FastAPI:
 
     app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
     app.include_router(account_router, prefix="/api/account", tags=["account"])
+    app.include_router(exams_router, prefix="/api/exams", tags=["exams"])
     app.include_router(admin_users_router, prefix="/api/admin/users", tags=["admin-users"])
+    app.include_router(admin_exams_router, prefix="/api/admin/exams", tags=["admin-exams"])
+    app.include_router(admin_banks_router, prefix="/api/admin/banks", tags=["admin-banks"])
     app.include_router(banks_router, prefix="/api/banks", tags=["banks"])
     app.include_router(questions_router, prefix="/api/questions", tags=["questions"])
     app.include_router(quiz_router, prefix="/api/quiz", tags=["quiz"])

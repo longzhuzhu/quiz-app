@@ -14,10 +14,8 @@ from sqlalchemy.orm import Session
 from app.models.background_job import BackgroundJob
 from app.models.bank_word import BankWordExclusion, BankWordFrequency
 from app.models.question_bank import QuestionBank
-from app.models.vocabulary import Vocabulary
 from app.services.import_service import TOP_FREQUENT_TERMS_LIMIT
 
-JOB_TYPE_PROFESSIONAL_VOCAB_TRANSLATE = "professional_vocab_translate"
 JOB_TYPE_BANK_FREQUENT_TRANSLATE = "bank_frequent_translate"
 JOB_TYPE_QUESTION_IMPORT_LLM = "question_import_llm"
 JOB_TYPE_QUESTION_IMPORT_LLM_REPARSE = "question_import_llm_reparse"
@@ -50,8 +48,6 @@ def vocabulary_needs_translation(word) -> bool:
 
 
 def build_scope_key(job_type: str, payload: dict) -> str:
-    if job_type == JOB_TYPE_PROFESSIONAL_VOCAB_TRANSLATE:
-        return "professional_vocab"
     if job_type == JOB_TYPE_BANK_FREQUENT_TRANSLATE:
         return f"bank_frequent:{payload['bank_id']}"
     if job_type == JOB_TYPE_QUESTION_IMPORT_LLM:
@@ -77,13 +73,6 @@ def list_bank_frequent_terms(db: Session, bank_id: int) -> list:
 
 
 def count_pending_items(db: Session, job_type: str, payload: dict) -> int:
-    if job_type == JOB_TYPE_PROFESSIONAL_VOCAB_TRANSLATE:
-        return sum(
-            1
-            for word in db.query(Vocabulary).filter(Vocabulary.is_system.is_(True)).order_by(Vocabulary.term).all()
-            if vocabulary_needs_translation(word)
-        )
-
     if job_type == JOB_TYPE_BANK_FREQUENT_TRANSLATE:
         bank_id = payload["bank_id"]
         bank = db.get(QuestionBank, bank_id)

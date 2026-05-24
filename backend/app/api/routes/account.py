@@ -8,23 +8,46 @@ from app.core.database import get_db
 from app.core.security import get_password_hash, verify_password
 from app.models.user import User
 from app.schemas.auth import ChangePasswordRequest, MessageResponse
+from app.schemas.exam import ActiveExamRequest
+from app.services.exam_service import get_owned_exam_or_404, serialize_exam
 
 router = APIRouter()
 
 
-def user_to_dict(user: User) -> dict:
-    return {
+def user_to_dict(user: User, db: Session | None = None) -> dict:
+    data = {
         "id": user.id,
         "username": user.username,
         "email": user.email,
         "is_admin": user.is_admin,
+        "active_exam_id": user.active_exam_id,
         "created_at": user.created_at.isoformat(),
     }
+    if db is not None:
+        data["exam_count"] = user.owned_exams.count()
+        data["active_exam"] = serialize_exam(user.active_exam, db) if user.active_exam else None
+    return data
 
 
 @router.get("")
-def get_account(current_user: User = Depends(get_current_user)):
-    return user_to_dict(current_user)
+def get_account(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return user_to_dict(current_user, db)
+
+
+@router.post("/active-exam")
+def set_active_exam(
+    data: ActiveExamRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    exam = get_owned_exam_or_404(db, current_user, data.slug.strip())
+    current_user.active_exam_id = exam.id
+    db.commit()
+    db.refresh(current_user)
+    return {"active_exam": serialize_exam(exam, db)}
 
 
 @router.put("/password", response_model=MessageResponse)

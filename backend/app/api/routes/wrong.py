@@ -3,16 +3,18 @@
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_exam_context
 from app.core.database import get_db
+from app.models.exam import Exam
 from app.models.question import Question
-from app.models.quiz import QuizSession, QuizAnswer
-from app.models.wrong import WrongAnswer, UserQuestionStat
+from app.models.question_bank import QuestionBank
+from app.models.quiz import QuizSession
 from app.models.user import User
+from app.models.wrong import UserQuestionStat, WrongAnswer
 from app.schemas.wrong import WrongPracticeRequest
+from app.services.exam_service import get_bank_in_exam_or_404
 
 router = APIRouter()
 
@@ -34,17 +36,27 @@ def _load_options(question: Question) -> list | dict:
     return options
 
 
+def _wrong_query(db: Session, user_id: int, exam: Exam):
+    return (
+        db.query(WrongAnswer)
+        .join(Question, WrongAnswer.question_id == Question.id)
+        .join(QuestionBank, Question.bank_id == QuestionBank.id)
+        .filter(WrongAnswer.user_id == user_id, QuestionBank.exam_id == exam.id)
+    )
+
+
 @router.get("")
 def list_wrong(
     bank_id: int | None = Query(None),
     current_user: User = Depends(get_current_user),
+    exam: Exam = Depends(get_exam_context),
     db: Session = Depends(get_db),
 ):
     user_id = current_user.id
-
-    query = db.query(WrongAnswer).filter_by(user_id=user_id, is_resolved=False)
+    query = _wrong_query(db, user_id, exam).filter(WrongAnswer.is_resolved.is_(False))
     if bank_id:
-        query = query.join(Question).filter(Question.bank_id == bank_id)
+        get_bank_in_exam_or_404(db, bank_id, exam)
+        query = query.filter(Question.bank_id == bank_id)
 
     wrongs = query.order_by(WrongAnswer.last_wrong_at.desc()).all()
     result = []
@@ -74,14 +86,16 @@ def list_wrong(
 def practice_wrong(
     data: WrongPracticeRequest,
     current_user: User = Depends(get_current_user),
+    exam: Exam = Depends(get_exam_context),
     db: Session = Depends(get_db),
 ):
     user_id = current_user.id
     bank_id = data.bank_id
 
-    query = db.query(WrongAnswer).filter_by(user_id=user_id, is_resolved=False)
+    query = _wrong_query(db, user_id, exam).filter(WrongAnswer.is_resolved.is_(False))
     if bank_id:
-        query = query.join(Question).filter(Question.bank_id == bank_id)
+        get_bank_in_exam_or_404(db, bank_id, exam)
+        query = query.filter(Question.bank_id == bank_id)
 
     wrongs = query.all()
     if not wrongs:
@@ -123,7 +137,7 @@ def practice_wrong(
             "id": session.id,
             "bank_id": first_bank_id,
             "mode": "wrong_practice",
-            "total_questions": len(questions),
+            "total_questions": len(ordered_questions),
         },
         "questions": questions_out,
     }
@@ -133,14 +147,12 @@ def practice_wrong(
 def resolve_wrong(
     wrong_id: int,
     current_user: User = Depends(get_current_user),
+    exam: Exam = Depends(get_exam_context),
     db: Session = Depends(get_db),
 ):
-    user_id = current_user.id
-    wrong = db.get(WrongAnswer, wrong_id)
+    wrong = _wrong_query(db, current_user.id, exam).filter(WrongAnswer.id == wrong_id).first()
     if not wrong:
         raise HTTPException(status_code=404, detail="错题记录不存在")
-    if wrong.user_id != user_id:
-        raise HTTPException(status_code=403, detail="无权限")
     wrong.is_resolved = True
     db.commit()
     return {"message": "已标记为掌握"}
@@ -149,9 +161,10 @@ def resolve_wrong(
 @router.get("/stats")
 def wrong_stats(
     current_user: User = Depends(get_current_user),
+    exam: Exam = Depends(get_exam_context),
     db: Session = Depends(get_db),
 ):
     user_id = current_user.id
-    total = db.query(WrongAnswer).filter_by(user_id=user_id, is_resolved=False).count()
-    resolved = db.query(WrongAnswer).filter_by(user_id=user_id, is_resolved=True).count()
+    total = _wrong_query(db, user_id, exam).filter(WrongAnswer.is_resolved.is_(False)).count()
+    resolved = _wrong_query(db, user_id, exam).filter(WrongAnswer.is_resolved.is_(True)).count()
     return {"unresolved": total, "resolved": resolved, "total": total + resolved}

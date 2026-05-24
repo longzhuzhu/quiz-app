@@ -15,6 +15,7 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = res.data.user
     localStorage.setItem('token', token.value)
     localStorage.setItem('user', JSON.stringify(user.value))
+    await fetchMe()
   }
 
   async function register(username, email, password) {

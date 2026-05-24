@@ -7,6 +7,7 @@ import httpx
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.question import Question
+from app.services.exam_service import DEFAULT_EXPLANATION_SYSTEM_PROMPT, DEFAULT_TRANSLATION_SYSTEM_PROMPT
 from app.services.settings_service import get_effective_ai_settings
 
 
@@ -126,19 +127,21 @@ def call_ai_api(messages, db, scene: str = "default", timeout: float = 60.0):
     return data["choices"][0]["message"]["content"]
 
 
+def _exam_ai_profile(question: Question) -> dict:
+    if question.bank and question.bank.exam:
+        return question.bank.exam.ai_profile or {}
+    return {}
+
+
 def translate_question(db, question: Question) -> dict:
     options = _load_options(question)
     options_text = "\n".join([f"{o['key']}. {o['text']}" for o in options])
+    ai_profile = _exam_ai_profile(question)
 
     messages = [
         {
             "role": "system",
-            "content": (
-                "你是一位专业的隐私技术领域翻译专家。请将以下 CIPT 考试题目从英文翻译为中文。"
-                "保留技术缩写（如 GDPR、PII、DPO、DPIA 等）不翻译。"
-                '返回 JSON 格式：{"content_zh": "中文题目", "options_zh": [{"key": "A", "text_zh": "中文选项"}, ...]}'
-                "只返回 JSON，不要其他内容。"
-            ),
+            "content": ai_profile.get("translation_system_prompt") or DEFAULT_TRANSLATION_SYSTEM_PROMPT,
         },
         {
             "role": "user",
@@ -276,16 +279,12 @@ def batch_translate_terms(terms_data, db=None) -> list:
 def explain_question(db, question: Question) -> dict:
     options = _load_options(question)
     options_text = "\n".join([f"{o['key']}. {o['text']}" for o in options])
+    ai_profile = _exam_ai_profile(question)
 
     messages = [
         {
             "role": "system",
-            "content": (
-                "你是一位 CIPT（认证信息隐私技术师）考试辅导专家。"
-                "请解析以下题目，说明正确答案的原因以及其他选项为什么不正确。"
-                '返回 JSON 格式：{"explanation": "英文解析", "explanation_zh": "中文解析"}'
-                "只返回 JSON，不要其他内容。"
-            ),
+            "content": ai_profile.get("explanation_system_prompt") or DEFAULT_EXPLANATION_SYSTEM_PROMPT,
         },
         {
             "role": "user",

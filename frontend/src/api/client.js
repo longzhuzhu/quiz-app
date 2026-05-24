@@ -10,11 +10,47 @@ const client = axios.create({
   baseURL,
 })
 
-client.interceptors.request.use((config) => {
+let userRefreshPromise = null
+
+function getActiveExamSlug() {
+  try {
+    const user = JSON.parse(localStorage.getItem('user') || 'null')
+    return user?.active_exam?.slug || ''
+  } catch {
+    return ''
+  }
+}
+
+async function ensureActiveExamLoaded(token) {
+  if (getActiveExamSlug()) return
+
+  if (!userRefreshPromise) {
+    userRefreshPromise = axios.get(`${baseURL}/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then((res) => {
+      localStorage.setItem('user', JSON.stringify(res.data))
+    }).catch(() => {
+      // 保持原请求的错误处理路径，不在这里吞掉或改写业务请求结果。
+    }).finally(() => {
+      userRefreshPromise = null
+    })
+  }
+
+  await userRefreshPromise
+}
+
+client.interceptors.request.use(async (config) => {
   const token = localStorage.getItem('token')
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
+    await ensureActiveExamLoaded(token)
   }
+
+  const activeExamSlug = getActiveExamSlug()
+  if (activeExamSlug) {
+    config.headers['X-Exam-Slug'] = activeExamSlug
+  }
+
   return config
 })
 

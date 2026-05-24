@@ -7,6 +7,7 @@ from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.models.user import User
+from app.services.exam_service import serialize_exam
 from app.schemas.auth import (
     ChangePasswordRequest,
     ErrorResponse,
@@ -22,15 +23,20 @@ from app.schemas.auth import (
 router = APIRouter()
 
 
-def user_to_dict(user: User) -> dict:
+def user_to_dict(user: User, db: Session | None = None) -> dict:
     """用户信息序列化。"""
-    return {
+    data = {
         "id": user.id,
         "username": user.username,
         "email": user.email,
         "is_admin": user.is_admin,
+        "active_exam_id": user.active_exam_id,
         "created_at": user.created_at.isoformat(),
     }
+    if db is not None:
+        data["exam_count"] = user.owned_exams.count()
+        data["active_exam"] = serialize_exam(user.active_exam, db) if user.active_exam else None
+    return data
 
 
 @router.post("/register", response_model=RegisterResponse, status_code=201)
@@ -59,6 +65,7 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
             username=user.username,
             email=user.email,
             is_admin=user.is_admin,
+            active_exam_id=user.active_exam_id,
             created_at=user.created_at.isoformat(),
         ),
     )
@@ -79,11 +86,15 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
             username=user.username,
             email=user.email,
             is_admin=user.is_admin,
+            active_exam_id=user.active_exam_id,
             created_at=user.created_at.isoformat(),
         ),
     )
 
 
 @router.get("/me")
-def me(current_user: User = Depends(get_current_user)):
-    return user_to_dict(current_user)
+def me(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return user_to_dict(current_user, db)
