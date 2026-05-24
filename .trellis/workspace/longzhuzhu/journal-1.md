@@ -389,3 +389,136 @@ Preserved scenario/reading material in smart import question content, added cons
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: Auto Handle Import Questions
+
+**Date**: 2026-05-15
+**Task**: Auto Handle Import Questions
+**Branch**: `codex/vocab-progress-settings-deploy`
+
+### Summary
+
+Implemented automatic smart-import handling: structurally usable parsed questions are imported, unusable parsed questions are auto-skipped with traceable records, the import job API exposes auto-handled counts and records, and the frontend adds the auto-handled records entry/page.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f2ecec5` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 13: Fix IAPP Import Recognition
+
+**Date**: 2026-05-15
+**Task**: Fix IAPP Import Recognition
+**Branch**: `codex/vocab-progress-settings-deploy`
+
+### Summary
+
+Investigated low recognition for iapp-certified-information-privacy-technologist imports, identified valid-but-incomplete L1 LLM responses and bad cache hits as the root cause, added completeness-triggered L2 fallback with cache bypass, covered the regression with backend tests, updated the smart import pipeline spec, rebuilt production frontend, restarted quiz-app services, and verified the deployed frontend loads.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `322b3a1` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 14: Allow duplicate smart imports with question dedupe
+
+**Date**: 2026-05-15
+**Task**: Allow duplicate smart imports with question dedupe
+**Branch**: `codex/vocab-progress-settings-deploy`
+
+### Summary
+
+Allowed repeated uploads of the same smart-import file without file-hash blocking, preserved per-question duplicate skipped records, fixed answer-key parsing so inline Answer blocks no longer truncate later questions, updated import status summary for all-duplicate reruns, and redeployed/verified web and worker services.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `571ab5a` | (see git log) |
+| `96ec6e7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 15: Separate imported explanations from AI explanations
+
+**Date**: 2026-05-23
+**Task**: Separate imported explanations from AI explanations
+**Branch**: `codex/vocab-progress-settings-deploy`
+
+### Summary
+
+Separated imported parsing explanations from official AI explanation fields, added a dry-run cleanup script, updated import pipeline specs, created PR #20, restarted services, and applied the one-off cleanup.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f09b70d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

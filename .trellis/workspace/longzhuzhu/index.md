@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 11
-- **Last Active**: 2026-05-12
+- **Total Sessions**: 15
+- **Last Active**: 2026-05-23
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~391 | Active |
+| `journal-1.md` | ~524 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,10 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 15 | 2026-05-23 | Separate imported explanations from AI explanations | `f09b70d` | `codex/vocab-progress-settings-deploy` |
+| 14 | 2026-05-15 | Allow duplicate smart imports with question dedupe | `571ab5a`, `96ec6e7` | `codex/vocab-progress-settings-deploy` |
+| 13 | 2026-05-15 | Fix IAPP Import Recognition | `322b3a1` | `codex/vocab-progress-settings-deploy` |
+| 12 | 2026-05-15 | Auto Handle Import Questions | `f2ecec5` | `codex/vocab-progress-settings-deploy` |
 | 11 | 2026-05-12 | Fix smart import scenario stems | `fa2620c` | `codex/vocab-progress-settings-deploy` |
 | 10 | 2026-05-08 | Replace Flask runtime with FastAPI | `9211785`, `8aa2632`, `284d53e`, `6687e95` | `codex/vocab-progress-settings-deploy` |
 | 9 | 2026-05-04 | 移除硬编码数据库凭据 | `683c180` | `codex/vocab-progress-settings-deploy` |

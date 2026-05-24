@@ -1,6 +1,6 @@
 # Smart Import 流水线规范
 
-> 题库 PDF/XLSX/DOCX → LLM 解析 → 复核入库的核心流水线，位于 `backend/app/services/smart_import_service.py`。本文记录 chunk 失败两级重试、reparse 卫生、reconciliation 报告、场景题完整题干四类对外契约。
+> 题库 PDF/XLSX/DOCX → LLM 解析 → 复核入库的核心流水线，位于 `backend/app/services/smart_import_service.py`。本文记录 chunk 失败两级重试、L1 完整性检查、reparse 卫生、reconciliation 报告、场景题完整题干等对外契约。
 
 适用范围：FastAPI 一侧（Flask 旧版 `backend/services/import_service.py` 仅维持现状，不增量）。
 
@@ -75,7 +75,7 @@ def _process_chunk(
 
 ```jsonc
 {
-  "chunk_issues": [...],          // LLM 原返回的 issues（既有）
+  "chunk_issues": [...],          // LLM 原返回的 issues（既有），也可包含 L1_INCOMPLETE_RESPONSE
   "retry_count": 0,               // L1 实际重试次数（0 或 1）
   "fallback_used": false,         // L2 是否触发
   "per_question_failures": [
@@ -84,9 +84,12 @@ def _process_chunk(
      "error": "TimeoutException after 60.0s"}
   ],
   "fallback_meta": {"total_segments": 24, "succeeded": 22, "failed": 2,
-                    "elapsed_seconds": 1320.5}
+                    "elapsed_seconds": 1320.5,
+                    "reason": "l1_retry_exhausted" | "l1_incomplete_response"}
 }
 ```
+
+**L1 完整性检查**：L1 调用返回合法 JSON 后，保存任何题目前必须用 `_split_by_single_question(chunk_text)` 计算可检测题号段数。若 `len(llm_result.questions) < len(expected_segments)` 且 `expected_segments` 非空，说明 chunk 级 LLM 合法但漏题；此时不得写缓存、不得先保存不完整 L1 结果，应丢弃该 L1 结果并改走 L2 单题降级。命中既有 `LlmParseCache` 时也必须执行同一检查；若缓存响应不完整，应绕过缓存直接走 L2，避免历史坏缓存固化低识别率。最终通过 `fallback_used=true`、`fallback_meta.reason="l1_incomplete_response"` 和 `chunk_issues[0].code="L1_INCOMPLETE_RESPONSE"` 留痕。
 
 ### 4. Validation & Error Matrix
 
@@ -94,6 +97,7 @@ def _process_chunk(
 |---|---|---|
 | 首次调用成功 | 直接保存 | `parsed` |
 | 首次抛 `httpx.TimeoutException` → 重试成功 | sleep 2s 后再调 1 次 | `parsed_retry`（`retry_count=1`） |
+| L1 返回合法 JSON 但题数 < `_split_by_single_question` 可检测段数 | 保存前丢弃不完整 L1 结果，改走 L2；不写 chunk 级缓存 | `parsed_fallback` / `parsed_partial` |
 | L1 重试仍失败 → L2 切单题 | `_split_by_single_question` 切段，逐题调 LLM | `parsed_fallback` / `parsed_partial` |
 | L2 单题失败 | **不**写 `ImportParsedQuestion` 占位行；记入 `per_question_failures` | 取决于全失败/部分失败 |
 | L2 累计耗时 > 480s | 剩余段写 `stage="L2_fallback_budget_exceeded"`，break | `parsed_partial` 或 `failed` |
@@ -116,6 +120,8 @@ def _process_chunk(
 - L2 部分失败时 `per_question_failures` 含失败题号 + stage
 - 不可重试异常（如 `ValueError("AI API Key 未配置")`）首次失败立即 `failed`，无 retry
 - L2 累计耗时 > `CHUNK_TOTAL_BUDGET_SECONDS` 时剩余段标 `L2_fallback_budget_exceeded`
+- L1 合法 JSON 但返回题数少于可检测题号段时触发 L2，`fallback_meta.reason == "l1_incomplete_response"`，且不写 LlmParseCache
+- 既有 LlmParseCache 命中但响应题数少于可检测题号段时绕过缓存触发 L2，防止坏缓存固化
 - `bg_job` 传入时 heartbeat 被周期性调用
 
 ### 7. Wrong vs Correct
@@ -696,6 +702,132 @@ else:
 
 ---
 
+## Scenario F：允许同文件重复导入，去重边界下沉到题目级
+
+### 1. Scope / Trigger
+
+同一题库重复上传相同文件时，`create_smart_import_job()` 曾基于 `bank_id + file_hash` 直接返回 `该文件已导入过`，API 层据此返回 409。这会阻断用户重新导入同一份题库文件，且无法生成本次导入任务、解析记录和跳过原因。
+
+### 2. Contracts
+
+- `file_hash` 只能用于追溯同文件历史导入，不能作为同题库导入的硬阻断。
+- 命中同 `bank_id + file_hash` 的历史 `ImportJob` 时，仍必须创建新的 `ImportJob` 与 `BackgroundJob`。
+- 新 `ImportJob.config_json` 可记录 `duplicate_file_of`、`duplicate_file_status` 等溯源字段；使用 dict 重新赋值或创建完整 dict，避免 JSONB dirty 检测问题。
+- 重复题目去重边界在 `_save_parsed_question()` / `_write_question_to_bank()`：通过题目完整题干、选项、答案、题型组成的内容签名判断重复；命中后必须**逐题**保留 `ImportParsedQuestion`，标记 `review_status="duplicate"`、`import_status="skipped"`，不写新的 `Question`。不得因为整文件重复或整 chunk 缓存命中而只保留第一道重复题。
+- 题目签名必须归一化选项标签来源（`label` / `key`），避免 LLM 解析结构与正式表存储结构字段名不同导致同题漏判。
+- 全部解析题都为 `duplicate/skipped`、且无新增入库/待复核/失败 chunk 时，`_finalize_import()` 不得把任务标为 `imported`；应使用 `unimported`（或等价的未新增入库语义）并在摘要中暴露 duplicate skipped 数量，避免用户误以为本次导入新增成功。
+- PDF 正文中的单题答案块（如每题后跟 `Answer:` / `Explanation:`）不得被当作末尾答案键剥离；只有成段的 `Answer Key` / `Answers:` 等答案键标题才可从正文移除。否则重复旧文件时会在第一道题答案处截断正文，只生成 1 个 chunk / 1 条 parsed record。
+- `force=true` 可保留为兼容参数，但同文件重导入不再依赖它。
+
+### 3. Validation & Error Matrix
+
+| 条件 | 行为 |
+|---|---|
+| 同一题库、相同 `file_hash` 再次导入 | 创建新导入任务，不返回 400/409 |
+| 同一题库、重复文件中的相同题目 | 每道重复题都写 duplicate/skipped 解析记录，不新增正式题 |
+| 重复文件全部题目均 duplicate/skipped | 任务终态为 `unimported`（无新增入库），摘要包含 `duplicate_skipped` |
+| PDF 每题内联 `Answer:` / `Explanation:` | 不剥离正文，后续题目仍参与 chunk 切分与 parsed record 保存 |
+| 不同题库、相同 `file_hash` | 正常创建新任务；题目去重仅在目标题库内生效 |
+| `force=true` | 保持兼容，不改变题目级去重语义 |
+
+### 4. Tests Required
+
+- 同 bank 相同 `file_hash` 第二次调用 `create_smart_import_job()` 不返回 error，并记录 duplicate file 溯源字段。
+- 重复文件第二次处理同题内容时，`questions` 数量不增加，`import_parsed_questions` 按题目数量逐条新增 duplicate/skipped 记录且 `details[0].reason == "content"`。
+- 全部 duplicate/skipped 时 `_finalize_import()` 输出 `status="unimported"` 且 `summary_json.duplicate_skipped` 为重复题数。
+- 含每题内联 `Answer:` 的 PDF 文本不会在第一处答案截断，`_extract_answer_key()` 不应把单题答案块识别为末尾答案键。
+
+---
+
+## Scenario G：正式题目 AI 解析与导入解析边界
+
+### 1. Scope / Trigger
+
+智能导入的 LLM 解析会产出 `ImportParsedQuestion.explanation`，但该内容用于辅助识别题目结构、答案和来源材料，不等同于用户在练习中主动请求的 AI 辅导解析。正式题目的 `Question.explanation` / `Question.explanation_zh` 只表示用户点击“AI 解析”后生成并缓存的结果。
+
+### 2. Signatures
+
+```python
+# backend/app/services/smart_import_service.py
+def _write_question_to_bank(
+    db: Session,
+    parsed_question: ImportParsedQuestion,
+    bank_id: int,
+) -> Question | None: ...
+# 自动入库、reparse 自动入库、review accept 写正式 Question 的统一入口。
+# 不得把 parsed_question.explanation 写入 Question.explanation。
+```
+
+```bash
+# backend/scripts/clear_question_explanations.py
+python3 backend/scripts/clear_question_explanations.py [--apply]
+```
+
+### 3. Contracts
+
+- `ImportParsedQuestion.explanation`：导入解析记录，保留在导入任务语境中，用于导入详情、复核和追溯。
+- `Question.explanation` / `Question.explanation_zh`：正式题目 AI 解析缓存，只能由用户主动请求 AI 解析的路径写入。
+- `_write_question_to_bank()` 创建 `Question` 时必须保持 `explanation=None`、`explanation_zh=None`，即使 `parsed_question.explanation` 非空。
+- 清理脚本默认 dry-run，只统计至少一个正式解析字段非空的题目数量并 rollback。
+- 清理脚本只有传 `--apply` 时才清空 `Question.explanation` 与 `Question.explanation_zh` 并 commit。
+- 清理脚本不得修改 `ImportParsedQuestion.explanation`，不得放进 Alembic migration、应用启动或部署钩子自动执行。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 行为 |
+|---|---|
+| 自动入库解析题含 `parsed_question.explanation` | 正式 `Question.explanation/explanation_zh` 仍为空；导入解析保留在 `ImportParsedQuestion.explanation` |
+| 人工复核 accept 的解析题含 `parsed_question.explanation` | 同样经 `_write_question_to_bank()`，正式题目解析字段为空 |
+| reparse 新入库题含 LLM explanation | 正式题目解析字段为空，导入解析记录保留 |
+| 用户点击 AI 解析且正式题目无解析 | `/api/ai/explain` 调 AI 并写入 `Question.explanation/explanation_zh` |
+| 用户点击 AI 解析且正式题目已有解析 | 返回缓存，不重新生成 |
+| 清理脚本未传 `--apply` | 输出待清理数量，不修改数据库 |
+| 清理脚本传 `--apply` | 清空所有正式题目的 `explanation/explanation_zh`，不动导入解析记录 |
+
+### 5. Good / Base / Bad Cases
+
+- **Good**：导入详情能看到导入解析；练习页首次点击“AI 解析”会生成正式 AI 解析。
+- **Base**：题目已有用户生成的 AI 解析时，再次点击只展示缓存。
+- **Bad**：把 `ImportParsedQuestion.explanation` 写进 `Question.explanation`，导致前端和后端误以为 AI 解析已存在，用户无法生成真正的辅导解析。
+- **Bad**：把历史清理放进 Alembic migration，部署时无提示清空生产解析数据。
+
+### 6. Tests Required
+
+- 自动入库：解析题含非空 `explanation` 时，新建 `Question.explanation/explanation_zh` 为空，`ImportParsedQuestion.explanation` 保留。
+- 复核 accept：正式题目解析字段为空，导入解析记录保留。
+- reparse：LLM 返回非空 explanation 时，正式题目解析字段为空，导入解析记录保留。
+- 清理脚本 dry-run：返回待清理数量，不改变 `Question` 与 `ImportParsedQuestion`。
+- 清理脚本 `--apply`：清空 `Question.explanation/explanation_zh`，不改变 `ImportParsedQuestion.explanation`。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+question = Question(
+    bank_id=bank_id,
+    content=full_content,
+    options=options,
+    correct_answer=correct_answer_str,
+    explanation=parsed_question.explanation,
+)
+```
+
+#### Correct
+
+```python
+question = Question(
+    bank_id=bank_id,
+    content=full_content,
+    options=options,
+    correct_answer=correct_answer_str,
+    explanation=None,
+    explanation_zh=None,
+)
+```
+
+---
+
 ## 关键设计决策汇总
 
 | # | 决策 | 理由 |
@@ -713,6 +845,8 @@ else:
 | D11 | 第一个题号前导材料采用保守归属 | 优先修复明显场景/阅读材料丢失，同时降低吞入页眉、广告、上一题解析或答案段落的风险 |
 | D12 | 历史回填默认 dry-run，显式 `--apply` 才写 | 避免一次性脚本误改历史正式题，尤其保护人工编辑过的内容 |
 | D13 | 智能导入默认按可用性自动处理，不再按置信度阈值进入人工复核 | 用户对常规待复核项缺少有效选择；结构完整题自动入库，不可用题自动跳过并保留追溯记录 |
+| D14 | 文件 hash 不作为同题库重复导入硬阻断，去重边界下沉到题目级 | 保留每次导入任务的可追溯性，同时通过题目签名 duplicate/skipped 防止正式题库重复增长 |
+| D15 | 正式题目的 `explanation/explanation_zh` 只表示用户主动生成的 AI 解析 | 避免导入解析占用正式题目解析字段，导致 AI 解析按钮误判已有缓存 |
 
 ---
 
