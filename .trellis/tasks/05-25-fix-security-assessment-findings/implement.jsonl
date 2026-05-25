@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/index.md","reason":"后端 FastAPI 路由、中间件、配置与服务层修改需要遵循后端规范索引。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"登录限流、密码校验、AI URL 校验和权限相关错误需要匹配项目 HTTPException 风格。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"安全修复涉及配置、中间件、服务函数与类型注解，需遵循后端质量约定。"}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"新增后端辅助模块或中间件时需要放在符合 FastAPI 分层的位置。"}
+{"file":".trellis/spec/frontend/index.md","reason":"若需要验证或调整前端渲染与注册流程，先遵循前端规范索引。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"前端 API 调用、错误显示和渲染安全检查需遵循现有质量约定。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"本任务跨后端 API、配置、前端渲染和认证状态，需要检查跨层契约一致性。"}

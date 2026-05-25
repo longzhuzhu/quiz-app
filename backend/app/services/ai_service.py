@@ -8,7 +8,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.question import Question
 from app.services.exam_service import DEFAULT_EXPLANATION_SYSTEM_PROMPT, DEFAULT_TRANSLATION_SYSTEM_PROMPT
-from app.services.settings_service import get_effective_ai_settings
+from app.services.settings_service import get_effective_ai_settings, validate_ai_base_url
 
 
 def _load_options(question: Question) -> list:
@@ -119,7 +119,7 @@ def call_ai_api(messages, db, scene: str = "default", timeout: float = 60.0):
         "temperature": 0.3,
     }
 
-    resp = httpx.post(api_url, json=payload, headers=headers, timeout=timeout, verify=False)
+    resp = httpx.post(api_url, json=payload, headers=headers, timeout=timeout, verify=True)
     if not resp.is_success:
         detail = resp.text[:200] if resp.text else resp.reason_phrase
         raise ValueError(f"AI API 错误 ({resp.status_code}): {detail}")
@@ -175,7 +175,7 @@ def translate_term(term: str, db=None) -> dict:
     else:
         from app.core.config import settings
 
-        base_url = settings.AI_API_BASE_URL
+        base_url = validate_ai_base_url(settings.AI_API_BASE_URL)
         api_key = settings.AI_API_KEY
         model = settings.AI_MODEL
 
@@ -212,7 +212,7 @@ def translate_term(term: str, db=None) -> dict:
     ]
 
     payload = {"model": model, "messages": messages, "temperature": 0.3}
-    resp = httpx.post(api_url, json=payload, headers=headers, timeout=60.0, verify=False)
+    resp = httpx.post(api_url, json=payload, headers=headers, timeout=60.0, verify=True)
     if not resp.is_success:
         raise ValueError(f"AI API 错误: {resp.status_code}")
 

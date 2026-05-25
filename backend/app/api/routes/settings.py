@@ -8,12 +8,14 @@ from app.core.database import get_db
 from app.models.user import User
 from app.schemas.settings import AISettingsUpdateRequest, AITestRequest
 from app.services.settings_service import (
+    get_effective_ai_api_key,
     get_effective_ai_settings,
     get_key as get_setting,
     get_masked_effective_ai_api_key,
     has_effective_ai_api_key,
     set_encrypted_ai_api_key,
     set_key as set_setting,
+    validate_ai_base_url,
 )
 
 router = APIRouter()
@@ -49,7 +51,10 @@ def update_ai_settings(
     db: Session = Depends(get_db),
 ):
     if data.ai_api_base_url is not None:
-        set_setting(db, "ai_api_base_url", data.ai_api_base_url.strip())
+        try:
+            set_setting(db, "ai_api_base_url", validate_ai_base_url(data.ai_api_base_url))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     api_key = (data.ai_api_key or "").strip()
     if api_key:
         set_encrypted_ai_api_key(db, api_key)
@@ -67,8 +72,12 @@ def update_ai_settings(
 @router.get("/ai/key")
 def get_ai_key(
     _admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
 ):
-    return {"error": "出于安全原因，不再支持回显真实 API Key"}
+    try:
+        return {"ai_api_key": get_effective_ai_api_key(db)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/ai/test")
@@ -117,7 +126,7 @@ def test_ai_connection(
     }
 
     try:
-        resp = httpx.post(api_url, json=payload, headers=headers, timeout=15.0, verify=False)
+        resp = httpx.post(api_url, json=payload, headers=headers, timeout=15.0, verify=True)
         if not resp.is_success:
             detail = resp.text[:200] if resp.text else resp.reason_phrase
             return {"success": False, "error": f"API 返回错误 ({resp.status_code}): {detail}"}
