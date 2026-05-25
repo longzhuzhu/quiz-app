@@ -74,6 +74,34 @@
         </div>
       </div>
     </div>
+
+    <div class="mt-6 rounded-card-lg bg-white dark:bg-slate-800 shadow-card p-6">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-sky-100 dark:bg-sky-900/30">
+          <CpuChipIcon class="h-5 w-5 text-sky-600 dark:text-sky-400" />
+        </div>
+        <div>
+          <h2 class="text-lg font-semibold text-gray-900 dark:text-white">答题设置</h2>
+          <p class="text-sm text-gray-500 dark:text-gray-400">配置答题过程中的体验优化能力。</p>
+        </div>
+      </div>
+
+      <div v-if="loading" class="py-8">
+        <SkeletonLoader type="text" />
+      </div>
+      <div v-else class="space-y-4">
+        <label class="flex items-start gap-3 rounded-card border border-gray-200 dark:border-slate-700 p-4 cursor-pointer">
+          <input v-model="form.quiz_ai_prewarm_enabled" type="checkbox"
+            class="mt-1 h-4 w-4 rounded border-gray-300 dark:border-slate-600 text-primary-600 dark:text-primary-500" />
+          <span>
+            <span class="block text-sm font-medium text-gray-700 dark:text-gray-300">是否启用答题预热</span>
+            <span class="mt-1 block text-xs text-gray-400 dark:text-gray-500">
+              开启后，答题时会静默预先生成当前题和下一题的翻译与 AI 解析，以提升点击响应速度，可能增加 AI 调用成本。
+            </span>
+          </span>
+        </label>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -98,20 +126,25 @@ const form = ref({
   ai_model: '',
   ai_translate_model: '',
   ai_explain_model: '',
+  quiz_ai_prewarm_enabled: true,
 })
 
 onMounted(async () => {
   try {
-    const res = await client.get('/settings/ai')
+    const [aiRes, quizRes] = await Promise.all([
+      client.get('/settings/ai'),
+      client.get('/settings/quiz'),
+    ])
     form.value = {
-      ai_api_base_url: res.data.ai_api_base_url || '',
+      ai_api_base_url: aiRes.data.ai_api_base_url || '',
       ai_api_key: '',
-      ai_model: res.data.ai_model || '',
-      ai_translate_model: res.data.ai_translate_model || '',
-      ai_explain_model: res.data.ai_explain_model || '',
+      ai_model: aiRes.data.ai_model || '',
+      ai_translate_model: aiRes.data.ai_translate_model || '',
+      ai_explain_model: aiRes.data.ai_explain_model || '',
+      quiz_ai_prewarm_enabled: quizRes.data.quiz_ai_prewarm_enabled !== false,
     }
-    storedKeyMask.value = res.data.ai_api_key || ''
-    hasStoredKey.value = !!res.data.ai_api_key_configured
+    storedKeyMask.value = aiRes.data.ai_api_key || ''
+    hasStoredKey.value = !!aiRes.data.ai_api_key_configured
   } catch {
     toast.error('加载设置失败')
   } finally {
@@ -122,7 +155,16 @@ onMounted(async () => {
 async function save() {
   saving.value = true
   try {
-    await client.put('/settings/ai', form.value)
+    await client.put('/settings/ai', {
+      ai_api_base_url: form.value.ai_api_base_url,
+      ai_api_key: form.value.ai_api_key,
+      ai_model: form.value.ai_model,
+      ai_translate_model: form.value.ai_translate_model,
+      ai_explain_model: form.value.ai_explain_model,
+    })
+    await client.put('/settings/quiz', {
+      quiz_ai_prewarm_enabled: form.value.quiz_ai_prewarm_enabled,
+    })
     if (form.value.ai_api_key.trim()) {
       storedKeyMask.value = ''
       hasStoredKey.value = true

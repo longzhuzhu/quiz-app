@@ -13,9 +13,12 @@ from sqlalchemy.orm import Session
 
 from app.models.background_job import BackgroundJob
 from app.models.bank_word import BankWordExclusion, BankWordFrequency
+from app.models.question import Question
 from app.models.question_bank import QuestionBank
+from app.services.ai_service import has_question_explanation, has_question_translation
 from app.services.import_service import TOP_FREQUENT_TERMS_LIMIT
 
+JOB_TYPE_AI_PREWARM = "ai_prewarm"
 JOB_TYPE_BANK_FREQUENT_TRANSLATE = "bank_frequent_translate"
 JOB_TYPE_QUESTION_IMPORT_LLM = "question_import_llm"
 JOB_TYPE_QUESTION_IMPORT_LLM_REPARSE = "question_import_llm_reparse"
@@ -48,6 +51,8 @@ def vocabulary_needs_translation(word) -> bool:
 
 
 def build_scope_key(job_type: str, payload: dict) -> str:
+    if job_type == JOB_TYPE_AI_PREWARM:
+        return f"ai_prewarm:{payload['exam_id']}:{payload['question_id']}:{payload['artifact_type']}"
     if job_type == JOB_TYPE_BANK_FREQUENT_TRANSLATE:
         return f"bank_frequent:{payload['bank_id']}"
     if job_type == JOB_TYPE_QUESTION_IMPORT_LLM:
@@ -73,6 +78,17 @@ def list_bank_frequent_terms(db: Session, bank_id: int) -> list:
 
 
 def count_pending_items(db: Session, job_type: str, payload: dict) -> int:
+    if job_type == JOB_TYPE_AI_PREWARM:
+        question = db.get(Question, payload["question_id"])
+        if not question:
+            raise JobServiceError("题目不存在", status_code=404)
+        artifact_type = payload["artifact_type"]
+        if artifact_type == "translation":
+            return 0 if has_question_translation(question) else 1
+        if artifact_type == "explanation":
+            return 0 if has_question_explanation(question) else 1
+        raise ValueError(f"不支持的预热产物类型: {artifact_type}")
+
     if job_type == JOB_TYPE_BANK_FREQUENT_TRANSLATE:
         bank_id = payload["bank_id"]
         bank = db.get(QuestionBank, bank_id)

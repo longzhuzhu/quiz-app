@@ -129,7 +129,7 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref, onMounted } from 'vue'
+import { computed, reactive, ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuizStore } from '../stores/quiz'
 import { currentExamPath } from '../utils/examRoutes'
@@ -151,6 +151,7 @@ const questionAnswerMap = reactive({})
 // 会话恢复映射：questionId -> { is_correct, correct_answer, explanation, explanation_zh }
 const questionResultMap = reactive({})
 const autoNext = ref(false)
+const prewarmKeys = new Set()
 
 const isExamMode = computed(() => quizStore.session?.mode === 'exam')
 const totalAnsweredCount = computed(() => Object.keys(answerResults).length)
@@ -172,6 +173,21 @@ const currentInitialResult = computed(() => {
 
 function clearReactiveMap(map) {
   Object.keys(map).forEach((k) => delete map[k])
+}
+
+function triggerAiPrewarm() {
+  const sessionId = quizStore.session?.id
+  if (!sessionId || !currentQuestion.value?.id) return
+
+  const ids = [currentQuestion.value.id]
+  const nextQuestion = quizStore.questions[quizStore.currentIndex + 1]
+  if (nextQuestion?.id) ids.push(nextQuestion.id)
+
+  const key = `${sessionId}:${ids.join(',')}`
+  if (prewarmKeys.has(key)) return
+  prewarmKeys.add(key)
+
+  client.post('/ai/prewarm', { session_id: sessionId, question_ids: ids }).catch(() => {})
 }
 
 function restoreSessionState(sessionData) {
@@ -225,6 +241,7 @@ onMounted(async () => {
       quizStore.session = res.data.session
       quizStore.questions = res.data.questions
       restoreSessionState(res.data)
+      triggerAiPrewarm()
     } else {
       router.replace(currentExamPath(route, 'dashboard'))
     }
@@ -232,6 +249,11 @@ onMounted(async () => {
     router.replace(currentExamPath(route, 'dashboard'))
   }
 })
+
+watch(
+  () => [quizStore.session?.id, quizStore.currentIndex, currentQuestion.value?.id],
+  () => triggerAiPrewarm(),
+)
 
 function jumpTo(index) {
   quizStore.currentIndex = index

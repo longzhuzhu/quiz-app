@@ -452,6 +452,100 @@ def list_banks(
 
 ---
 
+## 题目 AI 产物预热后端契约
+
+### 1. Scope / Trigger
+
+- Trigger: 答题页进入当前题时通过后端静默入队翻译和 AI 解析预热任务。
+- Scope: 只适用于正式答题会话内的题目 AI 产物预热；不适用于题库管理、题目预览、导入复核或管理员只读查看。
+- 预热是可丢弃体验优化，不能改变现有 `/api/ai/translate` 和 `/api/ai/explain` 同步生成语义。
+
+### 2. Signatures
+
+- 设置接口：
+  - `GET /api/settings/quiz` → `{ quiz_ai_prewarm_enabled: boolean }`
+  - `PUT /api/settings/quiz` body `{ quiz_ai_prewarm_enabled?: boolean }` → `{ message: string }`
+- 预热接口：
+  - `POST /api/ai/prewarm` body `{ session_id: number, question_ids: number[] }` → `{ accepted: boolean }`
+- 后台任务：
+  - `BackgroundJob.job_type = "ai_prewarm"`
+  - payload: `{ artifact_type: "translation" | "explanation", exam_id: number, question_id: number, session_id: number }`
+- 设置存储：
+  - `SystemSetting.key = "quiz_ai_prewarm_enabled"`
+  - `SystemSetting.value = "true" | "false"`
+
+### 3. Contracts
+
+- `quiz_ai_prewarm_enabled` 缺省值为 `true`，接口返回 boolean，数据库按字符串存储。
+- `POST /api/ai/prewarm` 必须依赖 `get_current_user` 和 `get_exam_context`，用 `X-Exam-Slug + 当前用户 + session_id` 校验会话边界。
+- `question_ids` 由前端传当前题和下一题，后端仍必须校验每个题目属于当前答题会话、当前题库和当前考试项目。
+- 设置关闭、会话已完成、已缓存、重复入队等正常跳过场景返回 `{ accepted: false }` 或 `{ accepted: true }`，但不抛用户可见错误。
+- 非法会话、越权用户、题目不属于会话/考试项目必须返回 403/404。
+- `ai_prewarm` 是内部任务，不允许通过 `/api/jobs` 创建或读取。
+- worker 执行前必须重新检查系统设置和题目缓存；已关闭或已缓存时跳过 AI 调用。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+|------|------|
+| 缺少认证 | 401 |
+| 缺少或无效 `X-Exam-Slug` | `get_exam_context` 返回 400/404 |
+| `session_id` 不存在或不属于当前考试项目 | 404 |
+| 会话属于其他用户 | 403 |
+| `question_id` 不属于当前会话 | 404 |
+| `question_id` 不属于当前题库/考试项目 | 404 |
+| `quiz_ai_prewarm_enabled=false` | `{ accepted: false }`，不入队 |
+| 已有 active `ai_prewarm` scope | `{ accepted: true }`，复用/跳过 |
+| worker 执行时缓存已存在 | job skipped，不调用 AI |
+| worker 执行时 AI 调用失败 | job 按现有 worker 重试/失败逻辑处理，不影响答题页 |
+
+### 5. Good/Base/Bad Cases
+
+- Good: 用户在 `X-Exam-Slug: cipt` 下进入答题会话第 1 题，请求 `question_ids=[10,11]`，后端按 10 翻译、10 解析、11 翻译、11 解析顺序创建内部 job。
+- Base: 设置关闭时同一请求返回 `{ accepted: false }`，前端静默忽略，按钮同步生成仍可用。
+- Bad: 只校验 `question_id` 存在，不校验它属于 `session.question_ids` 和 `QuestionBank.exam_id`，会造成跨考试项目预热。
+- Bad: 把 `ai_prewarm` 加入 `/api/jobs` 可创建类型或向前端返回 job id，会把内部优化暴露成用户任务。
+
+### 6. Tests Required
+
+- API smoke: `GET /api/settings/quiz` 默认返回 `quiz_ai_prewarm_enabled: true`。
+- API smoke: `PUT /api/settings/quiz` 写入 false 后，`POST /api/ai/prewarm` 返回 `{ accepted: false }` 且不创建 job。
+- API smoke: 合法会话 + 当前题/下一题创建 `ai_prewarm` job，payload 包含 `artifact_type`、`exam_id`、`question_id`、`session_id`。
+- Isolation: 跨用户 session、跨考试项目 question、非会话内 question 分别返回 403/404。
+- Worker smoke: 已缓存翻译/解析时 `ai_prewarm` skipped；未缓存时复用 `translate_question` / `explain_question` 写入现有字段。
+- Visibility: `/api/jobs` 不支持创建或读取 `ai_prewarm`。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+@router.post("/prewarm")
+def prewarm(data, db: Session = Depends(get_db)):
+    for question_id in data.question_ids:
+        create_or_reuse_job(db, "ai_prewarm", {"question_id": question_id}, current_user.id)
+    return {"accepted": True}
+```
+
+#### Correct
+
+```python
+@router.post("/prewarm")
+def prewarm(
+    data: AIPrewarmRequest,
+    current_user: User = Depends(get_current_user),
+    exam: Exam = Depends(get_exam_context),
+    db: Session = Depends(get_db),
+):
+    session = db.get(QuizSession, data.session_id)
+    if not session or not session.bank or session.bank.exam_id != exam.id:
+        raise HTTPException(status_code=404, detail="答题会话不存在")
+    if session.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="无权限")
+```
+
+---
+
 ## 常见问题
 
 ### Flask 服务层返回 `{"error": "..."}` dict 让路由猜测状态码

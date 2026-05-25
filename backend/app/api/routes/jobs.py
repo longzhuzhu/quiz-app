@@ -108,6 +108,6 @@ def get_job(
     db: Session = Depends(get_db),
 ):
     job = db.get(BackgroundJob, job_id)
-    if not job or job.created_by != current_user.id:
+    if not job or job.created_by != current_user.id or job.job_type not in VALID_JOB_TYPES:
         raise HTTPException(status_code=404, detail="任务不存在")
     return {"job": serialize_job(job)}
