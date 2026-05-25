@@ -15,6 +15,11 @@ class AIExplainRequest(BaseModel):
     question_id: int
 
 
+class AIPrewarmRequest(BaseModel):
+    session_id: int
+    question_ids: list[int] = Field(min_length=1, max_length=2)
+
+
 class AITranslateResponse(BaseModel):
     content_zh: str | None = None
     options_zh: list[dict] = Field(default_factory=list)
