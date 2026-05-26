@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     AI_API_KEY: str = ""
     AI_MODEL: str = "gpt-4o-mini"
 
+    # 安全配置
+    ENABLE_OPENAPI: bool = False
+    CORS_ALLOWED_ORIGINS: str = "https://quiz.nianyu.qzz.io"
+
     # Worker 配置
     WORKER_LEASE_SECONDS: int = 600
     WORKER_POLL_INTERVAL_SECONDS: int = 3

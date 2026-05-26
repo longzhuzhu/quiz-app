@@ -8,7 +8,7 @@ from pydantic import BaseModel, EmailStr, Field
 class RegisterRequest(BaseModel):
     username: str = Field(..., min_length=1)
     email: str = Field(..., min_length=1)
-    password: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=6)
 
 
 class LoginRequest(BaseModel):
@@ -31,7 +31,6 @@ class UserResponse(BaseModel):
 
 class RegisterResponse(BaseModel):
     message: str
-    user: UserResponse
 
 
 class LoginResponse(BaseModel):

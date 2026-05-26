@@ -5,6 +5,7 @@ import os
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
@@ -14,23 +15,48 @@ from app.core.database import Base, engine
 from app.models import *  # noqa: F401,F403
 
 
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Content-Security-Policy": "frame-ancestors 'none'; object-src 'none'; base-uri 'self'",
+}
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        for name, value in SECURITY_HEADERS.items():
+            response.headers.setdefault(name, value)
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        return response
+
+
+def _cors_allowed_origins() -> list[str]:
+    return [origin.strip() for origin in settings.CORS_ALLOWED_ORIGINS.split(",") if origin.strip()]
+
+
 def create_app() -> FastAPI:
     """FastAPI 应用工厂"""
     app = FastAPI(
         title="CIPT Quiz App",
         version="2.0.0",
-        docs_url=None,
-        redoc_url=None,
+        openapi_url="/openapi.json" if settings.ENABLE_OPENAPI else None,
+        docs_url="/docs" if settings.ENABLE_OPENAPI else None,
+        redoc_url="/redoc" if settings.ENABLE_OPENAPI else None,
         redirect_slashes=False,
     )
 
-    # CORS 配置：仅 /api/* 允许跨域
+    app.add_middleware(SecurityHeadersMiddleware)
+
+    # CORS 配置：仅允许明确配置的前端 Origin
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=_cors_allowed_origins(),
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-Exam-Slug"],
     )
 
     @app.middleware("http")
@@ -42,6 +68,13 @@ def create_app() -> FastAPI:
             response.headers["Pragma"] = "no-cache"
             response.headers["Expires"] = "0"
         return response
+
+    if not settings.ENABLE_OPENAPI:
+        @app.get("/openapi.json", include_in_schema=False)
+        @app.get("/docs", include_in_schema=False)
+        @app.get("/redoc", include_in_schema=False)
+        async def disabled_openapi_routes():
+            raise HTTPException(status_code=404)
 
     # 注册所有 API 路由（保持现有 URL 前缀）
     from app.api.routes.auth import router as auth_router

@@ -452,6 +452,94 @@ def list_banks(
 
 ---
 
+## FastAPI 安全边界契约
+
+### 1. Scope / Trigger
+
+- Trigger: 修改 FastAPI 应用入口、认证接口、跨域配置、外部 HTTP 调用、AI 配置或 auth 响应结构。
+- Scope: `backend/app/main.py`、`backend/app/core/config.py`、`backend/app/api/routes/auth.py`、`backend/app/api/routes/settings.py`、AI service/settings service。
+- 风险：默认框架行为或宽松配置会把调试面、跨域读取、弱密码、SSRF 或敏感字段泄露到生产环境。
+
+### 2. Signatures
+
+- OpenAPI 开关：`Settings.ENABLE_OPENAPI: bool = False`。
+- CORS 白名单：`Settings.CORS_ALLOWED_ORIGINS: str`，逗号分隔 Origin。
+- 注册请求：`RegisterRequest.password` 最小长度 6。
+- 注册响应：`RegisterResponse -> { message: str }`，不得返回 `user` 对象。
+- 登录限流：登录失败超过窗口阈值返回 HTTP 429。
+- AI Base URL 校验：`validate_ai_base_url(base_url: str) -> str`。
+
+### 3. Contracts
+
+- 生产默认不得暴露 `/openapi.json`、`/docs`、`/redoc`；开发需要时显式设置 `ENABLE_OPENAPI=true`。
+- `allow_origins` 不得使用 `['*']` 搭配 `allow_credentials=True`。
+- 生产默认 CORS Origin 为 `https://quiz.nianyu.qzz.io`。
+- 基础安全响应头必须覆盖 API 和 SPA fallback 响应：`X-Content-Type-Options`、`X-Frame-Options`、`Referrer-Policy`、`Permissions-Policy`、保守 CSP、HSTS。
+- AI Base URL 只允许公网 `https://`，不得包含用户名密码，解析结果不得是 loopback、link-local、private、reserved、unspecified 或 multicast 地址。
+- 对外 AI HTTP 请求必须启用 TLS 证书校验，不得使用 `verify=False`。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+|------|------|
+| `ENABLE_OPENAPI=false` 访问 `/openapi.json`、`/docs`、`/redoc` | 404 |
+| 恶意 Origin 发起 CORS preflight | 不返回可读取的 `access-control-allow-origin` |
+| 注册密码长度小于 6 | Pydantic 422 |
+| 登录失败次数超过阈值 | 429，`detail="登录失败次数过多，请稍后再试"` |
+| AI Base URL 为 `http://...`、`localhost`、`127.0.0.1`、`169.254.169.254` 或 RFC1918 私网 | 400 或 service `ValueError` |
+| AI Base URL 无法解析 | 400 或 service `ValueError` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: `ENABLE_OPENAPI=false` 时生产不可获取 OpenAPI；`ENABLE_OPENAPI=true` 时本地开发可访问 schema。
+- Good: `https://evil.example` preflight 不返回允许读取的 Origin。
+- Base: 注册成功只返回 `{ "message": "注册成功" }`，前端随后让用户登录。
+- Bad: 注册接口返回 `id`、`is_admin`、`created_at`，导致新用户注册即泄露内部字段。
+- Bad: AI 调用使用 `httpx.post(..., verify=False)` 或允许 `https://169.254.169.254`。
+
+### 6. Tests Required
+
+- API smoke: `TestClient(create_app()).get('/openapi.json')` 在默认配置下返回 404。
+- API smoke: 恶意 Origin preflight 不包含 `access-control-allow-origin`。
+- Header smoke: 任一 API 响应包含基础安全响应头和保守 CSP。
+- Schema smoke: `RegisterRequest(..., password='1')` 被拒绝，`RegisterResponse(message='注册成功').model_dump()` 不含 `user`。
+- Auth smoke: 达到登录失败阈值后 `_ensure_login_not_rate_limited` 或登录 API 返回 429。
+- AI smoke: `validate_ai_base_url()` 拒绝本机、metadata 和私网地址，接受公网 HTTPS。
+- Build smoke: 若 auth 响应或前端契约变化，运行 `npm run build --prefix frontend`。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+resp = httpx.post(api_url, json=payload, headers=headers, timeout=60.0, verify=False)
+```
+
+#### Correct
+
+```python
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_allowed_origins(),
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Exam-Slug"],
+)
+
+base_url = validate_ai_base_url(settings.AI_API_BASE_URL)
+resp = httpx.post(api_url, json=payload, headers=headers, timeout=60.0, verify=True)
+```
+
+---
+
 ## 常见问题
 
 ### Flask 服务层返回 `{"error": "..."}` dict 让路由猜测状态码

@@ -2,6 +2,9 @@
 
 import base64
 import hashlib
+import ipaddress
+import socket
+from urllib.parse import urlparse
 
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy.orm import Session
@@ -15,6 +18,68 @@ SCENE_MODEL_SETTING_KEYS = {
     "translate": "ai_translate_model",
     "explain": "ai_explain_model",
 }
+
+DISALLOWED_AI_HOSTS = {"localhost"}
+
+
+def validate_ai_base_url(base_url: str) -> str:
+    normalized = (base_url or "").strip()
+    if not normalized:
+        raise ValueError("AI Base URL 未配置")
+
+    parsed = urlparse(normalized)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise ValueError("AI Base URL 仅允许公网 HTTPS 地址")
+    if parsed.username or parsed.password:
+        raise ValueError("AI Base URL 不允许包含认证信息")
+
+    host = parsed.hostname.strip().rstrip(".").lower()
+    if host in DISALLOWED_AI_HOSTS:
+        raise ValueError("AI Base URL 不允许使用本机地址")
+
+    addresses = _resolve_host_addresses(host)
+    if not addresses:
+        raise ValueError("AI Base URL 主机无法解析")
+    for address in addresses:
+        if _is_disallowed_ai_address(address):
+            raise ValueError("AI Base URL 仅允许公网地址")
+
+    return normalized
+
+
+def _resolve_host_addresses(host: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    try:
+        literal = ipaddress.ip_address(host)
+        return [literal]
+    except ValueError:
+        pass
+
+    try:
+        addrinfo = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise ValueError("AI Base URL 主机无法解析") from exc
+
+    addresses = []
+    for item in addrinfo:
+        sockaddr = item[4]
+        if not sockaddr:
+            continue
+        try:
+            addresses.append(ipaddress.ip_address(sockaddr[0]))
+        except ValueError:
+            continue
+    return list(dict.fromkeys(addresses))
+
+
+def _is_disallowed_ai_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+    )
 
 
 def get_key(db: Session, key: str, default: str = "") -> str:
@@ -49,12 +114,13 @@ def get_effective_ai_settings(
         stored=get_key(db, "ai_model", ""),
         fallback=settings.AI_MODEL,
     )
+    resolved_base_url = _resolve_value(
+        override=base_url,
+        stored=get_key(db, "ai_api_base_url", ""),
+        fallback=settings.AI_API_BASE_URL,
+    )
     return {
-        "base_url": _resolve_value(
-            override=base_url,
-            stored=get_key(db, "ai_api_base_url", ""),
-            fallback=settings.AI_API_BASE_URL,
-        ),
+        "base_url": validate_ai_base_url(resolved_base_url),
         "api_key": _resolve_api_key(db, api_key),
         "model": _resolve_scene_model(
             db,
@@ -84,6 +150,11 @@ def get_masked_effective_ai_api_key(db: Session) -> str:
         return _mask_key(get_effective_ai_settings(db).get("api_key", ""))
     except ValueError:
         return ""
+
+
+def get_effective_ai_api_key(db: Session) -> str:
+    """获取有效的 AI API Key 明文。"""
+    return _resolve_api_key(db, None)
 
 
 # ─── 内部辅助 ──────────────────────────────────────
