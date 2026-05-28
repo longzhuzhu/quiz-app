@@ -99,7 +99,7 @@
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ bank.description || '暂无描述' }}</p>
             <p class="mt-2 text-xs text-gray-400 dark:text-gray-500">{{ bank.question_count }} 道题目</p>
           </div>
-          <div class="flex gap-2 flex-wrap flex-shrink-0">
+          <div class="flex gap-2 flex-wrap flex-shrink-0 items-start">
             <div v-if="incompleteSessionByBankId[bank.id]" class="flex flex-col gap-1">
               <BaseButton variant="primary" size="sm" @click="continueSession(incompleteSessionByBankId[bank.id])">
                 ▶ 继续答题
