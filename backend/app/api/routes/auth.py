@@ -1,6 +1,8 @@
 """Auth API 路由 - 注册、登录、当前用户"""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import datetime, timedelta, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -21,6 +23,41 @@ from app.schemas.auth import (
 )
 
 router = APIRouter()
+
+LOGIN_RATE_LIMIT_WINDOW = timedelta(minutes=15)
+LOGIN_RATE_LIMIT_MAX_FAILURES = 5
+_login_failures: dict[str, list[datetime]] = {}
+
+
+def _login_rate_limit_key(request: Request, username: str) -> str:
+    client_host = request.client.host if request.client else "unknown"
+    return f"{client_host}:{username.strip().lower()}"
+
+
+def _prune_login_failures(key: str, now: datetime) -> list[datetime]:
+    window_start = now - LOGIN_RATE_LIMIT_WINDOW
+    attempts = [attempt for attempt in _login_failures.get(key, []) if attempt > window_start]
+    if attempts:
+        _login_failures[key] = attempts
+    else:
+        _login_failures.pop(key, None)
+    return attempts
+
+
+def _ensure_login_not_rate_limited(key: str, now: datetime) -> None:
+    attempts = _prune_login_failures(key, now)
+    if len(attempts) >= LOGIN_RATE_LIMIT_MAX_FAILURES:
+        raise HTTPException(status_code=429, detail="登录失败次数过多，请稍后再试")
+
+
+def _record_login_failure(key: str, now: datetime) -> None:
+    attempts = _prune_login_failures(key, now)
+    attempts.append(now)
+    _login_failures[key] = attempts
+
+
+def _clear_login_failures(key: str) -> None:
+    _login_failures.pop(key, None)
 
 
 def user_to_dict(user: User, db: Session | None = None) -> dict:
@@ -58,25 +95,21 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(user)
 
-    return RegisterResponse(
-        message="注册成功",
-        user=UserResponse(
-            id=user.id,
-            username=user.username,
-            email=user.email,
-            is_admin=user.is_admin,
-            active_exam_id=user.active_exam_id,
-            created_at=user.created_at.isoformat(),
-        ),
-    )
+    return RegisterResponse(message="注册成功")
 
 
 @router.post("/login", response_model=LoginResponse)
-def login(data: LoginRequest, db: Session = Depends(get_db)):
+def login(data: LoginRequest, request: Request, db: Session = Depends(get_db)):
+    now = datetime.now(timezone.utc)
+    rate_limit_key = _login_rate_limit_key(request, data.username)
+    _ensure_login_not_rate_limited(rate_limit_key, now)
+
     user = db.query(User).filter_by(username=data.username).first()
     if not user or not verify_password(data.password, user.password_hash):
+        _record_login_failure(rate_limit_key, now)
         raise HTTPException(status_code=401, detail="用户名或密码错误")
 
+    _clear_login_failures(rate_limit_key)
     token = create_access_token(subject=str(user.id))
 
     return LoginResponse(

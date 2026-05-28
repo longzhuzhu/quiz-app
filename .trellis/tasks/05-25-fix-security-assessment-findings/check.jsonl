@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/index.md","reason":"检查后端改动是否符合 FastAPI 分层和项目规范。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"检查校验失败、限流和安全拒绝响应是否符合错误处理风格。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查配置、中间件和服务层实现质量与回归风险。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查前端渲染与 API 契约变化是否符合现有前端质量约定。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查注册响应、密码策略、CORS 和安全头等跨层行为是否一致。"}

@@ -249,6 +249,10 @@ function continueLastSession() {
   continueSession(lastIncompleteSession.value)
 }
 
+function continueLastSession() {
+  continueSession(lastIncompleteSession.value)
+}
+
 async function startQuiz(bank, mode) {
   try {
     await quizStore.startQuiz(bank.id, mode)

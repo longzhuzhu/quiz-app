@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端开发规范索引：HomeView 变更需遵循 Vue/JS/Tailwind 实际模式"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "HomeView 模板和 script setup 组件写法约束"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "首页 View 层编排 Pinia store 与异步错误处理模式"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "首页 API 调用、错误边界、独立请求降级规范"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "复用 quiz/history 数据到首页展示的跨层契约检查"}
