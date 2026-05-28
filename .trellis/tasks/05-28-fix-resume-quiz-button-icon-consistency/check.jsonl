@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "检查按钮组视觉语言一致性"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查首页继续答题入口契约未被行为变更破坏"}
