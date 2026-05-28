@@ -102,7 +102,7 @@
           <div class="flex gap-2 flex-wrap flex-shrink-0">
             <div v-if="incompleteSessionByBankId[bank.id]" class="flex flex-col gap-1">
               <BaseButton variant="primary" size="sm" @click="continueSession(incompleteSessionByBankId[bank.id])">
-                继续答题
+                ▶ 继续答题
               </BaseButton>
               <span class="text-xs text-gray-500 dark:text-gray-400">
                 已答 {{ incompleteSessionByBankId[bank.id].answered_count || 0 }}/{{ incompleteSessionByBankId[bank.id].total_questions || 0 }}｜{{ modeLabel(incompleteSessionByBankId[bank.id].mode) }}
