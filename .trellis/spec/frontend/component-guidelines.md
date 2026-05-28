@@ -151,3 +151,29 @@ async function handleClick() {
 <BaseButton>▶ 顺序练习</BaseButton>
 <BaseButton>🔀 随机练习</BaseButton>
 ```
+
+视觉一致性同样覆盖按钮高度：当按钮组里某个按钮被 wrapper（例如附带进度文案 `<span>` 的 `flex flex-col`）包裹，而其他按钮直接渲染时，外层 flex 容器默认 `items-stretch` 会把直接按钮拉伸到 wrapper 总高度，造成按钮自身和带 wrapper 的按钮视觉高度不一致。这种情况下外层容器要显式声明 `items-start`，让所有按钮按 `size` 决定自身高度并顶部对齐。
+
+```vue
+<!-- Correct: 外层 items-start，按钮按自身 sm size 等高 -->
+<div class="flex gap-2 flex-wrap flex-shrink-0 items-start">
+  <div class="flex flex-col gap-1">
+    <BaseButton size="sm">▶ 继续答题</BaseButton>
+    <span class="text-xs">已答 5/30｜顺序练习</span>
+  </div>
+  <BaseButton size="sm">▶ 顺序练习</BaseButton>
+  <BaseButton size="sm">🔀 随机练习</BaseButton>
+</div>
+
+<!-- Wrong: 没有 items-start，直接按钮被 stretch 到 wrapper 高度，按钮间高低不一 -->
+<div class="flex gap-2 flex-wrap flex-shrink-0">
+  <div class="flex flex-col gap-1">
+    <BaseButton size="sm">▶ 继续答题</BaseButton>
+    <span class="text-xs">已答 5/30｜顺序练习</span>
+  </div>
+  <BaseButton size="sm">▶ 顺序练习</BaseButton>
+  <BaseButton size="sm">🔀 随机练习</BaseButton>
+</div>
+```
+
+真实示例：`frontend/src/views/HomeView.vue` 行105。
