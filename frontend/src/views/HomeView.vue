@@ -103,6 +103,14 @@
             <p class="mt-2 text-xs text-gray-400 dark:text-gray-500">{{ bank.question_count }} 道题目</p>
           </div>
           <div class="flex gap-2 flex-wrap flex-shrink-0">
+            <div v-if="incompleteSessionByBankId[bank.id]" class="flex flex-col gap-1">
+              <BaseButton variant="primary" size="sm" @click="continueSession(incompleteSessionByBankId[bank.id])">
+                继续答题
+              </BaseButton>
+              <span class="text-xs text-gray-500 dark:text-gray-400">
+                已答 {{ incompleteSessionByBankId[bank.id].answered_count || 0 }}/{{ incompleteSessionByBankId[bank.id].total_questions || 0 }}｜{{ modeLabel(incompleteSessionByBankId[bank.id].mode) }}
+              </span>
+            </div>
             <BaseButton variant="primary" size="sm" @click="startQuiz(bank, 'sequential')" :disabled="bank.question_count === 0">
               ▶ 顺序练习
             </BaseButton>
@@ -164,6 +172,7 @@ const wrongStats = ref({})
 const recentAccuracy = ref(0)
 const recentTotal = ref(0)
 const lastIncompleteSession = ref(null)
+const incompleteSessionByBankId = ref({})
 const showExamModal = ref(false)
 const examBank = ref(null)
 const examQuestionCount = ref(90)
@@ -171,6 +180,7 @@ const examQuestionCount = ref(90)
 const banks = computed(() => bankStore.banks)
 const loading = computed(() => bankStore.loading)
 const totalQuestions = computed(() => banks.value.reduce((s, b) => s + b.question_count, 0))
+const quizHistoryPerPage = 100
 
 onMounted(async () => {
   const bankP = bankStore.fetchBanks().catch((e) => {
@@ -181,11 +191,12 @@ onMounted(async () => {
     recentAccuracy.value = r.data.accuracy
     recentTotal.value = r.data.total
   }).catch(() => {})
-  const lastSessionP = client.get('/quiz/history', { params: { page: 1, per_page: 20 } }).then(r => {
+  const lastSessionP = client.get('/quiz/history', { params: { page: 1, per_page: quizHistoryPerPage } }).then(r => {
     const items = Array.isArray(r.data?.items) ? r.data.items : []
-    lastIncompleteSession.value = items.find(item => item.is_completed === false && item.mode !== 'wrong_practice') || null
+    updateIncompleteSessions(items)
   }).catch(() => {
     lastIncompleteSession.value = null
+    incompleteSessionByBankId.value = {}
   })
   await Promise.allSettled([bankP, wrongP, accP, lastSessionP])
 })
@@ -216,10 +227,26 @@ function formatSessionDate(value) {
   return Number.isNaN(date.getTime()) ? '未知时间' : date.toLocaleString('zh-CN')
 }
 
-function continueLastSession() {
-  const sessionId = lastIncompleteSession.value?.id
+function updateIncompleteSessions(items) {
+  const incompleteSessions = items.filter(item => item.is_completed === false && item.mode !== 'wrong_practice')
+  const sessionsByBankId = {}
+
+  lastIncompleteSession.value = incompleteSessions[0] || null
+  for (const session of incompleteSessions) {
+    if (session.bank_id == null || sessionsByBankId[session.bank_id]) continue
+    sessionsByBankId[session.bank_id] = session
+  }
+  incompleteSessionByBankId.value = sessionsByBankId
+}
+
+function continueSession(session) {
+  const sessionId = session?.id
   if (sessionId == null) return
   router.push(currentExamPath(route, 'quiz', { sessionId }))
+}
+
+function continueLastSession() {
+  continueSession(lastIncompleteSession.value)
 }
 
 async function startQuiz(bank, mode) {

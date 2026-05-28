@@ -157,6 +157,86 @@ current.value = switchRes.data?.active_exam || null
 
 ---
 
+## 首页题库级继续答题入口前端契约
+
+### 1. Scope / Trigger
+
+- Trigger: `HomeView` 基于 `/quiz/history` 同时驱动全局继续入口和题库卡片级继续入口。
+- Scope: 只适用于考试项目首页题库列表；不改变答题页恢复逻辑，也不新增后端 API。
+
+### 2. Signatures
+
+- 首页历史请求：
+  ```javascript
+  client.get('/quiz/history', { params: { page: 1, per_page: 100 } })
+  ```
+- 恢复跳转：
+  ```javascript
+  router.push(currentExamPath(route, 'quiz', { sessionId }))
+  ```
+
+### 3. Contracts
+
+`/quiz/history` 的 `items` 中，首页继续入口依赖这些字段：
+
+| 字段 | 用途 |
+|------|------|
+| `id` | 恢复会话路由参数 |
+| `bank_id` | 建立题库卡片到未完成会话的映射 |
+| `mode` | 过滤 `wrong_practice`，并显示模式文案 |
+| `answered_count` | 显示 `已答 x/y` 中的已答数量 |
+| `total_questions` | 显示 `已答 x/y` 中的总题数 |
+| `is_completed` | 只展示未完成会话 |
+
+全局入口和题库级入口必须复用同一批历史数据；全局入口仍取历史列表中第一个未完成且非 `wrong_practice` 的会话。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 前端行为 |
+|------|----------|
+| `items` 不是数组 | 当作空列表 |
+| 会话 `is_completed !== false` | 不作为继续入口 |
+| 会话 `mode === 'wrong_practice'` | 不作为首页继续入口 |
+| 会话缺少 `bank_id` | 不显示在题库卡片级入口中 |
+| 同一题库有多个未完成普通会话 | 使用历史列表顺序中的第一个 |
+| `/quiz/history` 请求失败 | 全局入口为空，题库级入口映射为空，不影响题库列表和统计卡片 |
+| `session.id == null` | 点击恢复时不跳转 |
+
+### 5. Good/Base/Bad Cases
+
+- Good: 一个题库有未完成 `sequential` 会话，题库卡片显示“继续答题”和 `已答 x/y｜顺序练习`，点击进入现有 quiz session 路由。
+- Base: 没有未完成普通会话时，只显示“顺序练习 / 随机练习 / 模拟考试”等新开入口。
+- Bad: 把 `wrong_practice` 未完成会话显示成题库级继续入口，会把错题练习语义混入普通题库练习恢复。
+
+### 6. Tests Required
+
+- Build: `cd frontend && npm run build`。
+- Browser smoke: 有未完成普通会话的题库卡片显示“继续答题”，点击后 URL 进入对应考试项目下的 quiz session 路由。
+- Browser smoke: 只有 `wrong_practice` 未完成会话的题库不显示题库级“继续答题”。
+- Regression smoke: 全局“继续上次答题”卡片仍显示同一历史列表中的第一个未完成普通会话，新开练习按钮仍可点击。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```javascript
+lastIncompleteSession.value = items.find(item => item.is_completed === false) || null
+incompleteSessionByBankId.value[item.bank_id] = item
+```
+
+#### Correct
+
+```javascript
+const incompleteSessions = items.filter(item => item.is_completed === false && item.mode !== 'wrong_practice')
+lastIncompleteSession.value = incompleteSessions[0] || null
+for (const session of incompleteSessions) {
+  if (session.bank_id == null || sessionsByBankId[session.bank_id]) continue
+  sessionsByBankId[session.bank_id] = session
+}
+```
+
+---
+
 ## 题目 AI 产物预热前端契约
 
 ### 1. Scope / Trigger
