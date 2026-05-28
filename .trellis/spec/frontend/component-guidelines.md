@@ -135,3 +135,19 @@ async function handleClick() {
 - 全量 Tailwind CSS 内联类，无 `<style>` 块
 - 深色模式通过 `dark:` 变体，由 `useDarkMode` composable 控制 `document.documentElement.classList.toggle('dark')`
 - 自定义圆角 token：`rounded-button`、`rounded-card`、`rounded-card-lg`
+
+### 同组操作按钮视觉语言
+
+同一个按钮组里的操作按钮要保持图标/文案风格一致：如果相邻按钮使用 emoji 或符号前缀，新加入的同级操作按钮也要使用同类前缀，不能只满足功能而忽略视觉节奏。
+
+```vue
+<!-- Correct: 同组按钮都使用符号前缀 -->
+<BaseButton>▶ 继续答题</BaseButton>
+<BaseButton>▶ 顺序练习</BaseButton>
+<BaseButton>🔀 随机练习</BaseButton>
+
+<!-- Wrong: 同组按钮中只有新增按钮没有前缀 -->
+<BaseButton>继续答题</BaseButton>
+<BaseButton>▶ 顺序练习</BaseButton>
+<BaseButton>🔀 随机练习</BaseButton>
+```
