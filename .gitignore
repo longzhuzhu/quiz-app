@@ -14,3 +14,4 @@ plugins/
 .venv/
 .worktrees/
 backend/storage/
+storage/
