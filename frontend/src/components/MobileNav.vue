@@ -3,8 +3,8 @@
     <div class="flex items-center justify-around px-2" style="padding-bottom: env(safe-area-inset-bottom, 0)">
       <router-link
         v-for="tab in tabs"
-        :key="tab.to"
-        :to="tab.to"
+        :key="tab.kind"
+        :to="navPath(tab.kind)"
         class="flex flex-col items-center gap-0.5 px-3 py-2 text-xs transition-colors"
         :class="isActive(tab) ? 'text-primary-600 dark:text-primary-400' : 'text-gray-400 dark:text-gray-500'"
       >
@@ -46,14 +46,19 @@
           class="block rounded-lg px-4 py-3 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700"
         >账户设置</router-link>
         <router-link
+          to="/exams"
+          @click="showMore = false"
+          class="block rounded-lg px-4 py-3 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700"
+        >我的项目</router-link>
+        <router-link
           v-if="authStore.isAdmin"
-          to="/admin/banks"
+          :to="navPath('banks')"
           @click="showMore = false"
           class="block rounded-lg px-4 py-3 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700"
         >题库管理</router-link>
         <router-link
           v-if="authStore.isAdmin"
-          to="/import-jobs"
+          :to="navPath('importJobs')"
           @click="showMore = false"
           class="block rounded-lg px-4 py-3 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700"
         >导入任务</router-link>
@@ -88,7 +93,9 @@
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { useExamStore } from '../stores/exam'
 import { useDarkMode } from '../composables/useDarkMode'
+import { examPath } from '../utils/examRoutes'
 import {
   HomeIcon,
   ExclamationCircleIcon,
@@ -100,21 +107,27 @@ import {
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const examStore = useExamStore()
 const darkMode = useDarkMode()
 const showMore = ref(false)
 
+function navPath(kind) {
+  return examStore.current?.slug ? examPath(examStore.current.slug, kind) : '/onboarding'
+}
+
 const tabs = [
-  { to: '/', label: '首页', icon: HomeIcon, exact: true },
-  { to: '/wrong', label: '错题', icon: ExclamationCircleIcon },
-  { to: '/history', label: '历史', icon: ClockIcon },
-  { to: '/vocabulary', label: '单词', icon: BookOpenIcon },
+  { kind: 'dashboard', label: '首页', icon: HomeIcon, exact: true },
+  { kind: 'wrong', label: '错题', icon: ExclamationCircleIcon },
+  { kind: 'history', label: '历史', icon: ClockIcon },
+  { kind: 'vocab', label: '单词', icon: BookOpenIcon },
 ]
 
 function isActive(tab) {
+  const path = navPath(tab.kind)
   if (tab.exact) {
-    return route.path === tab.to
+    return route.path === path
   }
-  return route.path.startsWith(tab.to)
+  return route.path.startsWith(path)
 }
 
 function handleLogout() {

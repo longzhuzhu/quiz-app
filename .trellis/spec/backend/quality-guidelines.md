@@ -452,90 +452,96 @@ def list_banks(
 
 ---
 
-## FastAPI 安全边界契约
+## 题目 AI 产物预热后端契约
 
 ### 1. Scope / Trigger
 
-- Trigger: 修改 FastAPI 应用入口、认证接口、跨域配置、外部 HTTP 调用、AI 配置或 auth 响应结构。
-- Scope: `backend/app/main.py`、`backend/app/core/config.py`、`backend/app/api/routes/auth.py`、`backend/app/api/routes/settings.py`、AI service/settings service。
-- 风险：默认框架行为或宽松配置会把调试面、跨域读取、弱密码、SSRF 或敏感字段泄露到生产环境。
+- Trigger: 答题页进入当前题时通过后端静默入队翻译和 AI 解析预热任务。
+- Scope: 只适用于正式答题会话内的题目 AI 产物预热；不适用于题库管理、题目预览、导入复核或管理员只读查看。
+- 预热是可丢弃体验优化，不能改变现有 `/api/ai/translate` 和 `/api/ai/explain` 同步生成语义。
 
 ### 2. Signatures
 
-- OpenAPI 开关：`Settings.ENABLE_OPENAPI: bool = False`。
-- CORS 白名单：`Settings.CORS_ALLOWED_ORIGINS: str`，逗号分隔 Origin。
-- 注册请求：`RegisterRequest.password` 最小长度 6。
-- 注册响应：`RegisterResponse -> { message: str }`，不得返回 `user` 对象。
-- 登录限流：登录失败超过窗口阈值返回 HTTP 429。
-- AI Base URL 校验：`validate_ai_base_url(base_url: str) -> str`。
+- 设置接口：
+  - `GET /api/settings/quiz` → `{ quiz_ai_prewarm_enabled: boolean }`
+  - `PUT /api/settings/quiz` body `{ quiz_ai_prewarm_enabled?: boolean }` → `{ message: string }`
+- 预热接口：
+  - `POST /api/ai/prewarm` body `{ session_id: number, question_ids: number[] }` → `{ accepted: boolean }`
+- 后台任务：
+  - `BackgroundJob.job_type = "ai_prewarm"`
+  - payload: `{ artifact_type: "translation" | "explanation", exam_id: number, question_id: number, session_id: number }`
+- 设置存储：
+  - `SystemSetting.key = "quiz_ai_prewarm_enabled"`
+  - `SystemSetting.value = "true" | "false"`
 
 ### 3. Contracts
 
-- 生产默认不得暴露 `/openapi.json`、`/docs`、`/redoc`；开发需要时显式设置 `ENABLE_OPENAPI=true`。
-- `allow_origins` 不得使用 `['*']` 搭配 `allow_credentials=True`。
-- 生产默认 CORS Origin 为 `https://quiz.nianyu.qzz.io`。
-- 基础安全响应头必须覆盖 API 和 SPA fallback 响应：`X-Content-Type-Options`、`X-Frame-Options`、`Referrer-Policy`、`Permissions-Policy`、保守 CSP、HSTS。
-- AI Base URL 只允许公网 `https://`，不得包含用户名密码，解析结果不得是 loopback、link-local、private、reserved、unspecified 或 multicast 地址。
-- 对外 AI HTTP 请求必须启用 TLS 证书校验，不得使用 `verify=False`。
+- `quiz_ai_prewarm_enabled` 缺省值为 `true`，接口返回 boolean，数据库按字符串存储。
+- `POST /api/ai/prewarm` 必须依赖 `get_current_user` 和 `get_exam_context`，用 `X-Exam-Slug + 当前用户 + session_id` 校验会话边界。
+- `question_ids` 由前端传当前题和下一题，后端仍必须校验每个题目属于当前答题会话、当前题库和当前考试项目。
+- 设置关闭、会话已完成、已缓存、重复入队等正常跳过场景返回 `{ accepted: false }` 或 `{ accepted: true }`，但不抛用户可见错误。
+- 非法会话、越权用户、题目不属于会话/考试项目必须返回 403/404。
+- `ai_prewarm` 是内部任务，不允许通过 `/api/jobs` 创建或读取。
+- worker 执行前必须重新检查系统设置和题目缓存；已关闭或已缓存时跳过 AI 调用。
 
 ### 4. Validation & Error Matrix
 
 | 条件 | 结果 |
 |------|------|
-| `ENABLE_OPENAPI=false` 访问 `/openapi.json`、`/docs`、`/redoc` | 404 |
-| 恶意 Origin 发起 CORS preflight | 不返回可读取的 `access-control-allow-origin` |
-| 注册密码长度小于 6 | Pydantic 422 |
-| 登录失败次数超过阈值 | 429，`detail="登录失败次数过多，请稍后再试"` |
-| AI Base URL 为 `http://...`、`localhost`、`127.0.0.1`、`169.254.169.254` 或 RFC1918 私网 | 400 或 service `ValueError` |
-| AI Base URL 无法解析 | 400 或 service `ValueError` |
+| 缺少认证 | 401 |
+| 缺少或无效 `X-Exam-Slug` | `get_exam_context` 返回 400/404 |
+| `session_id` 不存在或不属于当前考试项目 | 404 |
+| 会话属于其他用户 | 403 |
+| `question_id` 不属于当前会话 | 404 |
+| `question_id` 不属于当前题库/考试项目 | 404 |
+| `quiz_ai_prewarm_enabled=false` | `{ accepted: false }`，不入队 |
+| 已有 active `ai_prewarm` scope | `{ accepted: true }`，复用/跳过 |
+| worker 执行时缓存已存在 | job skipped，不调用 AI |
+| worker 执行时 AI 调用失败 | job 按现有 worker 重试/失败逻辑处理，不影响答题页 |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: `ENABLE_OPENAPI=false` 时生产不可获取 OpenAPI；`ENABLE_OPENAPI=true` 时本地开发可访问 schema。
-- Good: `https://evil.example` preflight 不返回允许读取的 Origin。
-- Base: 注册成功只返回 `{ "message": "注册成功" }`，前端随后让用户登录。
-- Bad: 注册接口返回 `id`、`is_admin`、`created_at`，导致新用户注册即泄露内部字段。
-- Bad: AI 调用使用 `httpx.post(..., verify=False)` 或允许 `https://169.254.169.254`。
+- Good: 用户在 `X-Exam-Slug: cipt` 下进入答题会话第 1 题，请求 `question_ids=[10,11]`，后端按 10 翻译、10 解析、11 翻译、11 解析顺序创建内部 job。
+- Base: 设置关闭时同一请求返回 `{ accepted: false }`，前端静默忽略，按钮同步生成仍可用。
+- Bad: 只校验 `question_id` 存在，不校验它属于 `session.question_ids` 和 `QuestionBank.exam_id`，会造成跨考试项目预热。
+- Bad: 把 `ai_prewarm` 加入 `/api/jobs` 可创建类型或向前端返回 job id，会把内部优化暴露成用户任务。
 
 ### 6. Tests Required
 
-- API smoke: `TestClient(create_app()).get('/openapi.json')` 在默认配置下返回 404。
-- API smoke: 恶意 Origin preflight 不包含 `access-control-allow-origin`。
-- Header smoke: 任一 API 响应包含基础安全响应头和保守 CSP。
-- Schema smoke: `RegisterRequest(..., password='1')` 被拒绝，`RegisterResponse(message='注册成功').model_dump()` 不含 `user`。
-- Auth smoke: 达到登录失败阈值后 `_ensure_login_not_rate_limited` 或登录 API 返回 429。
-- AI smoke: `validate_ai_base_url()` 拒绝本机、metadata 和私网地址，接受公网 HTTPS。
-- Build smoke: 若 auth 响应或前端契约变化，运行 `npm run build --prefix frontend`。
+- API smoke: `GET /api/settings/quiz` 默认返回 `quiz_ai_prewarm_enabled: true`。
+- API smoke: `PUT /api/settings/quiz` 写入 false 后，`POST /api/ai/prewarm` 返回 `{ accepted: false }` 且不创建 job。
+- API smoke: 合法会话 + 当前题/下一题创建 `ai_prewarm` job，payload 包含 `artifact_type`、`exam_id`、`question_id`、`session_id`。
+- Isolation: 跨用户 session、跨考试项目 question、非会话内 question 分别返回 403/404。
+- Worker smoke: 已缓存翻译/解析时 `ai_prewarm` skipped；未缓存时复用 `translate_question` / `explain_question` 写入现有字段。
+- Visibility: `/api/jobs` 不支持创建或读取 `ai_prewarm`。
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
 ```python
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-resp = httpx.post(api_url, json=payload, headers=headers, timeout=60.0, verify=False)
+@router.post("/prewarm")
+def prewarm(data, db: Session = Depends(get_db)):
+    for question_id in data.question_ids:
+        create_or_reuse_job(db, "ai_prewarm", {"question_id": question_id}, current_user.id)
+    return {"accepted": True}
 ```
 
 #### Correct
 
 ```python
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_cors_allowed_origins(),
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Exam-Slug"],
-)
-
-base_url = validate_ai_base_url(settings.AI_API_BASE_URL)
-resp = httpx.post(api_url, json=payload, headers=headers, timeout=60.0, verify=True)
+@router.post("/prewarm")
+def prewarm(
+    data: AIPrewarmRequest,
+    current_user: User = Depends(get_current_user),
+    exam: Exam = Depends(get_exam_context),
+    db: Session = Depends(get_db),
+):
+    session = db.get(QuizSession, data.session_id)
+    if not session or not session.bank or session.bank.exam_id != exam.id:
+        raise HTTPException(status_code=404, detail="答题会话不存在")
+    if session.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="无权限")
 ```
 
 ---

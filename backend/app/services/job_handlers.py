@@ -3,9 +3,20 @@
 所有函数显式接收 db: Session 参数。
 """
 
+import json
+
 from app.models.bank_word import BankWordFrequency
-from app.services.ai_service import batch_translate_terms
+from app.models.question import Question
+from app.models.quiz import QuizSession
+from app.services.ai_service import (
+    batch_translate_terms,
+    explain_question,
+    has_question_explanation,
+    has_question_translation,
+    translate_question,
+)
 from app.services.job_service import (
+    JOB_TYPE_AI_PREWARM,
     JOB_TYPE_BANK_FREQUENT_TRANSLATE,
     JOB_TYPE_QUESTION_IMPORT_LLM,
     JOB_TYPE_QUESTION_IMPORT_LLM_REPARSE,
@@ -14,6 +25,7 @@ from app.services.job_service import (
     list_bank_frequent_terms,
     text_missing,
 )
+from app.services.settings_service import is_quiz_ai_prewarm_enabled
 
 from sqlalchemy.orm import Session
 
@@ -22,6 +34,8 @@ BANK_FREQUENT_BATCH_SIZE = 100
 
 def run_job(db: Session, job) -> None:
     """根据 job_type 分派任务"""
+    if job.job_type == JOB_TYPE_AI_PREWARM:
+        return handle_ai_prewarm(db, job)
     if job.job_type == JOB_TYPE_BANK_FREQUENT_TRANSLATE:
         return handle_bank_frequent_translate(db, job)
     if job.job_type == JOB_TYPE_QUESTION_IMPORT_LLM:
@@ -29,6 +43,48 @@ def run_job(db: Session, job) -> None:
     if job.job_type == JOB_TYPE_QUESTION_IMPORT_LLM_REPARSE:
         return handle_question_import_llm_reparse(db, job)
     raise ValueError(f"不支持的任务类型: {job.job_type}")
+
+
+def handle_ai_prewarm(db: Session, job) -> None:
+    payload = deserialize_job_payload(job)
+    if not is_quiz_ai_prewarm_enabled(db):
+        heartbeat_job(db, job, skipped_increment=1, status_message="答题预热已关闭，跳过任务")
+        return
+
+    question_id = payload.get("question_id")
+    exam_id = payload.get("exam_id")
+    session_id = payload.get("session_id")
+    artifact_type = payload.get("artifact_type")
+    if artifact_type not in {"translation", "explanation"}:
+        raise ValueError("ai_prewarm 缺少有效 artifact_type")
+
+    session = db.get(QuizSession, session_id)
+    question = db.get(Question, question_id)
+    if not session or not question or not question.bank:
+        heartbeat_job(db, job, skipped_increment=1, status_message="预热对象不存在，跳过任务")
+        return
+    if question.bank.exam_id != exam_id or session.bank_id != question.bank_id:
+        heartbeat_job(db, job, skipped_increment=1, status_message="预热对象不属于当前考试项目或会话，跳过任务")
+        return
+
+    session_question_ids = json.loads(session.question_ids) if session.question_ids else []
+    if question.id not in session_question_ids:
+        heartbeat_job(db, job, skipped_increment=1, status_message="题目不属于答题会话，跳过任务")
+        return
+
+    if artifact_type == "translation":
+        if has_question_translation(question):
+            heartbeat_job(db, job, skipped_increment=1, status_message="翻译缓存已存在，跳过任务")
+            return
+        translate_question(db, question)
+        heartbeat_job(db, job, success_increment=1, status_message="题目翻译预热完成")
+        return
+
+    if has_question_explanation(question):
+        heartbeat_job(db, job, skipped_increment=1, status_message="AI 解析缓存已存在，跳过任务")
+        return
+    explain_question(db, question)
+    heartbeat_job(db, job, success_increment=1, status_message="题目 AI 解析预热完成")
 
 
 def handle_bank_frequent_translate(db: Session, job) -> None:

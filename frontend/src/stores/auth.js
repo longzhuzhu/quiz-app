@@ -27,6 +27,7 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null
     localStorage.removeItem('token')
     localStorage.removeItem('user')
+    import('./exam').then(({ useExamStore }) => useExamStore().reset())
   }
 
   async function fetchMe() {

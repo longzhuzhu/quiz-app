@@ -26,12 +26,14 @@
 
 <script setup>
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ArrowUpTrayIcon } from '@heroicons/vue/24/outline'
 import client from '../api/client'
 import { useToast } from '../composables/useToast'
+import { currentExamPath } from '../utils/examRoutes'
 
 const toast = useToast()
+const route = useRoute()
 const router = useRouter()
 
 const props = defineProps({ bankId: Number })
@@ -57,7 +59,7 @@ async function uploadFile(file) {
 
     // 跳转到导入任务详情页
     if (importJobId) {
-      router.push(`/import-jobs/${importJobId}`)
+      router.push(currentExamPath(route, 'importJobDetail', { jobId: importJobId }))
     }
   } catch (e) {
     result.value = { error: e.response?.data?.detail || '上传失败' }

@@ -1,0 +1,10 @@
+{"file":".trellis/spec/backend/index.md","reason":"检查代理需要后端规范索引以定位相关质量要求。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"核查新增 API、服务层、设置读写和后台任务是否符合后端质量规范。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"核查 prewarm API 的 accepted false、403/404、异常日志与静默失败边界。"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"核查 worker 日志是否只覆盖异常路径，避免成功路径噪音。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"核查数据库读写、BackgroundJob 去重查询和缓存写入是否安全一致。"}
+{"file":".trellis/spec/frontend/index.md","reason":"检查代理需要前端规范索引以定位 UI、状态和 API 调用规范。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"核查 client 直接调用、静默错误处理、exam-scoped header 和系统设置契约。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"核查系统设置页新增答题设置分组和开关 UI 是否符合组件约定。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"核查 QuizView 生命周期内本地去重是否足够轻量且无额外全局状态。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核查跨层设置、API、worker、缓存和前端触发链路是否一致。"}

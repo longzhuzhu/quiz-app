@@ -70,12 +70,99 @@ client.interceptors.response.use(
 
 ---
 
+## 考试项目上下文 API 契约
+
+### 1. Scope / Trigger
+
+- Trigger: 前端考试项目上下文跨越 router、Pinia、Axios header 和后端 `/api/exams`、`/api/account/active-exam` 响应契约。
+- Scope: 只适用于用户自有考试项目上下文，不适用于管理员全局配置页。
+
+### 2. Signatures
+
+- `GET /api/exams` → 当前用户拥有的考试项目列表。
+- `POST /api/exams` → 创建考试项目，并由后端设置为 active exam。
+- `PATCH /api/exams/{slug}` → 更新当前用户拥有的考试项目。
+- `DELETE /api/exams/{slug}` → 删除当前用户拥有的考试项目。
+- `POST /api/account/active-exam` → 切换 active exam。
+
+### 3. Contracts
+
+`GET /api/exams` 返回包装对象，不是裸数组：
+
+```javascript
+const res = await client.get('/exams')
+myExams.value = Array.isArray(res.data?.items) ? res.data.items : []
+```
+
+`POST /api/account/active-exam` 返回 `{ active_exam: Exam }`，不是裸 Exam：
+
+```javascript
+const res = await client.post('/account/active-exam', { slug })
+current.value = res.data?.active_exam || null
+```
+
+考试项目范围 API 的请求头必须来自 `useExamStore.current.slug`：
+
+```javascript
+if (examStore.current?.slug) {
+  config.headers['X-Exam-Slug'] = examStore.current.slug
+}
+```
+
+不要用 `active_exam_id` 作为 header，也不要从 `localStorage.user.active_exam` 隐式兜底生成 header。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 前端行为 |
+|------|----------|
+| 未登录访问 `/exams`、`/onboarding`、`/exams/:examSlug/*` | 路由守卫跳转 `/login` |
+| 登录后 `auth/me.active_exam` 为空 | 跳转 `/onboarding` |
+| `GET /api/exams` 返回非数组 `items` | `myExams` 降级为空数组 |
+| 切换不存在或无权限的 `examSlug` | 切换失败后回到 `/exams` |
+| 全局认证失效 401 / JWT invalid 422 | 清理 token、user、exam store，并跳转 `/login` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: 已登录且有 active exam，`/` 跳转 `/exams/{slug}/dashboard`，exam-scoped API 带 `X-Exam-Slug: {slug}`。
+- Base: 已登录但没有 active exam，进入 `/onboarding` 创建第一个项目。
+- Bad: 把 `GET /api/exams` 当数组或把 `POST /api/account/active-exam` 当裸 Exam，会导致项目列表为空或 `current.slug` 丢失。
+
+### 6. Tests Required
+
+- Store 测试或手工验证：`fetchExams()` 读取 `res.data.items`，`switchTo()` 读取 `res.data.active_exam`。
+- Router 手工验证：未登录访问 `/exams`、`/onboarding` 重定向 `/login`；有 active exam 时 `/` 进入 `/exams/{slug}/dashboard`。
+- Axios 手工验证：调用 `/banks`、`/quiz/*`、`/wrong`、`/vocab`、`/ai`、`/import-jobs` 时带当前项目 `X-Exam-Slug`。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```javascript
+const res = await client.get('/exams')
+myExams.value = Array.isArray(res.data) ? res.data : []
+
+const switchRes = await client.post('/account/active-exam', { slug })
+current.value = switchRes.data
+```
+
+#### Correct
+
+```javascript
+const res = await client.get('/exams')
+myExams.value = Array.isArray(res.data?.items) ? res.data.items : []
+
+const switchRes = await client.post('/account/active-exam', { slug })
+current.value = switchRes.data?.active_exam || null
+```
+
+---
+
 ## 首页题库级继续答题入口前端契约
 
 ### 1. Scope / Trigger
 
 - Trigger: `HomeView` 基于 `/quiz/history` 同时驱动全局继续入口和题库卡片级继续入口。
-- Scope: 只适用于首页题库列表；不改变答题页恢复逻辑，也不新增后端 API。
+- Scope: 只适用于考试项目首页题库列表；不改变答题页恢复逻辑，也不新增后端 API。
 
 ### 2. Signatures
 
@@ -85,7 +172,7 @@ client.interceptors.response.use(
   ```
 - 恢复跳转：
   ```javascript
-  router.push(`/quiz/${sessionId}`)
+  router.push(currentExamPath(route, 'quiz', { sessionId }))
   ```
 
 ### 3. Contracts
@@ -124,7 +211,7 @@ client.interceptors.response.use(
 ### 6. Tests Required
 
 - Build: `cd frontend && npm run build`。
-- Browser smoke: 有未完成普通会话的题库卡片显示“继续答题”，点击后 URL 进入 quiz session 路由。
+- Browser smoke: 有未完成普通会话的题库卡片显示“继续答题”，点击后 URL 进入对应考试项目下的 quiz session 路由。
 - Browser smoke: 只有 `wrong_practice` 未完成会话的题库不显示题库级“继续答题”。
 - Regression smoke: 全局“继续上次答题”卡片仍显示同一历史列表中的第一个未完成普通会话，新开练习按钮仍可点击。
 
@@ -146,6 +233,89 @@ for (const session of incompleteSessions) {
   if (session.bank_id == null || sessionsByBankId[session.bank_id]) continue
   sessionsByBankId[session.bank_id] = session
 }
+```
+
+---
+
+## 题目 AI 产物预热前端契约
+
+### 1. Scope / Trigger
+
+- Trigger: `QuizView` 展示或切换当前题时，静默请求后端预热当前题和下一题的翻译与 AI 解析。
+- Scope: 只适用于正式答题页；不适用于系统设置页以外的管理页面、题库预览、导入复核或题目编辑。
+- 预热不能改变 `TranslateButton` / `ExplainButton` 的点击、loading、toast 和展示语义。
+
+### 2. Signatures
+
+- 答题页请求：
+  ```javascript
+  client.post('/ai/prewarm', { session_id: sessionId, question_ids: ids }).catch(() => {})
+  ```
+- 设置页读取：
+  ```javascript
+  const res = await client.get('/settings/quiz')
+  form.value.quiz_ai_prewarm_enabled = res.data.quiz_ai_prewarm_enabled !== false
+  ```
+- 设置页保存：
+  ```javascript
+  await client.put('/settings/quiz', {
+    quiz_ai_prewarm_enabled: form.value.quiz_ai_prewarm_enabled,
+  })
+  ```
+
+### 3. Contracts
+
+- `question_ids` 由前端按当前 `quizStore.currentIndex` 组装，最多包含当前题和下一题。
+- 前端不读取普通答题页的系统设置；是否入队由后端 `POST /api/ai/prewarm` 统一判断。
+- 预热请求必须是 fire-and-forget，不阻塞答题、切题、提交答案或结束答题。
+- 预热失败不 toast、不设置页面错误状态、不显示任何“预热”文案。
+- `QuizView` 生命周期内可以用 `Set` 做轻量本地去重；刷新页面后不持久化。
+- 管理员系统设置页新增“答题设置”分组，开关文案为“是否启用答题预热”。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 前端行为 |
+|------|----------|
+| `quizStore.session.id` 不存在 | 不请求预热 |
+| 当前题不存在 | 不请求预热 |
+| 有下一题 | 传 `[currentQuestion.id, nextQuestion.id]` |
+| 没有下一题 | 只传 `[currentQuestion.id]` |
+| 同一生命周期内相同 `session_id + question_ids` 已请求 | 不重复请求 |
+| `POST /api/ai/prewarm` 返回 `accepted: false` | 静默忽略 |
+| `POST /api/ai/prewarm` 返回 403/404/500 | 静默 catch，除全局认证拦截外不提示 |
+| 401 或 JWT invalid 422 | 由全局 Axios 拦截器处理登录失效 |
+
+### 5. Good/Base/Bad Cases
+
+- Good: 进入第 3 题时静默发送当前题和第 4 题 ID；用户界面没有任何预热状态。
+- Base: 预热未完成时用户点击“翻译”，按钮仍按现有同步接口显示 loading 并生成结果。
+- Bad: 在答题页先调用 `/settings/quiz` 再决定是否预热，增加普通答题链路依赖。
+- Bad: 预热失败时 `toast.error('预热失败')`，把可丢弃优化暴露给用户。
+
+### 6. Tests Required
+
+- Build: `cd frontend && npm run build`。
+- Browser smoke: 未登录访问设置页应重定向登录且无 console error；登录后设置页应显示“答题设置”与“是否启用答题预热”。
+- Manual/API smoke: 答题页切换题目时 network 中出现 `/api/ai/prewarm`，且页面无预热状态文案。
+- Manual/API smoke: 禁用设置后答题页仍可点击“翻译”和“AI 解析”同步生成。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```javascript
+try {
+  const res = await client.post('/ai/prewarm', payload)
+  toast.success(res.data.accepted ? '预热中' : '未启用预热')
+} catch (e) {
+  toast.error('预热失败')
+}
+```
+
+#### Correct
+
+```javascript
+client.post('/ai/prewarm', { session_id: sessionId, question_ids: ids }).catch(() => {})
 ```
 
 ---

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端规范索引用于最终检查"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "检查 HomeView 模板和 script setup 是否符合组件模式"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查首页 API 调用、错误隔离和构建要求"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 quiz/history 到首页题库级入口的数据流一致性"}

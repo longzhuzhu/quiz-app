@@ -6,13 +6,15 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_admin
 from app.core.database import get_db
 from app.models.user import User
-from app.schemas.settings import AISettingsUpdateRequest, AITestRequest
+from app.schemas.settings import AISettingsUpdateRequest, AITestRequest, QuizSettingsUpdateRequest
 from app.services.settings_service import (
-    get_effective_ai_api_key,
+    QUIZ_AI_PREWARM_ENABLED_SETTING,
     get_effective_ai_settings,
     get_key as get_setting,
     get_masked_effective_ai_api_key,
     has_effective_ai_api_key,
+    is_quiz_ai_prewarm_enabled,
+    set_bool_key,
     set_encrypted_ai_api_key,
     set_key as set_setting,
     validate_ai_base_url,
@@ -65,6 +67,26 @@ def update_ai_settings(
     if data.ai_explain_model is not None:
         set_setting(db, "ai_explain_model", data.ai_explain_model.strip())
 
+    db.commit()
+    return {"message": "设置已保存"}
+
+
+@router.get("/quiz")
+def get_quiz_settings(
+    _admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    return {"quiz_ai_prewarm_enabled": is_quiz_ai_prewarm_enabled(db)}
+
+
+@router.put("/quiz")
+def update_quiz_settings(
+    data: QuizSettingsUpdateRequest,
+    _admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    if data.quiz_ai_prewarm_enabled is not None:
+        set_bool_key(db, QUIZ_AI_PREWARM_ENABLED_SETTING, data.quiz_ai_prewarm_enabled)
     db.commit()
     return {"message": "设置已保存"}
 

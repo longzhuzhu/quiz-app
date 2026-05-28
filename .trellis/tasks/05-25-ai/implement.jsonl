@@ -1,0 +1,10 @@
+{"file":".trellis/spec/backend/index.md","reason":"后端规范索引，帮助实现代理定位 FastAPI、数据库、错误处理、日志和质量规范。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"新增 FastAPI API、服务层和设置读写时必须遵守后端质量与返回格式规范。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"预热接口需要区分静默 accepted false、403/404 边界错误和后台任务异常处理。"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"ai_prewarm worker 只在异常路径记录日志，避免高频成功日志噪音。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"SystemSetting 读写、BackgroundJob 查询和题目缓存写入需要遵守 SQLAlchemy 数据库规范。"}
+{"file":".trellis/spec/frontend/index.md","reason":"前端规范索引，帮助实现代理定位组件、状态、API 调用和质量规范。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"前端直接使用 client、错误分层、静默 catch、exam-scoped header 和系统设置 API 契约相关。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"管理员设置页新增答题设置分组与开关 UI 需要遵守组件模式。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"QuizView 生命周期内轻量本地去重和不新增不必要状态需符合前端状态管理模式。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"本任务跨前端、API、设置、worker 和题目缓存，需要检查跨层数据流与契约一致性。"}

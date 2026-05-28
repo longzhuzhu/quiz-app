@@ -24,7 +24,7 @@
         <router-link
           v-for="s in sessions"
           :key="s.id"
-          :to="`/quiz/${s.id}/result`"
+          :to="currentExamPath(route, 'quizResult', { sessionId: s.id })"
           class="flex items-center gap-4 rounded-xl bg-white dark:bg-slate-800 shadow-card hover:shadow-card-hover transition-all p-5"
         >
           <!-- 正确率圆环 -->
@@ -89,13 +89,16 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import client from '../api/client'
+import { currentExamPath } from '../utils/examRoutes'
 import BaseButton from '../components/BaseButton.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import SkeletonLoader from '../components/SkeletonLoader.vue'
 import { useToast } from '../composables/useToast'
 import { ClockIcon } from '@heroicons/vue/24/outline'
 
+const route = useRoute()
 const toast = useToast()
 
 const sessions = ref([])

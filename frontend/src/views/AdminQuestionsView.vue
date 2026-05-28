@@ -2,7 +2,7 @@
   <div>
     <div class="mb-6 flex items-center justify-between">
       <div>
-        <router-link to="/admin/banks"
+        <router-link :to="currentExamPath(route, 'banks')"
           class="inline-flex items-center gap-1 text-sm text-primary-600 dark:text-primary-400 hover:underline">
           <ArrowLeftIcon class="h-4 w-4" />
           返回题库列表
@@ -165,6 +165,7 @@ import { ref, watch, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useToast } from '../composables/useToast'
 import client from '../api/client'
+import { currentExamPath } from '../utils/examRoutes'
 import BaseButton from '../components/BaseButton.vue'
 import BaseModal from '../components/BaseModal.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'

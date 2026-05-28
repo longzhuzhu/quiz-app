@@ -21,7 +21,7 @@
         class="rounded-card-lg bg-white dark:bg-slate-800 shadow-card hover:shadow-card-hover transition-all p-5">
         <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div class="min-w-0">
-            <router-link :to="`/import-jobs/${job.id}`"
+            <router-link :to="currentExamPath(route, 'importJobDetail', { jobId: job.id })"
               class="font-semibold text-primary-600 dark:text-primary-400 hover:underline">
               {{ job.file_name }}
             </router-link>
@@ -41,12 +41,12 @@
           <div class="flex gap-2 flex-wrap flex-shrink-0">
             <BaseButton v-if="job.review_questions > 0"
               variant="secondary" size="sm"
-              @click="$router.push(`/import-jobs/${job.id}/review`)">
+              @click="router.push(currentExamPath(route, 'importReview', { jobId: job.id }))">
               <ExclamationCircleIcon class="h-4 w-4" />
               复核 ({{ job.review_questions }})
             </BaseButton>
             <BaseButton variant="ghost" size="sm"
-              @click="$router.push(`/import-jobs/${job.id}`)">
+              @click="router.push(currentExamPath(route, 'importJobDetail', { jobId: job.id }))">
               <EyeIcon class="h-4 w-4" />
               详情
             </BaseButton>
@@ -59,11 +59,15 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import client from '../api/client'
+import { currentExamPath } from '../utils/examRoutes'
 import BaseButton from '../components/BaseButton.vue'
 import SkeletonLoader from '../components/SkeletonLoader.vue'
 import { ArrowUpTrayIcon, ExclamationCircleIcon, EyeIcon } from '@heroicons/vue/24/outline'
 
+const route = useRoute()
+const router = useRouter()
 const jobs = ref([])
 const loading = ref(false)
 let pollTimer = null

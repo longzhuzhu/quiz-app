@@ -18,7 +18,7 @@
         class="rounded-card-lg bg-white dark:bg-slate-800 shadow-card hover:shadow-card-hover transition-all p-5">
         <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div class="min-w-0">
-            <router-link :to="`/admin/banks/${bank.id}`"
+            <router-link :to="currentExamPath(route, 'banks') + `/${bank.id}`"
               class="font-semibold text-primary-600 dark:text-primary-400 hover:underline">
               {{ bank.name }}
             </router-link>
@@ -106,7 +106,9 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { useBankStore } from '../stores/bank'
+import { currentExamPath } from '../utils/examRoutes'
 import { useToast } from '../composables/useToast'
 import client from '../api/client'
 import FileUpload from '../components/FileUpload.vue'
@@ -115,6 +117,7 @@ import BaseModal from '../components/BaseModal.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import { PlusIcon, PencilSquareIcon, ArrowUpTrayIcon, TrashIcon, FolderIcon } from '@heroicons/vue/24/outline'
 
+const route = useRoute()
 const bankStore = useBankStore()
 const toast = useToast()
 const banks = ref([])

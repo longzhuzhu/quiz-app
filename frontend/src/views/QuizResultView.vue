@@ -9,7 +9,7 @@
   <div v-else-if="session.error" class="py-16 text-center">
     <XCircleIcon class="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600" />
     <p class="mt-4 text-gray-500 dark:text-gray-400">加载失败，请返回重试</p>
-    <router-link to="/" class="mt-4 inline-block text-primary-600 hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300">返回首页</router-link>
+    <router-link :to="currentExamPath(route, 'dashboard')" class="mt-4 inline-block text-primary-600 hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300">返回首页</router-link>
   </div>
 
   <!-- 结果 -->
@@ -74,8 +74,8 @@
 
       <!-- 底部按钮 -->
       <div class="flex justify-center gap-3 flex-wrap">
-        <BaseButton variant="secondary" @click="$router.push('/')">返回首页</BaseButton>
-        <BaseButton variant="primary" @click="$router.push('/wrong')">查看错题</BaseButton>
+        <BaseButton variant="secondary" @click="router.push(currentExamPath(route, 'dashboard'))">返回首页</BaseButton>
+        <BaseButton variant="primary" @click="router.push(currentExamPath(route, 'wrong'))">查看错题</BaseButton>
         <BaseButton variant="secondary" @click="retryQuiz">再来一次</BaseButton>
       </div>
     </div>
@@ -87,6 +87,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuizStore } from '../stores/quiz'
+import { currentExamPath } from '../utils/examRoutes'
 import { useToast } from '../composables/useToast'
 import client from '../api/client'
 import BaseButton from '../components/BaseButton.vue'
@@ -126,12 +127,12 @@ onMounted(async () => {
 
 async function retryQuiz() {
   if (!session.value?.bank_id) {
-    router.push('/')
+    router.push(currentExamPath(route, 'dashboard'))
     return
   }
   try {
     await quizStore.startQuiz(session.value.bank_id, session.value.mode || 'random')
-    router.push(`/quiz/${quizStore.session.id}`)
+    router.push(currentExamPath(route, 'quiz', { sessionId: quizStore.session.id }))
   } catch (e) {
     toast.error(e.response?.data?.error || '开始答题失败')
   }

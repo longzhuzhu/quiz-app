@@ -20,6 +20,14 @@ class AISettingsUpdateRequest(BaseModel):
     ai_explain_model: str | None = None
 
 
+class QuizSettingsResponse(BaseModel):
+    quiz_ai_prewarm_enabled: bool
+
+
+class QuizSettingsUpdateRequest(BaseModel):
+    quiz_ai_prewarm_enabled: bool | None = None
+
+
 class AITestRequest(BaseModel):
     ai_api_base_url: str | None = None
     ai_api_key: str | None = None

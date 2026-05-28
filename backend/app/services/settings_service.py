@@ -18,6 +18,30 @@ SCENE_MODEL_SETTING_KEYS = {
     "translate": "ai_translate_model",
     "explain": "ai_explain_model",
 }
+QUIZ_AI_PREWARM_ENABLED_SETTING = "quiz_ai_prewarm_enabled"
+
+
+def parse_bool_setting(value: str | None, default: bool = False) -> bool:
+    if value is None:
+        return default
+    normalized = str(value).strip().lower()
+    if normalized in {"true", "1", "yes", "on"}:
+        return True
+    if normalized in {"false", "0", "no", "off"}:
+        return False
+    return default
+
+
+def get_bool_key(db: Session, key: str, default: bool = False) -> bool:
+    return parse_bool_setting(get_key(db, key, ""), default)
+
+
+def set_bool_key(db: Session, key: str, value: bool) -> None:
+    set_key(db, key, "true" if value else "false")
+
+
+def is_quiz_ai_prewarm_enabled(db: Session) -> bool:
+    return get_bool_key(db, QUIZ_AI_PREWARM_ENABLED_SETTING, True)
 
 DISALLOWED_AI_HOSTS = {"localhost"}
 

@@ -387,7 +387,7 @@ WHERE
   user_id = :me
   AND (
     exam_id IS NULL
-    OR exam_id = :active_exam
+    OR exam_id = :current_exam
   )
 ORDER BY updated_at DESC;
 ```
@@ -558,7 +558,7 @@ router.beforeEach(async (to) => {
 - `icon`
 - `description`
 - `locale`
-- AI Profile：使用平台通用配置 / 复制已有项目 / 自定义
+- AI Profile：使用平台通用配置；如果当前用户已有其他考试项目，可选择复制已有项目配置；也可自定义
 
 创建完成后进入 `/exams/{slug}/dashboard`。
 
