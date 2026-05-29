@@ -108,7 +108,7 @@
             <BaseButton v-if="incompleteSessionByBankId[bank.id]" variant="primary" size="sm" @click="continueSession(incompleteSessionByBankId[bank.id])">
               ▶ 继续答题
             </BaseButton>
-            <BaseButton variant="primary" size="sm" @click="startQuiz(bank, 'sequential')" :disabled="bank.question_count === 0">
+            <BaseButton variant="secondary" size="sm" @click="startQuiz(bank, 'sequential')" :disabled="bank.question_count === 0">
               ▶ 顺序练习
             </BaseButton>
             <BaseButton variant="secondary" size="sm" @click="startQuiz(bank, 'random')" :disabled="bank.question_count === 0">
