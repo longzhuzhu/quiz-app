@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 16
+- **Total Sessions**: 17
 - **Last Active**: 2026-05-29
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~562 | Active |
+| `journal-1.md` | ~595 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 17 | 2026-05-29 | Session record | `8d1c9af` | `feat/user-owned-exams-backend-foundation` |
 | 16 | 2026-05-29 | UI fixes for resume quiz entry + trellis upgrade + branch sync | `46e3b71`, `e907093`, `956e729`, `a9d08cb`, `f648f73`, `050e69d` | `feat/user-owned-exams-backend-foundation` |
 | 15 | 2026-05-23 | Separate imported explanations from AI explanations | `f09b70d` | `codex/vocab-progress-settings-deploy` |
 | 14 | 2026-05-15 | Allow duplicate smart imports with question dedupe | `571ab5a`, `96ec6e7` | `codex/vocab-progress-settings-deploy` |
