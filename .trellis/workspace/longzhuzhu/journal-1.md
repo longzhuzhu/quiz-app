@@ -593,3 +593,36 @@ Separated imported parsing explanations from official AI explanation fields, add
 ### Next Steps
 
 - None - task complete
+
+
+## Session 18: Unify sequential quiz button style
+
+**Date**: 2026-05-29
+**Task**: Unify sequential quiz button style
+**Branch**: `feat/user-owned-exams-backend-foundation`
+
+### Summary
+
+Aligned the sequential quiz entry button with the random practice and exam button style on the dashboard.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6518414` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

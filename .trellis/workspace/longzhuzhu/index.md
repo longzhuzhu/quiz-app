@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 17
+- **Total Sessions**: 18
 - **Last Active**: 2026-05-29
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~595 | Active |
+| `journal-1.md` | ~628 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 18 | 2026-05-29 | Unify sequential quiz button style | `6518414` | `feat/user-owned-exams-backend-foundation` |
 | 17 | 2026-05-29 | Session record | `8d1c9af` | `feat/user-owned-exams-backend-foundation` |
 | 16 | 2026-05-29 | UI fixes for resume quiz entry + trellis upgrade + branch sync | `46e3b71`, `e907093`, `956e729`, `a9d08cb`, `f648f73`, `050e69d` | `feat/user-owned-exams-backend-foundation` |
 | 15 | 2026-05-23 | Separate imported explanations from AI explanations | `f09b70d` | `codex/vocab-progress-settings-deploy` |
