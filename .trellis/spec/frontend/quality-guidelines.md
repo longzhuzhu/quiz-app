@@ -190,6 +190,8 @@ current.value = switchRes.data?.active_exam || null
 
 全局入口和题库级入口必须复用同一批历史数据；全局入口仍取历史列表中第一个未完成且非 `wrong_practice` 的会话。
 
+题库级会话的进度信息（`已答 x/y` + 模式名）**显示在题库 micro-info 行末尾**，跟 `XX 道题目` 用 `｜` 分隔为三段（`XX 道题目 ｜ 已答 x/y ｜ 模式`），**不挂在"继续答题"按钮下方做 wrapper subtitle**——避免按钮组下沿不齐与小字视觉孤立。"继续答题"按钮跟"顺序练习 / 随机练习 / 模拟考试"在按钮组中平级排列，4 个按钮自然等高。
+
 ### 4. Validation & Error Matrix
 
 | 条件 | 前端行为 |
@@ -204,9 +206,10 @@ current.value = switchRes.data?.active_exam || null
 
 ### 5. Good/Base/Bad Cases
 
-- Good: 一个题库有未完成 `sequential` 会话，题库卡片显示“继续答题”和 `已答 x/y｜顺序练习`，点击进入现有 quiz session 路由。
-- Base: 没有未完成普通会话时，只显示“顺序练习 / 随机练习 / 模拟考试”等新开入口。
+- Good: 一个题库有未完成 `sequential` 会话，题库卡片 micro-info 行显示 `30 道题目 ｜ 已答 x/y ｜ 顺序练习`，按钮组同时显示"继续答题 / 顺序练习 / 随机练习 / 模拟考试"四个平级按钮，点击"继续答题"进入现有 quiz session 路由。
+- Base: 没有未完成普通会话时，micro-info 行只显示 `30 道题目`（无 dangling 分隔符），按钮组只有"顺序练习 / 随机练习 / 模拟考试"。
 - Bad: 把 `wrong_practice` 未完成会话显示成题库级继续入口，会把错题练习语义混入普通题库练习恢复。
+- Bad: 把会话进度信息挂在"继续答题"按钮下方做 wrapper subtitle，wrapper 整体高度高于其他按钮，造成按钮组下沿不齐且小字视觉孤立。
 
 ### 6. Tests Required
 

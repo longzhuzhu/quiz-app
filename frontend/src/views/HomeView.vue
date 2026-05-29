@@ -100,17 +100,14 @@
           <div class="min-w-0">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ bank.name }}</h3>
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ bank.description || '暂无描述' }}</p>
-            <p class="mt-2 text-xs text-gray-400 dark:text-gray-500">{{ bank.question_count }} 道题目</p>
+            <p class="mt-2 text-xs text-gray-400 dark:text-gray-500">
+              {{ bank.question_count }} 道题目<template v-if="incompleteSessionByBankId[bank.id]"> ｜ 已答 {{ incompleteSessionByBankId[bank.id].answered_count || 0 }}/{{ incompleteSessionByBankId[bank.id].total_questions || 0 }} ｜ {{ modeLabel(incompleteSessionByBankId[bank.id].mode) }}</template>
+            </p>
           </div>
-          <div class="flex gap-2 flex-wrap flex-shrink-0 items-start">
-            <div v-if="incompleteSessionByBankId[bank.id]" class="flex flex-col gap-1">
-              <BaseButton variant="primary" size="sm" @click="continueSession(incompleteSessionByBankId[bank.id])">
-                ▶ 继续答题
-              </BaseButton>
-              <span class="text-xs text-gray-500 dark:text-gray-400">
-                已答 {{ incompleteSessionByBankId[bank.id].answered_count || 0 }}/{{ incompleteSessionByBankId[bank.id].total_questions || 0 }}｜{{ modeLabel(incompleteSessionByBankId[bank.id].mode) }}
-              </span>
-            </div>
+          <div class="flex gap-2 flex-wrap flex-shrink-0">
+            <BaseButton v-if="incompleteSessionByBankId[bank.id]" variant="primary" size="sm" @click="continueSession(incompleteSessionByBankId[bank.id])">
+              ▶ 继续答题
+            </BaseButton>
             <BaseButton variant="primary" size="sm" @click="startQuiz(bank, 'sequential')" :disabled="bank.question_count === 0">
               ▶ 顺序练习
             </BaseButton>
@@ -243,10 +240,6 @@ function continueSession(session) {
   const sessionId = session?.id
   if (sessionId == null) return
   router.push(currentExamPath(route, 'quiz', { sessionId }))
-}
-
-function continueLastSession() {
-  continueSession(lastIncompleteSession.value)
 }
 
 function continueLastSession() {

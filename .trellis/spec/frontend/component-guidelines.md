@@ -177,3 +177,29 @@ async function handleClick() {
 ```
 
 真实示例：`frontend/src/views/HomeView.vue` 行105。
+
+视觉一致性的更高优先建议：**避免给单个按钮附加 wrapper subtitle**。当某个按钮需要附带状态/进度类信息时，首选把状态信息放进所在卡片的 micro-info 信息流（例如题库卡片左侧 `XX 道题目` 那一行末尾，用 `｜` 分隔追加），而不是在按钮下方挂 `<span>` 副标题。后者会让小字成为视觉孤儿，跟同组其他按钮无关联，并且强迫使用 wrapper 容器，引入按钮组高度对齐的次生问题。
+
+```vue
+<!-- Correct: 状态信息进卡片 micro-info 行，按钮组平级 -->
+<div class="min-w-0">
+  <h3>{{ bank.name }}</h3>
+  <p class="text-xs">
+    {{ bank.question_count }} 道题目<template v-if="incompleteSession"> ｜ 已答 {{ incompleteSession.answered_count }}/{{ incompleteSession.total_questions }} ｜ {{ modeLabel(incompleteSession.mode) }}</template>
+  </p>
+</div>
+<div class="flex gap-2 flex-wrap flex-shrink-0">
+  <BaseButton v-if="incompleteSession" size="sm">▶ 继续答题</BaseButton>
+  <BaseButton size="sm">▶ 顺序练习</BaseButton>
+  <BaseButton size="sm">🔀 随机练习</BaseButton>
+</div>
+
+<!-- Wrong: 按钮下方 wrapper subtitle，小字孤立 + 按钮组高度问题 -->
+<div class="flex gap-2 flex-wrap flex-shrink-0">
+  <div class="flex flex-col gap-1">
+    <BaseButton size="sm">▶ 继续答题</BaseButton>
+    <span class="text-xs">已答 5/30｜顺序练习</span>
+  </div>
+  <BaseButton size="sm">▶ 顺序练习</BaseButton>
+</div>
+```
