@@ -522,3 +522,140 @@ Separated imported parsing explanations from official AI explanation fields, add
 ### Next Steps
 
 - None - task complete
+
+
+## Session 16: UI fixes for resume quiz entry + trellis upgrade + branch sync
+
+**Date**: 2026-05-29
+**Task**: UI fixes for resume quiz entry + trellis upgrade + branch sync
+**Branch**: `feat/user-owned-exams-backend-foundation`
+
+### Summary
+
+本会话围绕首页题库卡片继续答题入口连续做了 4 轮 UI 收敛：(1) feat add per-bank resume quiz entry — 题库级继续答题入口落地，进度文案以按钮 wrapper subtitle 形式呈现；(2) fix icon consistency — 给继续答题按钮加 ▶ 前缀与同组按钮对齐；(3) fix button heights — 外层 flex 加 items-start 缓解 stretch 引起的高度问题；(4) refactor 进度文案位置 — 经 grill-with-docs 收敛后把进度信息挪到题库 micro-info 行末尾（XX 道题目 ｜ 已答 x/y ｜ 模式），wrapper 与小字彻底删除，按钮组真正平级等高。沉淀 spec：quality-guidelines.md 首页题库级继续答题入口前端契约明确进度信息位置 + 新 Bad case；component-guidelines.md 同组操作按钮视觉语言段追加 anti-pattern（避免按钮 wrapper subtitle）。配套工作：长期分支 ahead 30/behind 21 同步通过 reset+cherry-pick 7 个本会话 commits 解决；trellis 框架升级 v0.5.6 → v0.5.19（含 AGENTS.md 删 Subagents 段 + .gitignore 加根 storage/）；本地分支 merge origin/main 完成同步并修了一处 continueLastSession 重复定义的 merge artifact。已开 PR：#28（add per-bank entry，merged）、#29（icon + height，merged）、#30（trellis 升级 + 长期分支累积工作，merged）、#31（move progress info to bank meta line，open）。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `46e3b71` | (see git log) |
+| `e907093` | (see git log) |
+| `956e729` | (see git log) |
+| `a9d08cb` | (see git log) |
+| `f648f73` | (see git log) |
+| `050e69d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 17: Session record
+
+**Date**: 2026-05-29
+**Task**: Session record
+**Branch**: `feat/user-owned-exams-backend-foundation`
+
+### Summary
+
+会话结束，无活跃工作
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8d1c9af` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 18: Unify sequential quiz button style
+
+**Date**: 2026-05-29
+**Task**: Unify sequential quiz button style
+**Branch**: `feat/user-owned-exams-backend-foundation`
+
+### Summary
+
+Aligned the sequential quiz entry button with the random practice and exam button style on the dashboard.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6518414` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 19: Resolve PR 32 merge conflicts
+
+**Date**: 2026-05-29
+**Task**: Resolve PR 32 merge conflicts
+**Branch**: `feat/user-owned-exams-backend-foundation`
+
+### Summary
+
+Merged latest main into PR 32 branch and resolved the HomeView quiz button variant conflict while preserving the secondary sequential quiz style.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0265a8b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
