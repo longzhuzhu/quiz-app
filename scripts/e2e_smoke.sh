@@ -19,7 +19,7 @@ echo "bank_id=$BANK_ID"
 
 say "创建 3 道题（单选/多选/判断）"
 Q1=$(curl -s -X POST "$BASE/api/questions" "${AUTH[@]}" -d "{\"bank_id\":$BANK_ID,\"question_type\":\"single\",\"content\":\"What does PII stand for?\",\"options\":[{\"key\":\"A\",\"text\":\"Personally Identifiable Information\"},{\"key\":\"B\",\"text\":\"Private Internet Index\"}],\"correct_answer\":\"A\"}" | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
-Q2=$(curl -s -X POST "$BASE/api/questions" "${AUTH[@]}" -d "{\"bank_id\":$BANK_ID,\"question_type\":\"multiple\",\"content\":\"Which are privacy principles?\",\"options\":[{\"key\":\"A\",\"text\":\"Data minimization\"},{\"key\":\"B\",\"text\":\"Purpose limitation\"},{\"key\":\"C\",\"text\":\"Unlimited retention\"}],\"correct_answer\":\"AB\"}" | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
+Q2=$(curl -s -X POST "$BASE/api/questions" "${AUTH[@]}" -d "{\"bank_id\":$BANK_ID,\"question_type\":\"multiple\",\"content\":\"Which are privacy principles?\",\"options\":[{\"key\":\"A\",\"text\":\"Data minimization\"},{\"key\":\"B\",\"text\":\"Purpose limitation\"},{\"key\":\"C\",\"text\":\"Unlimited retention\"}],\"correct_answer\":\"A,B\"}" | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
 Q3=$(curl -s -X POST "$BASE/api/questions" "${AUTH[@]}" -d "{\"bank_id\":$BANK_ID,\"question_type\":\"truefalse\",\"content\":\"GDPR applies only in the US.\",\"options\":[{\"key\":\"T\",\"text\":\"True\"},{\"key\":\"F\",\"text\":\"False\"}],\"correct_answer\":\"F\"}" | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
 echo "questions: $Q1 $Q2 $Q3"
 
