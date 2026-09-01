@@ -29,12 +29,6 @@ DEFAULT_TRANSLATION_SYSTEM_PROMPT = (
     "只返回 JSON，不要其他内容。"
 )
 
-DEFAULT_EXPLANATION_SYSTEM_PROMPT = (
-    "你是专业考试辅导专家。请解析以下题目，说明正确答案的原因以及其他选项为什么不正确。"
-    '返回 JSON 格式：{"explanation": "英文解析", "explanation_zh": "中文解析"}'
-    "只返回 JSON，不要其他内容。"
-)
-
 CIPT_TRANSLATION_SYSTEM_PROMPT = (
     "你是一位专业的隐私技术领域翻译专家。请将以下 CIPT 考试题目从英文翻译为中文。"
     "保留技术缩写（如 GDPR、PII、DPO、DPIA 等）不翻译。"
@@ -42,11 +36,54 @@ CIPT_TRANSLATION_SYSTEM_PROMPT = (
     "只返回 JSON，不要其他内容。"
 )
 
-CIPT_EXPLANATION_SYSTEM_PROMPT = (
+# 干扰项类型封闭枚举。固定取值范围才能让不同题目的解析可比，
+# 考生也能据此积累"自己总是栽在哪一类干扰"的判断。
+EXPLANATION_DISTRACTOR_TYPES = (
+    "术语混淆",
+    "范围过窄",
+    "范围过宽",
+    "时机错误",
+    "层级错位",
+    "看似正确但非最优",
+    "与题干约束冲突",
+    "无关干扰",
+)
+
+# 题干限定词。读反限定词是高频错因，需要在解析中被显式点出来。
+EXPLANATION_STEM_QUALIFIERS = ("MOST", "BEST", "LEAST", "EXCEPT", "NOT", "PRIMARY", "FIRST")
+
+_EXPLANATION_JSON_SHAPE = (
+    '{"stem_breakdown": {"qualifier": "题干限定词", "role": "主体或视角", '
+    '"scenario": "场景概括", "constraint": "限定条件", "asked": "到底问什么"}, '
+    '"explanation": "英文解析", "explanation_zh": "中文知识点解析", '
+    '"distractors": [{"key": "A", "type": "干扰项类型", "reason": "为什么错"}]}'
+)
+
+
+def _build_explanation_system_prompt(persona: str) -> str:
+    return (
+        persona
+        + "考生母语为中文、正在备考全英文考试，除知识点之外还需要读题训练。请完成三件事："
+        "一是拆解题干结构，让考生看清题目到底在问什么；"
+        "二是解析正确答案的原理；"
+        "三是逐个说明错误选项属于哪一类干扰、为什么错。"
+        "stem_breakdown 字段要求："
+        f"qualifier 只填题干中实际出现的限定词（{'/'.join(EXPLANATION_STEM_QUALIFIERS)} 等），没有则填空字符串；"
+        "role 填题干的主体或视角；scenario 用一句话概括发生了什么；"
+        "constraint 填题干给出的限定条件（法规、技术、数据生命周期阶段等），没有则填空字符串；"
+        "asked 用一句中文说清到底问什么，并点明限定词的含义。"
+        "distractors 只包含错误选项，不包含正确答案；"
+        f"type 必须从以下枚举中选一个：{'、'.join(EXPLANATION_DISTRACTOR_TYPES)}。"
+        "explanation_zh 只写正确答案的原理和相关知识点，不要重复题干拆解和干扰项分析的内容。"
+        f"返回 JSON 格式：{_EXPLANATION_JSON_SHAPE}"
+        "只返回 JSON，不要其他内容。"
+    )
+
+
+DEFAULT_EXPLANATION_SYSTEM_PROMPT = _build_explanation_system_prompt("你是专业考试辅导专家。")
+
+CIPT_EXPLANATION_SYSTEM_PROMPT = _build_explanation_system_prompt(
     "你是一位 CIPT（认证信息隐私技术师）考试辅导专家。"
-    "请解析以下题目，说明正确答案的原因以及其他选项为什么不正确。"
-    '返回 JSON 格式：{"explanation": "英文解析", "explanation_zh": "中文解析"}'
-    "只返回 JSON，不要其他内容。"
 )
 
 DEFAULT_AI_PROFILE = {
