@@ -11,6 +11,19 @@ from app.services.exam_service import DEFAULT_EXPLANATION_SYSTEM_PROMPT, DEFAULT
 from app.services.settings_service import get_effective_ai_settings, validate_ai_base_url
 
 
+SECTION_STEM_BREAKDOWN = "【题干拆解】"
+SECTION_ANSWER_ANALYSIS = "【知识点解析】"
+SECTION_DISTRACTORS = "【干扰项分析】"
+
+STEM_BREAKDOWN_LABELS = (
+    ("qualifier", "限定词"),
+    ("role", "角色"),
+    ("scenario", "场景"),
+    ("constraint", "约束"),
+    ("asked", "问的是什么"),
+)
+
+
 def _load_options(question: Question) -> list:
     options = question.options
     if isinstance(options, str):
@@ -276,6 +289,71 @@ def batch_translate_terms(terms_data, db=None) -> list:
     return json.loads(result_text)
 
 
+def _clean_text(value) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    # LLM 偶尔把选项 key 返回成数字；bool 是 int 子类，必须排除
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    return ""
+
+
+def _render_stem_breakdown(breakdown) -> str:
+    if not isinstance(breakdown, dict):
+        return ""
+    lines = [
+        f"{label}：{text}"
+        for key, label in STEM_BREAKDOWN_LABELS
+        if (text := _clean_text(breakdown.get(key)))
+    ]
+    if not lines:
+        return ""
+    return "\n".join([SECTION_STEM_BREAKDOWN, *lines])
+
+
+def _render_distractors(distractors) -> str:
+    if not isinstance(distractors, list):
+        return ""
+    lines = []
+    for item in distractors:
+        if not isinstance(item, dict):
+            continue
+        key = _clean_text(item.get("key"))
+        distractor_type = _clean_text(item.get("type"))
+        reason = _clean_text(item.get("reason"))
+        head = f"{key}（{distractor_type}）" if key and distractor_type else key or distractor_type
+        if not head and not reason:
+            continue
+        lines.append(f"{head}：{reason}" if head and reason else head or reason)
+    if not lines:
+        return ""
+    return "\n".join([SECTION_DISTRACTORS, *lines])
+
+
+def compose_explanation_zh(result: dict) -> str:
+    """把 LLM 返回的结构化解析组装成分段中文文本。
+
+    版式由服务端控制而不是让 LLM 自己拼，输出才稳定。
+    ``stem_breakdown`` 和 ``distractors`` 都缺失时（自定义 prompt 仍返回旧的
+    两键结构），原样返回 ``explanation_zh``，保持改动前的行为。
+    """
+    answer_analysis = _clean_text(result.get("explanation_zh"))
+    stem_breakdown = _render_stem_breakdown(result.get("stem_breakdown"))
+    distractors = _render_distractors(result.get("distractors"))
+
+    if not stem_breakdown and not distractors:
+        return answer_analysis
+
+    sections = []
+    if stem_breakdown:
+        sections.append(stem_breakdown)
+    if answer_analysis:
+        sections.append(f"{SECTION_ANSWER_ANALYSIS}\n{answer_analysis}")
+    if distractors:
+        sections.append(distractors)
+    return "\n\n".join(sections)
+
+
 def explain_question(db, question: Question) -> dict:
     options = _load_options(question)
     options_text = "\n".join([f"{o['key']}. {o['text']}" for o in options])
@@ -295,8 +373,13 @@ def explain_question(db, question: Question) -> dict:
     result_text = _strip_code_fence(call_ai_api(messages, db, scene="explain"))
     result = json.loads(result_text)
 
-    question.explanation = result["explanation"]
-    question.explanation_zh = result["explanation_zh"]
+    explanation = _clean_text(result.get("explanation"))
+    explanation_zh = compose_explanation_zh(result)
+    if not explanation and not explanation_zh:
+        raise ValueError("AI 未返回解析内容")
+
+    question.explanation = explanation or None
+    question.explanation_zh = explanation_zh or None
     db.commit()
 
     return build_question_explanation_payload(question)

@@ -659,3 +659,36 @@ Merged latest main into PR 32 branch and resolved the HomeView quiz button varia
 ### Next Steps
 
 - None - task complete
+
+
+## Session 20: 改进 AI 解析 prompt：输出题干结构拆解与干扰项类型
+
+**Date**: 2026-09-01
+**Task**: 改进 AI 解析 prompt：输出题干结构拆解与干扰项类型
+**Branch**: `cursor/structured-ai-explanation-prompt-3106`
+
+### Summary
+
+解析 prompt 新增 stem_breakdown（限定词/角色/场景/约束/问什么）与 distractors（8 类封闭枚举）两个可选字段；版式由服务端 compose_explanation_zh() 固定而非交给 LLM；结构化字段缺失时原样透传，自定义 prompt 向后兼容。关键坑：migration 003 已把旧 prompt 硬编码进 exams.ai_profile，取值模式 get(key) or DEFAULT 让存量行永远走不到默认值分支，只改常量无效，故补 migration 004 按字面量精确匹配升级；并加 tripwire 测试锁住迁移与常量的一致性。已沉淀到 spec/backend/database-guidelines.md。PR #34。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f6fd18c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
