@@ -324,11 +324,23 @@ def history(
 ):
     user_id = current_user.id
     offset = (page - 1) * per_page
+    last_answered = (
+        db.query(
+            QuizAnswer.session_id.label("session_id"),
+            func.max(QuizAnswer.answered_at).label("last_answered_at"),
+        )
+        .group_by(QuizAnswer.session_id)
+        .subquery()
+    )
     query = (
         db.query(QuizSession)
         .join(QuestionBank, QuizSession.bank_id == QuestionBank.id)
+        .outerjoin(last_answered, QuizSession.id == last_answered.c.session_id)
         .filter(QuizSession.user_id == user_id, QuestionBank.exam_id == exam.id)
-        .order_by(QuizSession.created_at.desc())
+        .order_by(
+            func.coalesce(last_answered.c.last_answered_at, QuizSession.created_at).desc(),
+            QuizSession.id.desc(),
+        )
     )
     total = query.count()
     sessions = query.offset(offset).limit(per_page).all()
