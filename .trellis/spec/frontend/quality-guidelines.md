@@ -190,6 +190,8 @@ current.value = switchRes.data?.active_exam || null
 
 全局入口和题库级入口必须复用同一批历史数据；全局入口仍取历史列表中第一个未完成且非 `wrong_practice` 的会话。
 
+`/quiz/history` 必须按最近实际答题活动排序：使用会话内 `QuizAnswer.answered_at` 最大值作为主排序值，没有答题记录时回退到 `QuizSession.created_at`，并加稳定 tie-breaker。不要只按 `QuizSession.created_at` 排序，否则用户继续一个较早创建的题库会话后，首页“继续上次答题”仍会显示较新创建但最近未答的旧会话。
+
 题库级会话的进度信息（`已答 x/y` + 模式名）**显示在题库 micro-info 行末尾**，跟 `XX 道题目` 用 `｜` 分隔为三段（`XX 道题目 ｜ 已答 x/y ｜ 模式`），**不挂在"继续答题"按钮下方做 wrapper subtitle**——避免按钮组下沿不齐与小字视觉孤立。"继续答题"按钮跟"顺序练习 / 随机练习 / 模拟考试"在按钮组中平级排列，4 个按钮自然等高。
 
 ### 4. Validation & Error Matrix
