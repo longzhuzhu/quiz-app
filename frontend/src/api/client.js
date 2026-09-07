@@ -55,10 +55,10 @@ client.interceptors.response.use(
     )
 
     if (status === 401 || isInvalidToken) {
-      localStorage.removeItem('token')
-      localStorage.removeItem('user')
-      import('../stores/exam').then(({ useExamStore }) => useExamStore().reset())
-      router.push('/login')
+      import('../stores/auth').then(({ useAuthStore }) => useAuthStore().logout())
+      if (router.currentRoute.value.path !== '/login') {
+        router.push('/login')
+      }
     }
     return Promise.reject(err)
   }
