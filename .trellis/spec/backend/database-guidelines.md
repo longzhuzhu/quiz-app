@@ -223,6 +223,38 @@ db.commit()  # 整字段重新赋值，发出 UPDATE
 
 ---
 
+## JSONB 配置快照：改代码常量对存量行无效
+
+迁移把代码里的默认配置**硬编码写入** JSONB 列后，该列就是一份独立快照。取值形如
+`profile.get(key) or DEFAULT_CONST` 时，存量行的 key 非空，`or` 分支永远走不到，
+**只改 Python 常量对存量数据完全没有效果**——新建的行用新默认值，存量行停在旧值，两边行为分叉。
+
+典型例子：`migration 003` 把当时的 `explanation_system_prompt` 写进 `exams.ai_profile`，
+`ai_service._exam_ai_profile()` 按上述模式取值。
+
+```python
+# Wrong：只改常量就以为生效了
+DEFAULT_EXPLANATION_SYSTEM_PROMPT = "...新 prompt..."
+
+# Correct：常量 + 配套迁移，只升级从未被用户改动过的行
+UPDATE exams
+SET ai_profile = jsonb_set(ai_profile, '{explanation_system_prompt}',
+                           to_jsonb(CAST(:new_prompt AS text)), true)
+WHERE ai_profile->>'explanation_system_prompt' = :old_prompt   -- 逐字节相等才替换
+```
+
+约定：
+
+- 迁移只在存储值与**旧默认值逐字节相等**时替换，用户自定义过的配置一律不动。
+- 迁移里的旧值字面量必须与写入它的那个迁移完全一致；差一个字符 `WHERE` 就匹配不到任何行，
+  迁移静默无效。用测试锁住两个迁移文件之间的字面量相等。
+- 再用一个测试断言新迁移的新值 == 当前代码常量。它是一个 tripwire：以后有人改了常量却没补迁移，
+  测试会失败并提示补迁移（参见 `backend/tests/test_explanation_prompt_structure.py`）。
+- 如果这份配置的产物被缓存到别的列（如 `Question.explanation`），换默认值后还要清缓存才能看到新行为，
+  否则命中缓存就不会重算。
+
+---
+
 ## JSONB on SQLite（仅测试用）
 
 测试场景下用 in-memory SQLite 跑真 ORM（避免 fixture 走 mock 失真），但 `JSONB` 是 PostgreSQL 专属类型，SQLite 无法识别。约定通过 `@compiles(JSONB, "sqlite")` 钩子把 JSONB 编译成 SQLite 的 `JSON`，**仅作用于该测试文件，不污染生产模型**：
