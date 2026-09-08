@@ -27,9 +27,13 @@ def process_one_job(worker_id: str = DEFAULT_WORKER_ID) -> bool:
             return False
 
         try:
-            run_job(db, job)
+            # handler 可以返回一段收尾说明（如「部分批次跳过」），没有则用默认文案
+            completion_message = run_job(db, job)
             job = db.get(type(job), job.id)
-            job_service.complete_job(db, job)
+            if completion_message:
+                job_service.complete_job(db, job, completion_message)
+            else:
+                job_service.complete_job(db, job)
         except Exception as exc:
             db.rollback()
             job = db.get(type(job), job.id)

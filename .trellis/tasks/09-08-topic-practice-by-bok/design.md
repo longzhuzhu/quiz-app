@@ -162,6 +162,20 @@ HomeView 题库卡片「🎯 专项练习」
 - **重试会重复处理「AI 判不准」的题**：这些题没有关联行，无法与「从没处理过」区分，重试时会被再次提交给 AI 并二次计数，`progress_done` 超出实际题数。改为每次尝试开始时把计数归零、`progress_total` 重设为当次快照大小。
 - **租约窗口不足**：单批 AI 调用最长 120s，租约 180s，而续租只发生在批次结束后。慢响应时任务可能被另一个 worker 判为陈旧抢走并重复打标。改为批次开始前也续一次租约。
 
+## 迁移撞号（合并 main 时发现）
+
+本分支的 `exam_topics` 迁移原本编号 004，而 main 上已有 `004_structured_explanation_prompt`，两者都 `revises 003`。git 合并干净，但 alembic 会出现两个 head，`upgrade head` 直接失败。已改号为 005 并 revises 004。
+
+**已执行过旧 004 的数据库需要手工修版本记录**，否则 main 的 004 会因版本号相同被当成已执行而永远跳过（实测 CIPT 项目的解析 prompt 一直停在旧版）：
+
+```bash
+alembic stamp 003      # 退回到两个 004 之前
+alembic upgrade 004    # 跑 main 的解析 prompt 数据迁移
+alembic stamp 005      # 本分支的表结构已存在，只补记录，不重跑
+```
+
+教训：**不要在生产库上跑 `downgrade` 做往返验证**。005 的 downgrade 会 drop `exam_topics` 和 `question_topics`，一次这样的验证清掉了已灌入的 21 条考点和 269 条打标关联，考点树能用脚本重灌，打标关联只能重跑 AI。往返验证应该在一次性的临时库上做。
+
 ## 部署注意
 
 新增 job type 后，**必须重启 worker 服务**（`sudo systemctl restart quiz-app-worker`），否则运行中的旧 worker 会认领任务并抛「不支持的任务类型」，重试三次后把任务判死。实测过这个失败路径。
