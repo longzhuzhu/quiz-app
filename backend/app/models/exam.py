@@ -37,6 +37,9 @@ class Exam(Base):
     owner = relationship("User", back_populates="owned_exams", foreign_keys=[owner_id])
     banks = relationship("QuestionBank", back_populates="exam", lazy="dynamic")
     vocabularies = relationship("Vocabulary", back_populates="exam", lazy="dynamic")
+    topics = relationship(
+        "ExamTopic", back_populates="exam", lazy="dynamic", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         UniqueConstraint("owner_id", "slug", name="uq_exams_owner_slug"),

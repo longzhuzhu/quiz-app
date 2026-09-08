@@ -74,7 +74,7 @@
             {{ lastIncompleteSession.bank_name || '未知题库' }}
           </h2>
           <div class="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-sm text-gray-500 dark:text-gray-400">
-            <span>{{ modeLabel(lastIncompleteSession.mode) }}</span>
+            <span>{{ sessionModeLabel(lastIncompleteSession) }}</span>
             <span>进度：{{ lastIncompleteSession.answered_count || 0 }}/{{ lastIncompleteSession.total_questions || 0 }}</span>
             <span>正确率：{{ sessionAccuracy(lastIncompleteSession) }}%</span>
             <span>开始：{{ formatSessionDate(lastIncompleteSession.created_at) }}</span>
@@ -101,7 +101,7 @@
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ bank.name }}</h3>
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ bank.description || '暂无描述' }}</p>
             <p class="mt-2 text-xs text-gray-400 dark:text-gray-500">
-              {{ bank.question_count }} 道题目<template v-if="incompleteSessionByBankId[bank.id]"> ｜ 已答 {{ incompleteSessionByBankId[bank.id].answered_count || 0 }}/{{ incompleteSessionByBankId[bank.id].total_questions || 0 }} ｜ {{ modeLabel(incompleteSessionByBankId[bank.id].mode) }}</template>
+              {{ bank.question_count }} 道题目<template v-if="incompleteSessionByBankId[bank.id]"> ｜ 已答 {{ incompleteSessionByBankId[bank.id].answered_count || 0 }}/{{ incompleteSessionByBankId[bank.id].total_questions || 0 }} ｜ {{ sessionModeLabel(incompleteSessionByBankId[bank.id]) }}</template>
             </p>
           </div>
           <div class="flex gap-2 flex-wrap flex-shrink-0">
@@ -114,6 +114,9 @@
             <BaseButton variant="secondary" size="sm" @click="startQuiz(bank, 'random')" :disabled="bank.question_count === 0">
               🔀 随机练习
             </BaseButton>
+            <BaseButton variant="secondary" size="sm" @click="openTopicModal(bank)" :disabled="bank.question_count === 0">
+              🎯 专项练习
+            </BaseButton>
             <BaseButton variant="secondary" size="sm" @click="openExamModal(bank)" :disabled="bank.question_count === 0">
               📝 模拟考试
             </BaseButton>
@@ -121,6 +124,41 @@
         </div>
       </div>
     </div>
+
+    <!-- 专项练习考点选择弹窗 -->
+    <BaseModal :open="showTopicModal" title="选择专项考点" @close="showTopicModal = false">
+      <div v-if="topicsLoading" class="py-6">
+        <SkeletonLoader type="text" :count="3" />
+      </div>
+      <p v-else-if="topicOptions.length === 0" class="py-6 text-center text-sm text-gray-500 dark:text-gray-400">
+        该题库所在的考试项目还没有考点，请管理员先灌入考点大纲。
+      </p>
+      <div v-else class="space-y-2">
+        <button
+          v-for="option in topicOptions"
+          :key="option.key"
+          type="button"
+          :disabled="option.question_count === 0"
+          class="w-full rounded-lg border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 enabled:hover:border-primary-500 enabled:hover:bg-primary-50 dark:enabled:hover:bg-primary-900/20"
+          :class="option.key === selectedTopicKey
+            ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
+            : 'border-gray-200 dark:border-slate-600'"
+          @click="selectedTopicKey = option.key"
+        >
+          <div class="font-medium text-gray-900 dark:text-white">{{ option.label }}</div>
+          <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            <span v-if="option.blueprint_max">考试占 {{ option.blueprint_min }}–{{ option.blueprint_max }} 题 · </span>
+            本库 {{ option.question_count }} 题
+          </div>
+        </button>
+      </div>
+      <template #actions>
+        <BaseButton variant="secondary" @click="showTopicModal = false">取消</BaseButton>
+        <BaseButton variant="primary" :disabled="!selectedTopicOption" @click="startTopicQuiz">
+          开始练习
+        </BaseButton>
+      </template>
+    </BaseModal>
 
     <!-- 模拟考试设置弹窗 -->
     <BaseModal :open="showExamModal" title="模拟考试设置" @close="showExamModal = false">
@@ -146,12 +184,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useBankStore } from '../stores/bank'
 import { useQuizStore } from '../stores/quiz'
 import { useExamStore } from '../stores/exam'
 import { currentExamPath } from '../utils/examRoutes'
+import { sessionModeLabel } from '../utils/quizMode'
 import { useToast } from '../composables/useToast'
 import client from '../api/client'
 import BaseButton from '../components/BaseButton.vue'
@@ -173,13 +212,30 @@ const incompleteSessionByBankId = ref({})
 const showExamModal = ref(false)
 const examBank = ref(null)
 const examQuestionCount = ref(90)
+const showTopicModal = ref(false)
+const topicBank = ref(null)
+const topicOptions = ref([])
+const topicsLoading = ref(false)
+const selectedTopicKey = ref(null)
+
+const UNCLASSIFIED_TOPIC_KEY = '__unclassified__'
 
 const banks = computed(() => bankStore.banks)
 const loading = computed(() => bankStore.loading)
 const totalQuestions = computed(() => banks.value.reduce((s, b) => s + b.question_count, 0))
+const selectedTopicOption = computed(
+  () => topicOptions.value.find(o => o.key === selectedTopicKey.value) || null
+)
 const quizHistoryPerPage = 100
 
-onMounted(async () => {
+onMounted(fetchDashboardData)
+
+watch(() => route.params.examSlug, fetchDashboardData)
+
+async function fetchDashboardData() {
+  lastIncompleteSession.value = null
+  incompleteSessionByBankId.value = {}
+
   const bankP = bankStore.fetchBanks().catch((e) => {
     toast.error(e.response?.data?.error || '获取题库失败')
   })
@@ -196,16 +252,55 @@ onMounted(async () => {
     incompleteSessionByBankId.value = {}
   })
   await Promise.allSettled([bankP, wrongP, accP, lastSessionP])
-})
+}
 
-function modeLabel(mode) {
-  const labels = {
-    sequential: '顺序练习',
-    random: '随机练习',
-    exam: '模拟考试',
-    wrong_practice: '错题练习',
+async function openTopicModal(bank) {
+  topicBank.value = bank
+  topicOptions.value = []
+  selectedTopicKey.value = null
+  topicsLoading.value = true
+  showTopicModal.value = true
+
+  try {
+    const res = await client.get(`/banks/${bank.id}/topics`)
+    const domains = (res.data?.topics || []).map(topic => ({
+      key: String(topic.id),
+      topic_id: topic.id,
+      label: `${topic.code}. ${topic.short_name_zh}`,
+      blueprint_min: topic.blueprint_min,
+      blueprint_max: topic.blueprint_max,
+      question_count: topic.question_count,
+    }))
+    // 未分类始终列出：题数为 0 时显示为不可选，让用户知道全部题目都已归类
+    domains.push({
+      key: UNCLASSIFIED_TOPIC_KEY,
+      topic_id: null,
+      label: '未分类',
+      blueprint_min: 0,
+      blueprint_max: 0,
+      question_count: res.data?.unclassified_count || 0,
+    })
+    topicOptions.value = domains
+    selectedTopicKey.value = domains.find(o => o.question_count > 0)?.key || null
+  } catch (e) {
+    toast.error(e.response?.data?.detail || '获取考点失败')
+    showTopicModal.value = false
+  } finally {
+    topicsLoading.value = false
   }
-  return labels[mode] || '练习'
+}
+
+async function startTopicQuiz() {
+  const option = selectedTopicOption.value
+  if (!option) return
+
+  showTopicModal.value = false
+  try {
+    await quizStore.startQuiz(topicBank.value.id, 'topic', null, option.topic_id)
+    router.push(currentExamPath(route, 'quiz', { sessionId: quizStore.session.id }))
+  } catch (e) {
+    toast.error(e.response?.data?.detail || '开始专项练习失败')
+  }
 }
 
 function sessionAccuracy(session) {

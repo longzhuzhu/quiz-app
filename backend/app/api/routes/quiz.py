@@ -6,11 +6,12 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_current_user, get_exam_context
 from app.core.database import get_db
 from app.models.exam import Exam
+from app.models.exam_topic import ExamTopic, TOPIC_LEVEL_DOMAIN
 from app.models.question import Question
 from app.models.question_bank import QuestionBank
 from app.models.quiz import QuizSession, QuizAnswer
@@ -18,6 +19,10 @@ from app.models.wrong import WrongAnswer, UserQuestionStat
 from app.models.user import User
 from app.schemas.quiz import QuizStartRequest, QuizAnswerRequest, QuizFinishRequest
 from app.services.exam_service import get_bank_in_exam_or_404
+from app.services.topic_service import (
+    list_question_ids_for_domain,
+    list_unclassified_question_ids,
+)
 
 router = APIRouter()
 
@@ -87,6 +92,22 @@ def _ensure_session_in_exam(session: QuizSession, exam: Exam) -> None:
         raise HTTPException(status_code=404, detail="答题会话不存在")
 
 
+def _resolve_topic_scope(
+    db: Session, exam: Exam, bank: QuestionBank, topic_id: int | None
+) -> tuple[ExamTopic | None, list[int]]:
+    """解析专项练习的出题范围。
+
+    topic_id 为空表示练未分类题目，此时不关联任何考点。
+    """
+    if topic_id is None:
+        return None, list_unclassified_question_ids(db, bank.id)
+
+    topic = db.get(ExamTopic, topic_id)
+    if not topic or topic.exam_id != exam.id or topic.level != TOPIC_LEVEL_DOMAIN:
+        raise HTTPException(status_code=404, detail="考点不存在")
+    return topic, list_question_ids_for_domain(db, bank.id, topic.id)
+
+
 def _compute_resume_index(question_ids: list[int], answers: list[QuizAnswer]) -> int:
     """根据最近一次答题位置计算未完成会话恢复索引。"""
     if not question_ids:
@@ -127,8 +148,14 @@ def start_quiz(
     is_exam = mode == "exam"
     bank = get_bank_in_exam_or_404(db, bank_id, exam)
 
+    topic = None
     query = db.query(Question).filter_by(bank_id=bank.id)
-    if mode in ("random", "exam"):
+    if mode == "topic":
+        topic, topic_question_ids = _resolve_topic_scope(db, exam, bank, data.topic_id)
+        if not topic_question_ids:
+            raise HTTPException(status_code=400, detail="该考点下没有题目")
+        query = query.filter(Question.id.in_(topic_question_ids)).order_by(func.random())
+    elif mode in ("random", "exam"):
         query = query.order_by(func.random())
     else:
         query = query.order_by(Question.order_index)
@@ -144,6 +171,7 @@ def start_quiz(
         user_id=user_id,
         bank_id=bank_id,
         mode=mode,
+        topic_id=topic.id if topic else None,
         total_questions=len(questions),
         question_ids=json.dumps([q.id for q in questions]),
     )
@@ -174,6 +202,7 @@ def start_quiz(
             "id": session.id,
             "bank_id": session.bank_id,
             "mode": session.mode,
+            "topic_short_name": topic.short_name_zh if topic else None,
             "total_questions": session.total_questions,
         },
         "questions": questions_out,
@@ -336,6 +365,8 @@ def history(
         db.query(QuizSession)
         .join(QuestionBank, QuizSession.bank_id == QuestionBank.id)
         .outerjoin(last_answered, QuizSession.id == last_answered.c.session_id)
+        # bank / topic 都是多对一，预加载避免逐行序列化时按会话数发懒加载查询
+        .options(joinedload(QuizSession.bank), joinedload(QuizSession.topic))
         .filter(QuizSession.user_id == user_id, QuestionBank.exam_id == exam.id)
         .order_by(
             func.coalesce(last_answered.c.last_answered_at, QuizSession.created_at).desc(),
@@ -354,6 +385,7 @@ def history(
             "bank_id": s.bank_id,
             "bank_name": bank_name,
             "mode": s.mode,
+            "topic_short_name": s.topic.short_name_zh if s.topic else None,
             "total_questions": s.total_questions,
             "answered_count": s.answered_count,
             "correct_count": s.correct_count,
@@ -498,6 +530,7 @@ def session_detail(
             "bank_id": session.bank_id,
             "bank_name": session.bank.name if session.bank else "",
             "mode": session.mode,
+            "topic_short_name": session.topic.short_name_zh if session.topic else None,
             "total_questions": session.total_questions,
             "answered_count": session.answered_count,
             "correct_count": session.correct_count,

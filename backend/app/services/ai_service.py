@@ -31,7 +31,7 @@ def _load_options(question: Question) -> list:
     return options
 
 
-def _strip_code_fence(text: str) -> str:
+def strip_code_fence(text: str) -> str:
     text = text.strip()
     if text.startswith("```"):
         text = text.split("\n", 1)[1]
@@ -162,7 +162,7 @@ def translate_question(db, question: Question) -> dict:
         },
     ]
 
-    result_text = _strip_code_fence(call_ai_api(messages, db, scene="translate"))
+    result_text = strip_code_fence(call_ai_api(messages, db, scene="translate"))
     result = json.loads(result_text)
 
     question.content_zh = result["content_zh"]
@@ -230,7 +230,7 @@ def translate_term(term: str, db=None) -> dict:
         raise ValueError(f"AI API 错误: {resp.status_code}")
 
     result_text = resp.json()["choices"][0]["message"]["content"]
-    result_text = _strip_code_fence(result_text)
+    result_text = strip_code_fence(result_text)
     return json.loads(result_text)
 
 
@@ -370,7 +370,7 @@ def explain_question(db, question: Question) -> dict:
         },
     ]
 
-    result_text = _strip_code_fence(call_ai_api(messages, db, scene="explain"))
+    result_text = strip_code_fence(call_ai_api(messages, db, scene="explain"))
     result = json.loads(result_text)
 
     explanation = _clean_text(result.get("explanation"))

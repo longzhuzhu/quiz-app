@@ -4,6 +4,8 @@ from app.models.user import User
 from app.models.exam import Exam
 from app.models.question_bank import QuestionBank
 from app.models.question import Question
+from app.models.exam_topic import ExamTopic
+from app.models.question_topic import QuestionTopic
 from app.models.quiz import QuizSession, QuizAnswer
 from app.models.wrong import WrongAnswer, UserQuestionStat
 from app.models.vocabulary import Vocabulary, UserVocabProgress
@@ -22,6 +24,8 @@ __all__ = [
     "Exam",
     "QuestionBank",
     "Question",
+    "ExamTopic",
+    "QuestionTopic",
     "QuizSession",
     "QuizAnswer",
     "WrongAnswer",

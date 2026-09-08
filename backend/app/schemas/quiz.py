@@ -9,6 +9,8 @@ class QuizStartRequest(BaseModel):
     bank_id: int
     mode: str = "sequential"
     question_count: int | None = None
+    # 仅 mode="topic" 使用：所练的一级考点；为空表示练未分类题目
+    topic_id: int | None = None
 
 
 class QuizAnswerRequest(BaseModel):
@@ -38,6 +40,7 @@ class QuizSessionOut(BaseModel):
     bank_id: int
     bank_name: str | None = None
     mode: str
+    topic_short_name: str | None = None
     total_questions: int
     answered_count: int = 0
     correct_count: int = 0
@@ -78,6 +81,7 @@ class HistoryItemOut(BaseModel):
     bank_id: int
     bank_name: str
     mode: str
+    topic_short_name: str | None = None
     total_questions: int
     answered_count: int
     correct_count: int

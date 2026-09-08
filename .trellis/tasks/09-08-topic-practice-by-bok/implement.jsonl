@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/09-08-topic-practice-by-bok/research/bok-4.0.0-taxonomy.md", "reason": "考点树的权威数据源：5 域 16 能力项的 code、中英名称、考试出题配额。灌入模板 cipt-bok-4.0.0.json 必须逐条对照本文件，英文原文不得改写"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "新增 exam_topics / question_topics 两张表、quiz_sessions 加列、Alembic 004 迁移，需遵循本项目的建模与迁移约定"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "新增 models/exam_topic.py、services/topic_tagging_service.py、data/topic_templates/、scripts/seed_exam_topics.py，需放在约定位置"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "AI 打标要处理响应解析失败、非法 code、后台任务重试，需遵循统一的异常与错误返回约定"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "批量打标是长任务，进度与跳过项的日志需符合项目规范"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "HomeView 新增专项练习按钮与考点选择弹窗，复用 BaseButton / BaseModal，需遵循组件约定"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "quiz store 的 startQuiz 需透传 topic_id，需遵循 Pinia store 约定"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本功能横跨迁移、模型、服务、后台任务、API、store、视图，属典型跨层改动"}

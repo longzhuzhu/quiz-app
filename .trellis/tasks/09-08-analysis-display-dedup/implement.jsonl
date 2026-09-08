@@ -1,0 +1,4 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "遵循 Vue script setup、Props/Emits 与智能组件模式"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "遵循纯 JavaScript 响应式状态与可选链约定"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "保持 ExplainButton 错误处理和 AI 预热点击语义"}

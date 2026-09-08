@@ -44,7 +44,7 @@ const props = defineProps({
 })
 
 const baseClasses =
-  'rounded-button font-medium transition-all duration-150 inline-flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed'
+  'rounded-button font-medium transition-all duration-150 inline-flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed active:scale-95'
 
 const variantMap = {
   primary: 'bg-primary-600 text-white hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600',

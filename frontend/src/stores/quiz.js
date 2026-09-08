@@ -7,11 +7,12 @@ export const useQuizStore = defineStore('quiz', () => {
   const questions = ref([])
   const currentIndex = ref(0)
 
-  async function startQuiz(bankId, mode, questionCount) {
+  async function startQuiz(bankId, mode, questionCount, topicId = null) {
     const res = await client.post('/quiz/start', {
       bank_id: bankId,
       mode,
       question_count: questionCount,
+      topic_id: topicId,
     })
     session.value = res.data.session
     questions.value = res.data.questions

@@ -40,7 +40,7 @@
           <div class="flex-1 min-w-0">
             <p class="font-medium text-gray-900 dark:text-white truncate">{{ s.bank_name }}</p>
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              {{ s.mode === 'sequential' ? '顺序' : s.mode === 'random' ? '随机' : '错题' }}练习
+              {{ sessionModeLabel(s) }}
               · {{ new Date(s.created_at).toLocaleDateString('zh-CN') }}
             </p>
           </div>
@@ -92,6 +92,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import client from '../api/client'
 import { currentExamPath } from '../utils/examRoutes'
+import { sessionModeLabel } from '../utils/quizMode'
 import BaseButton from '../components/BaseButton.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import SkeletonLoader from '../components/SkeletonLoader.vue'

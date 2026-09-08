@@ -4,6 +4,7 @@
 """
 
 import json
+import logging
 
 from app.models.bank_word import BankWordFrequency
 from app.models.question import Question
@@ -20,14 +21,23 @@ from app.services.job_service import (
     JOB_TYPE_BANK_FREQUENT_TRANSLATE,
     JOB_TYPE_QUESTION_IMPORT_LLM,
     JOB_TYPE_QUESTION_IMPORT_LLM_REPARSE,
+    JOB_TYPE_QUESTION_TOPIC_TAG,
     deserialize_job_payload,
     heartbeat_job,
     list_bank_frequent_terms,
     text_missing,
 )
 from app.services.settings_service import is_quiz_ai_prewarm_enabled
+from app.services.topic_tagging_service import (
+    TAGGING_BATCH_SIZE,
+    list_untagged_question_ids,
+    load_competencies,
+    tag_question_batch,
+)
 
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 BANK_FREQUENT_BATCH_SIZE = 100
 
@@ -42,6 +52,8 @@ def run_job(db: Session, job) -> None:
         return handle_question_import_llm(db, job)
     if job.job_type == JOB_TYPE_QUESTION_IMPORT_LLM_REPARSE:
         return handle_question_import_llm_reparse(db, job)
+    if job.job_type == JOB_TYPE_QUESTION_TOPIC_TAG:
+        return handle_question_topic_tag(db, job)
     raise ValueError(f"不支持的任务类型: {job.job_type}")
 
 
@@ -115,6 +127,73 @@ def handle_bank_frequent_translate(db: Session, job) -> None:
             status_message=f"高频词翻译中，已处理 {next_done}/{job.progress_total}",
         )
         job = db.get(type(job), job.id)
+
+
+def handle_question_topic_tag(db: Session, job) -> str | None:
+    """给题库中尚未 AI 打标的题目批量归类到考点"""
+    payload = deserialize_job_payload(job)
+    bank_id = payload.get("bank_id")
+    exam_id = payload.get("exam_id")
+    if bank_id is None or exam_id is None:
+        raise ValueError("question_topic_tag 缺少 bank_id 或 exam_id")
+
+    competencies = load_competencies(db, exam_id)
+    if not competencies:
+        return "该考试项目尚未灌入考点，跳过打标"
+
+    # 一次性取待打标 id 快照后按批推进：判不准的题不会写入关联，
+    # 若每轮重新查询未打标题目，这些题会被反复取到形成死循环。
+    pending_ids = list_untagged_question_ids(db, bank_id)
+
+    # 计数按「本次尝试」归零：重试时判不准的题会重新进入快照，
+    # 沿用上次尝试的累计值会让 progress_done 超过实际题数。
+    job = db.get(type(job), job.id)
+    job.success_count = 0
+    job.skipped_count = 0
+    job.progress_done = 0
+    job.progress_total = len(pending_ids)
+    db.commit()
+
+    failed_batches = 0
+    total_batches = 0
+    for offset in range(0, len(pending_ids), TAGGING_BATCH_SIZE):
+        batch_ids = pending_ids[offset:offset + TAGGING_BATCH_SIZE]
+        questions = db.query(Question).filter(Question.id.in_(batch_ids)).all()
+        total_batches += 1
+
+        # 单批 AI 调用最长 120s，租约 180s，只在批次结束后续租余量不足；
+        # 批次开始前先续一次，避免慢响应期间任务被其它 worker 判为陈旧抢走。
+        heartbeat_job(db, job, status_message=f"考点打标中，已处理 {offset}/{len(pending_ids)}")
+
+        try:
+            tagged_count, unresolved_count = tag_question_batch(db, questions, competencies)
+        except Exception as exc:
+            # 单批失败不拖垮整个任务：这批题没有关联行，下次跑会重新取到。
+            # 供应商偶发超时时，让任务把能打的都打完，比整体失败后只剩 3 次重试更划算。
+            db.rollback()
+            failed_batches += 1
+            logger.warning(
+                "考点打标第 %s 批失败，跳过该批继续: %s", total_batches, exc, exc_info=True
+            )
+            continue
+
+        job = db.get(type(job), job.id)
+        next_done = (job.success_count or 0) + (job.skipped_count or 0) + tagged_count + unresolved_count
+        heartbeat_job(
+            db,
+            job,
+            success_increment=tagged_count,
+            skipped_increment=unresolved_count,
+            status_message=f"考点打标中，已处理 {next_done}/{job.progress_total}",
+        )
+        job = db.get(type(job), job.id)
+
+    if total_batches and failed_batches == total_batches:
+        # 一批都没成，说明不是偶发抖动而是 AI 链路整体不可用，交给重试机制
+        raise RuntimeError(f"考点打标全部 {total_batches} 批均失败")
+    if failed_batches:
+        return f"考点打标完成，{failed_batches}/{total_batches} 批因 AI 调用失败跳过，可重跑补齐"
+    return None
 
 
 # ─── 智能导入任务处理 ──────────────────────────────────

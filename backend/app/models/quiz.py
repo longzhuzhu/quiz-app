@@ -19,7 +19,11 @@ class QuizSession(Base):
     bank_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("question_banks.id"), nullable=False
     )
-    mode: Mapped[str] = mapped_column(String(20), nullable=False)  # sequential/random/exam/wrong_practice
+    mode: Mapped[str] = mapped_column(String(20), nullable=False)  # sequential/random/exam/wrong_practice/topic
+    # 仅 mode="topic" 使用：指向所练的一级考点；为空表示练未分类题目
+    topic_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("exam_topics.id", ondelete="SET NULL"), nullable=True
+    )
     total_questions: Mapped[int] = mapped_column(Integer, nullable=False)
     answered_count: Mapped[int] = mapped_column(Integer, default=0)
     correct_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -34,6 +38,7 @@ class QuizSession(Base):
     # 关系
     user = relationship("User", back_populates="quiz_sessions")
     bank = relationship("QuestionBank", back_populates="sessions")
+    topic = relationship("ExamTopic")
     answers = relationship(
         "QuizAnswer", back_populates="session", lazy="dynamic", cascade="all, delete-orphan"
     )

@@ -1,0 +1,290 @@
+{
+  "template_id": "cipt-bok-4.0.0",
+  "source_version": "4.0.0",
+  "source_document": "IAPP CIPT Body of Knowledge, Version 4.0.0 (effective 2025-09-01, supersedes 3.2.0)",
+  "notes": "英文原文逐字取自 reference/IAPP_CIPT_BOK_3Dec2025-FINAL.pdf，仅修正 PDF 文本层的断字（\"In dicators\" -> \"Indicators\"）。中文名称为本项目译名，非官方。",
+  "domains": [
+    {
+      "code": "I",
+      "name_en": "The privacy technologist's role in the context of the organization",
+      "name_zh": "隐私技术专家在组织中的角色",
+      "short_name_zh": "组织中的角色",
+      "blueprint_min": 15,
+      "blueprint_max": 19,
+      "order_index": 1,
+      "competencies": [
+        {
+          "code": "I.A",
+          "name_en": "Identify and implement legal and procedural roles and responsibilities.",
+          "name_zh": "识别并落实法律与流程层面的角色和职责",
+          "short_name_zh": "法律与流程职责",
+          "blueprint_min": 5,
+          "blueprint_max": 7,
+          "order_index": 1,
+          "indicators_en": [
+            "Understand various roles and responsibilities related to the privacy function (e.g., Data Governance [DPO, Data Owner, Data Steward, Data Custodian], legal compliance, cybersecurity).",
+            "Translate legal and regulatory requirements into practical technical and/or operational solutions.",
+            "Implement internal and external data protection and privacy notices, policies, guidelines and procedures."
+          ]
+        },
+        {
+          "code": "I.B",
+          "name_en": "Identify and implement technical roles and responsibilities.",
+          "name_zh": "识别并落实技术层面的角色和职责",
+          "short_name_zh": "技术职责",
+          "blueprint_min": 5,
+          "blueprint_max": 7,
+          "order_index": 2,
+          "indicators_en": [
+            "Oversee technical elements of privacy operations and audits including third-party assessments.",
+            "Provide technical privacy support to identify and respond to privacy breaches and other types of incidents."
+          ]
+        },
+        {
+          "code": "I.C",
+          "name_en": "Demonstrate knowledge of privacy risk models and frameworks and their roles in legal requirements and guidance.",
+          "name_zh": "掌握隐私风险模型与框架及其在法规和指引中的作用",
+          "short_name_zh": "风险模型与框架",
+          "blueprint_min": 1,
+          "blueprint_max": 3,
+          "order_index": 3,
+          "indicators_en": [
+            "Understand risk concepts (e.g., threat, vulnerability, attack, security exploit).",
+            "Apply common privacy risk models and frameworks (e.g., Nissenbaum's Contextual Integrity, Calo's Harms Dimensions, Factor Analysis in Information Risk (FAIR) model, NIST/NICE framework, FIPPS, OECD principles).",
+            "Understand and apply common privacy threat models and frameworks (e.g., LINDDUN and MITRE PANOPTIC™)."
+          ]
+        },
+        {
+          "code": "I.D",
+          "name_en": "Understand the connection between data ethics and data privacy.",
+          "name_zh": "理解数据伦理与数据隐私之间的关联",
+          "short_name_zh": "数据伦理",
+          "blueprint_min": 2,
+          "blueprint_max": 4,
+          "order_index": 4,
+          "indicators_en": [
+            "Differentiate legal versus ethical processing of personal data (e.g., when comparing different jurisdictions).",
+            "Understand the social and ethical issues when advising on privacy impacting designs and technologies (e.g., unlawful or unauthorized access to personal data, manipulating societal conversations and attitudes on controversial topics).",
+            "Identify and minimize bias/discrimination when advising/designing tools with automated decision-making (e.g., incorporating personal preference into data decisions)."
+          ]
+        }
+      ]
+    },
+    {
+      "code": "II",
+      "name_en": "Data collection, use, dissemination and destruction",
+      "name_zh": "数据的采集、使用、传播与销毁",
+      "short_name_zh": "数据生命周期",
+      "blueprint_min": 19,
+      "blueprint_max": 23,
+      "order_index": 2,
+      "competencies": [
+        {
+          "code": "II.A",
+          "name_en": "Demonstrate how to minimize privacy risk during personal data collection.",
+          "name_zh": "在个人数据采集环节最小化隐私风险",
+          "short_name_zh": "数据采集",
+          "blueprint_min": 8,
+          "blueprint_max": 10,
+          "order_index": 1,
+          "indicators_en": [
+            "Understand and apply requirements to provide data subjects with control over the processing of their personal data including consent requirements for personal data collection, use, disclosure, and retention (e.g., clear and accessible privacy notices, settings, dashboards, other consent management mechanisms).",
+            "Implement measures to manage privacy risks associated with automatic collection of personal data.",
+            "Leverage techniques to minimize risk when extracting personal data from publicly available sources.",
+            "Practice appropriate data retention and destruction techniques."
+          ]
+        },
+        {
+          "code": "II.B",
+          "name_en": "Demonstrate how to minimize privacy risk during personal data use.",
+          "name_zh": "在个人数据使用环节最小化隐私风险",
+          "short_name_zh": "数据使用",
+          "blueprint_min": 6,
+          "blueprint_max": 8,
+          "order_index": 2,
+          "indicators_en": [
+            "Practice appropriate data minimization techniques (e.g., abstract personal data for a specific use case).",
+            "Implement data processing segregation.",
+            "Use data analysis and other procedures to minimize privacy risk associated with the aggregation of personal data.",
+            "Employ appropriate privacy-enhancing techniques (e.g., anonymization, pseudonymization, differential privacy) to reduce risk exposure.",
+            "Use technical approaches that minimize the risks associated with secondary uses of personal data (e.g., profiling)."
+          ]
+        },
+        {
+          "code": "II.C",
+          "name_en": "Demonstrate how to minimize privacy risk during personal data dissemination.",
+          "name_zh": "在个人数据传播环节最小化隐私风险",
+          "short_name_zh": "数据传播",
+          "blueprint_min": 4,
+          "blueprint_max": 6,
+          "order_index": 3,
+          "indicators_en": [
+            "Use technical approaches that minimize risks associated with disclosure and accessibility.",
+            "Leverage approaches and techniques that minimize the threat of: a. Data distortion. b. Data exposure. c. Breach of confidentiality (personal data breaches). d. Blackmail. e. Appropriation.",
+            "Implement other defense in-depth techniques (e.g., identity and access management, authentication mechanisms) to protect personal data from risk exposure."
+          ]
+        }
+      ]
+    },
+    {
+      "code": "III",
+      "name_en": "Privacy risk management",
+      "name_zh": "隐私风险管理",
+      "short_name_zh": "隐私风险管理",
+      "blueprint_min": 17,
+      "blueprint_max": 21,
+      "order_index": 3,
+      "competencies": [
+        {
+          "code": "III.A",
+          "name_en": "Demonstrate how to minimize the threat of intrusion and decisional interference.",
+          "name_zh": "最小化侵入与决策干预带来的威胁",
+          "short_name_zh": "侵入与决策干预",
+          "blueprint_min": 2,
+          "blueprint_max": 4,
+          "order_index": 1,
+          "indicators_en": [
+            "Implement technical approaches that minimize the risks of various types of interference (e.g., behavioral advertising, behavioral profiling, cyberbullying, social engineering).",
+            "Avoid the use of dark patterns that limit privacy-preserving response options, and recognize which design patterns to emulate."
+          ]
+        },
+        {
+          "code": "III.B",
+          "name_en": "Identify privacy risks related to software security.",
+          "name_zh": "识别软件安全相关的隐私风险",
+          "short_name_zh": "软件安全",
+          "blueprint_min": 3,
+          "blueprint_max": 5,
+          "order_index": 2,
+          "indicators_en": [
+            "Implement measures to detect and fix software privacy vulnerabilities.",
+            "Leverage intrusion detection and prevention tools and techniques.",
+            "Implement measures to reduce privacy risks during change management (e.g., patches, upgrades).",
+            "Recognize possible privacy violations by service providers."
+          ]
+        },
+        {
+          "code": "III.C",
+          "name_en": "Understand the privacy risks and impact of techniques that enable tracking and surveillance.",
+          "name_zh": "理解追踪与监控类技术的隐私风险与影响",
+          "short_name_zh": "追踪与监控",
+          "blueprint_min": 4,
+          "blueprint_max": 6,
+          "order_index": 3,
+          "indicators_en": [
+            "Understand the privacy risks and impact associated with e-commerce (e.g., behavioral advertising, cookies, chatbots, payments, behavioral profiling).",
+            "Demonstrate knowledge of the privacy risks and impact of audio and video surveillance, including those involved in wearables and IoT technologies (e.g., smart home devices and IoT technology for smart cities).",
+            "Understand privacy issues around biometrics (e.g., facial recognition, speech recognition, fingerprint identification, DNA).",
+            "Demonstrate knowledge of the privacy risks and impacts of location tracking.",
+            "Demonstrate knowledge of the privacy risks and impacts of internet monitoring and web tracking."
+          ]
+        },
+        {
+          "code": "III.D",
+          "name_en": "Understand the privacy risks and impact involved when using workplace technologies.",
+          "name_zh": "理解职场技术使用中的隐私风险与影响",
+          "short_name_zh": "职场技术",
+          "blueprint_min": 2,
+          "blueprint_max": 4,
+          "order_index": 4,
+          "indicators_en": [
+            "Identify and minimize privacy risks involved when using artificial intelligence, machine learning and deep learning.",
+            "Identify and minimize privacy risk involved in the use of communications technologies (e.g., video calls and conferencing, messaging, mobile devices, social media, gaming platforms)."
+          ]
+        },
+        {
+          "code": "III.E",
+          "name_en": "Demonstrate how to monitor and manage privacy risk.",
+          "name_zh": "监控与管理隐私风险",
+          "short_name_zh": "风险监控与管理",
+          "blueprint_min": 3,
+          "blueprint_max": 5,
+          "order_index": 5,
+          "indicators_en": [
+            "Conduct privacy audits and IT control reviews.",
+            "Develop, compile, report, and monitor privacy Key Risk Indicators and Key Performance Indicators.",
+            "Complete privacy and data protection impact assessments."
+          ]
+        }
+      ]
+    },
+    {
+      "code": "IV",
+      "name_en": "Privacy by design",
+      "name_zh": "隐私设计",
+      "short_name_zh": "隐私设计",
+      "blueprint_min": 7,
+      "blueprint_max": 9,
+      "order_index": 4,
+      "competencies": [
+        {
+          "code": "IV.A",
+          "name_en": "Implement privacy by design principles.",
+          "name_zh": "落实隐私设计原则",
+          "short_name_zh": "隐私设计原则",
+          "blueprint_min": 4,
+          "blueprint_max": 6,
+          "order_index": 1,
+          "indicators_en": [
+            "Understand and apply the seven privacy by design principles.",
+            "Define and communicate privacy goals and objectives to guide privacy by design within an organization.",
+            "Interpret high-level specifications and align them via low-level specifications with the privacy by design principles."
+          ]
+        },
+        {
+          "code": "IV.B",
+          "name_en": "Evaluate privacy risks in user experiences.",
+          "name_zh": "评估用户体验中的隐私风险",
+          "short_name_zh": "用户体验隐私风险",
+          "blueprint_min": 2,
+          "blueprint_max": 4,
+          "order_index": 2,
+          "indicators_en": [
+            "Understand and apply UX concepts, including how UX decisions impact user behavior.",
+            "Perform usability testing where relevant to assess effectiveness of privacy-related functions.",
+            "Understand and apply value sensitive design."
+          ]
+        }
+      ]
+    },
+    {
+      "code": "V",
+      "name_en": "Privacy engineering and privacy governance",
+      "name_zh": "隐私工程与隐私治理",
+      "short_name_zh": "隐私工程与治理",
+      "blueprint_min": 9,
+      "blueprint_max": 11,
+      "order_index": 5,
+      "competencies": [
+        {
+          "code": "V.A",
+          "name_en": "Understand and implement privacy engineering objectives.",
+          "name_zh": "理解并落实隐私工程目标",
+          "short_name_zh": "隐私工程目标",
+          "blueprint_min": 6,
+          "blueprint_max": 8,
+          "order_index": 1,
+          "indicators_en": [
+            "Apply the NIST Privacy Engineering Objectives: predictability, manageability and dissociability.",
+            "Understand enterprise architecture, use of data flow diagrams/data lineage tools, including cross-border transfer considerations.",
+            "Manage privacy risks in the development life cycle."
+          ]
+        },
+        {
+          "code": "V.B",
+          "name_en": "Manage and monitor privacy-related functions and controls.",
+          "name_zh": "管理与监控隐私相关的职能和控制措施",
+          "short_name_zh": "职能与控制监控",
+          "blueprint_min": 2,
+          "blueprint_max": 4,
+          "order_index": 2,
+          "indicators_en": [
+            "Catalog data assets, develop a data inventory and implement a record of processing activities.",
+            "Conduct code reviews to identify potential privacy gaps that require attention.",
+            "Conduct runtime behavior monitoring."
+          ]
+        }
+      ]
+    }
+  ]
+}

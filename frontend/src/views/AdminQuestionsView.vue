@@ -14,6 +14,10 @@
           <LanguageIcon class="h-4 w-4" />
           {{ translating ? '翻译中...' : '批量翻译' }}
         </BaseButton>
+        <BaseButton variant="secondary" @click="batchTagTopics" :loading="tagging" :disabled="tagging">
+          <TagIcon class="h-4 w-4" />
+          {{ tagging ? tagProgressText : '批量打标' }}
+        </BaseButton>
         <BaseButton @click="showAdd = true">
           <PlusIcon class="h-4 w-4" />
           添加题目
@@ -53,6 +57,15 @@
               类型: {{ q.question_type === 'single' ? '单选' : q.question_type === 'multiple' ? '多选' : '判断' }}
               · 答案: {{ q.correct_answer }}
             </p>
+            <div class="mt-1 flex flex-wrap items-center gap-1">
+              <span v-for="t in q.topics" :key="t.id"
+                class="rounded-md bg-sky-100 dark:bg-sky-900/30 px-2 py-0.5 text-xs text-sky-700 dark:text-sky-400">
+                {{ t.code }} {{ t.short_name_zh }}
+              </span>
+              <span v-if="!q.topics || q.topics.length === 0" class="text-xs text-gray-400 dark:text-gray-500">
+                考点未分类
+              </span>
+            </div>
           </div>
           <div class="ml-4 flex-shrink-0 flex gap-2">
             <BaseButton variant="ghost" size="sm" @click="startEdit(q)">
@@ -140,6 +153,18 @@
           <input v-model="editQ.correct_answer" type="text"
             class="mt-1 w-full rounded-card border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-gray-900 dark:text-white focus:border-primary-500 focus:ring-1 focus:ring-primary-500 focus:outline-none" />
         </div>
+        <div v-if="competencies.length">
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+            考点（可多选，保存后不会被批量打标覆盖）
+          </label>
+          <div class="mt-1 max-h-48 space-y-1 overflow-y-auto rounded-card border border-gray-300 dark:border-slate-600 p-2">
+            <label v-for="c in competencies" :key="c.id"
+              class="flex items-start gap-2 rounded px-1 py-0.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700">
+              <input type="checkbox" :value="c.id" v-model="editTopicIds" class="mt-1" />
+              <span>{{ c.code }} {{ c.short_name_zh }}</span>
+            </label>
+          </div>
+        </div>
       </div>
       <template #actions>
         <BaseButton variant="secondary" @click="showEdit = false">取消</BaseButton>
@@ -161,16 +186,17 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useToast } from '../composables/useToast'
+import { useBackgroundJob } from '../composables/useBackgroundJob'
 import client from '../api/client'
 import { currentExamPath } from '../utils/examRoutes'
 import BaseButton from '../components/BaseButton.vue'
 import BaseModal from '../components/BaseModal.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import SkeletonLoader from '../components/SkeletonLoader.vue'
-import { PlusIcon, PencilSquareIcon, TrashIcon, ArrowLeftIcon, LanguageIcon, DocumentTextIcon } from '@heroicons/vue/24/outline'
+import { PlusIcon, PencilSquareIcon, TrashIcon, ArrowLeftIcon, LanguageIcon, DocumentTextIcon, TagIcon } from '@heroicons/vue/24/outline'
 
 const route = useRoute()
 const toast = useToast()
@@ -187,8 +213,18 @@ const optionsText = ref('')
 const showEdit = ref(false)
 const editQ = ref({ id: null, content: '', question_type: 'single', correct_answer: '' })
 const editOptionsText = ref('')
+const editTopicIds = ref([])
+const competencies = ref([])
 const showDeleteConfirm = ref(false)
 const deleteQuestionId = ref(null)
+const topicTagJob = useBackgroundJob()
+
+const tagging = computed(() => topicTagJob.polling.value)
+const tagProgressText = computed(() => {
+  const job = topicTagJob.job.value
+  if (!job || !job.progress_total) return '打标中...'
+  return `打标中 ${job.progress_done}/${job.progress_total}`
+})
 
 async function fetchQuestions() {
   loading.value = true
@@ -258,6 +294,7 @@ function startEdit(q) {
     correct_answer: q.correct_answer,
   }
   editOptionsText.value = q.options.map(o => `${o.key}. ${o.text}`).join('\n')
+  editTopicIds.value = (q.topics || []).map(t => t.id)
   showEdit.value = true
 }
 
@@ -273,6 +310,7 @@ async function saveEdit() {
       question_type: editQ.value.question_type,
       correct_answer: editQ.value.correct_answer,
       options,
+      topic_ids: editTopicIds.value,
     })
     showEdit.value = false
     toast.success('题目已更新')
@@ -295,11 +333,54 @@ async function batchTranslate() {
   }
 }
 
+async function batchTagTopics() {
+  try {
+    const res = await topicTagJob.createJob(
+      { job_type: 'question_topic_tag', bank_id: parseInt(bankId) },
+      { onFinished: onTaggingFinished },
+    )
+    if (res?.result === 'no_work') {
+      toast.success('所有题目都已有考点，无需打标')
+    } else if (res?.result === 'existing') {
+      toast.success('该题库已有打标任务在执行')
+    } else {
+      toast.success('已开始批量打标，可留在本页查看进度')
+    }
+  } catch (e) {
+    toast.error(e.response?.data?.detail || '发起批量打标失败')
+  }
+}
+
+async function onTaggingFinished(finishedJob) {
+  if (finishedJob?.status === 'failed') {
+    toast.error(finishedJob.last_error || '批量打标失败')
+  } else if (finishedJob?.status === 'completed') {
+    toast.success(
+      `批量打标完成：归类 ${finishedJob.success_count} 题，未能归类 ${finishedJob.skipped_count} 题`,
+    )
+  }
+  await Promise.all([fetchQuestions(), fetchTopics()])
+}
+
+async function fetchTopics() {
+  try {
+    const res = await client.get(`/banks/${bankId}/topics`)
+    competencies.value = res.data?.competencies || []
+  } catch {
+    competencies.value = []
+  }
+}
+
 onMounted(async () => {
   const banks = await client.get('/banks')
   const bank = banks.data.find(b => b.id === parseInt(bankId))
   bankName.value = bank?.name || `题库 #${bankId}`
   fetchQuestions()
+  fetchTopics()
+  topicTagJob.restoreActiveJob(
+    { job_type: 'question_topic_tag', bank_id: bankId },
+    { onFinished: onTaggingFinished },
+  )
 })
 
 watch(page, fetchQuestions)

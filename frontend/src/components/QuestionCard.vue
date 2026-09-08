@@ -58,6 +58,7 @@
         :key="question.id"
         :question-id="question.id"
         :initial-explanation="initialExplanation"
+        :displayed="!!displayedExplanation"
         @explained="(e) => explainData = e"
       />
       <AddVocabButton :initial-term="question.content" />
@@ -69,16 +70,6 @@
         <ClipboardDocumentIcon class="h-4 w-4" />
         复制
       </button>
-    </div>
-
-    <!-- AI 解析内容（独立于按钮行） -->
-    <div v-if="explainData && !examMode && (explainData.explanation || explainData.explanation_zh)"
-      class="mt-3 rounded-card border border-sky-200 bg-sky-50 p-4 text-sm
-             dark:border-sky-800 dark:bg-sky-900/20">
-      <p class="font-medium text-sky-800 dark:text-sky-300">AI 解析</p>
-      <p v-if="explainData.explanation" class="mt-1 whitespace-pre-wrap text-gray-700 dark:text-gray-300">{{ explainData.explanation }}</p>
-      <p v-if="explainData.explanation_zh"
-        class="mt-2 whitespace-pre-wrap text-gray-600 dark:text-gray-400">{{ explainData.explanation_zh }}</p>
     </div>
 
     <!-- 答题反馈 -->
@@ -94,21 +85,21 @@
         </p>
       </div>
       <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">正确答案: {{ result.correct_answer }}</p>
-      <div v-if="result.explanation" class="mt-2 text-sm text-gray-700 dark:text-gray-300">
-        <p class="font-medium">解析:</p>
-        <p class="whitespace-pre-wrap">{{ result.explanation }}</p>
-      </div>
-      <div v-if="result.explanation_zh" class="mt-2 text-sm text-gray-600 dark:text-gray-400">
-        <p class="font-medium">中文解析:</p>
-        <p class="whitespace-pre-wrap">{{ result.explanation_zh }}</p>
-      </div>
+    </div>
+
+    <!-- AI 解析内容（独立于按钮行） -->
+    <div v-if="displayedExplanation && !examMode"
+      class="mt-3 rounded-card border border-sky-200 bg-sky-50 p-4 text-sm
+             dark:border-sky-800 dark:bg-sky-900/20">
+      <p class="font-medium text-sky-800 dark:text-sky-300">AI 解析</p>
+      <p class="mt-2 whitespace-pre-wrap text-gray-600 dark:text-gray-400">{{ displayedExplanation }}</p>
     </div>
 
     <!-- 操作栏 -->
     <div class="mt-6 flex flex-wrap justify-between items-center gap-2">
       <BaseButton variant="secondary" size="sm" @click="$emit('prev')" :disabled="currentIndex === 0">上一题</BaseButton>
       <div class="flex items-center gap-2">
-        <BaseButton variant="primary" size="sm" @click="handleSubmit" :disabled="selectedAnswers.length === 0">提交答案</BaseButton>
+        <BaseButton variant="primary" size="sm" @click="handleSubmit" :disabled="selectedAnswers.length === 0 || submitting" :loading="submitting">提交答案</BaseButton>
         <BaseButton v-if="answered && currentIndex < total - 1" variant="primary" size="sm" @click="$emit('next')">下一题</BaseButton>
         <BaseButton v-else-if="answered" variant="primary" size="sm" @click="$emit('finish')" class="!bg-emerald-600 hover:!bg-emerald-700">完成答题</BaseButton>
       </div>
@@ -145,11 +136,18 @@ const answered = ref(false)
 const result = ref(null)
 const showTranslation = ref(false)
 const explainData = ref(null)
+const submitting = ref(false)
 const initialExplanation = computed(() => {
   if (!props.question) return null
   const { explanation, explanation_zh } = props.question
   if (!explanation && !explanation_zh) return null
   return { explanation, explanation_zh }
+})
+
+const displayedExplanation = computed(() => {
+  if (explainData.value?.explanation_zh) return explainData.value.explanation_zh
+  if (answered.value) return result.value?.explanation_zh || null
+  return null
 })
 
 const hasFullTranslation = computed(() => {
@@ -252,10 +250,13 @@ function optionClass(key) {
 }
 
 async function handleSubmit() {
+  if (submitting.value) return
+  submitting.value = true
   const answer = selectedAnswers.value.sort().join(',')
   emit('submit', answer, (res) => {
     result.value = res
     answered.value = true
+    submitting.value = false
   })
 }
 </script>
