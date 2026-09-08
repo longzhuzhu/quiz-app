@@ -12,6 +12,7 @@ from app.schemas.job import JobCreateRequest
 from app.services.exam_service import get_bank_in_exam_or_404
 from app.services.job_service import (
     JOB_TYPE_BANK_FREQUENT_TRANSLATE,
+    JOB_TYPE_QUESTION_TOPIC_TAG,
     JobServiceError,
     build_scope_key,
     create_or_reuse_job,
@@ -22,6 +23,12 @@ router = APIRouter()
 
 VALID_JOB_TYPES = {
     JOB_TYPE_BANK_FREQUENT_TRANSLATE,
+    JOB_TYPE_QUESTION_TOPIC_TAG,
+}
+
+# 考点打标会改写整个题库的考点归属，只允许管理员发起
+ADMIN_ONLY_JOB_TYPES = {
+    JOB_TYPE_QUESTION_TOPIC_TAG,
 }
 
 
@@ -42,12 +49,14 @@ def _parse_bank_id(value):
 
 def _build_payload(job_type: str, source: dict, db: Session, exam: Exam) -> tuple[dict, HTTPException | None]:
     payload: dict = {}
-    if job_type == JOB_TYPE_BANK_FREQUENT_TRANSLATE:
+    if job_type in (JOB_TYPE_BANK_FREQUENT_TRANSLATE, JOB_TYPE_QUESTION_TOPIC_TAG):
         bank_id = _parse_bank_id(source.get("bank_id"))
         if bank_id is None:
             return {}, HTTPException(status_code=400, detail="bank_id 必须为整数")
         bank = get_bank_in_exam_or_404(db, bank_id, exam)
         payload["bank_id"] = bank.id
+        if job_type == JOB_TYPE_QUESTION_TOPIC_TAG:
+            payload["exam_id"] = exam.id
     return payload, None
 
 
@@ -61,6 +70,8 @@ def create_job(
     job_type = data.job_type
     if job_type not in VALID_JOB_TYPES:
         raise HTTPException(status_code=400, detail="不支持的任务类型")
+    if job_type in ADMIN_ONLY_JOB_TYPES and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="需要管理员权限")
 
     payload, payload_error = _build_payload(job_type, data.model_dump(), db, exam)
     if payload_error:

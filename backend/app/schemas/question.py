@@ -22,6 +22,7 @@ class QuestionResponse(BaseModel):
     explanation_zh: str | None = None
     created_at: str
     correct_answer: str | None = None  # 可选，列表时不包含
+    topics: list[dict] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 
@@ -46,3 +47,5 @@ class QuestionUpdateRequest(BaseModel):
     options: list[dict] | None = None
     correct_answer: str | None = None
     question_type: str | None = None
+    # 人工设定的考点，整份替换；写入后不会被批量打标覆盖
+    topic_ids: list[int] | None = None

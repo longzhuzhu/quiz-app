@@ -34,3 +34,6 @@ class Question(Base):
     user_stats = relationship(
         "UserQuestionStat", back_populates="question", lazy="dynamic", cascade="all, delete-orphan"
     )
+    topic_links = relationship(
+        "QuestionTopic", back_populates="question", cascade="all, delete-orphan"
+    )

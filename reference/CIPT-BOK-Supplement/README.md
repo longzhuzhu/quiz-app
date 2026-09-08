@@ -1,3 +1,10 @@
+> [!WARNING]
+> **本文档对应已废止的 BOK 3.2.0，其七域结构不再是当前考纲。**
+>
+> IAPP 已于 2025-09-01 起施行 **CIPT BOK 4.0.0**（见 `../IAPP_CIPT_BOK_3Dec2025-FINAL.pdf`，文中明确 Supersedes 3.2.0）。4.0.0 是结构性改版：域由 7 个减为 5 个，改用「能力项 + 表现指标」表述，并新增每项的考试出题配额；3.2.0 的域**无法**一一映射到 4.0.0。
+>
+> 本仓库的考点分类树以 4.0.0 为准。本文档保留的价值是下面那些延伸阅读链接，**不要**把它的章节结构当作考点大纲使用。
+
 # CIPT (Version 3.2.0) Exam BOK Supplement
 
 This repository serves as a supplement to the Certified Information Privacy Technologist (CIPT) Exam Body of Knowledge (BOK), providing links to topics referenced in the BoK (Version 3.2.0).

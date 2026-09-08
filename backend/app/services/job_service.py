@@ -17,11 +17,13 @@ from app.models.question import Question
 from app.models.question_bank import QuestionBank
 from app.services.ai_service import has_question_explanation, has_question_translation
 from app.services.import_service import TOP_FREQUENT_TERMS_LIMIT
+from app.services.topic_tagging_service import list_untagged_question_ids
 
 JOB_TYPE_AI_PREWARM = "ai_prewarm"
 JOB_TYPE_BANK_FREQUENT_TRANSLATE = "bank_frequent_translate"
 JOB_TYPE_QUESTION_IMPORT_LLM = "question_import_llm"
 JOB_TYPE_QUESTION_IMPORT_LLM_REPARSE = "question_import_llm_reparse"
+JOB_TYPE_QUESTION_TOPIC_TAG = "question_topic_tag"
 ACTIVE_STATUSES = {"queued", "running"}
 DEFAULT_JOB_LEASE_SECONDS = 180
 DEFAULT_REQUEUE_DELAY_SECONDS = 15
@@ -59,6 +61,8 @@ def build_scope_key(job_type: str, payload: dict) -> str:
         return f"import_llm:{payload.get('import_job_id', 'unknown')}"
     if job_type == JOB_TYPE_QUESTION_IMPORT_LLM_REPARSE:
         return f"import_reparse:{payload.get('chunk_id', 'unknown')}"
+    if job_type == JOB_TYPE_QUESTION_TOPIC_TAG:
+        return f"topic_tag:{payload['bank_id']}"
     raise ValueError(f"不支持的任务类型: {job_type}")
 
 
@@ -101,6 +105,13 @@ def count_pending_items(db: Session, job_type: str, payload: dict) -> int:
     if job_type in (JOB_TYPE_QUESTION_IMPORT_LLM, JOB_TYPE_QUESTION_IMPORT_LLM_REPARSE):
         # 智能导入任务始终需要执行
         return 1
+
+    if job_type == JOB_TYPE_QUESTION_TOPIC_TAG:
+        bank_id = payload["bank_id"]
+        bank = db.get(QuestionBank, bank_id)
+        if not bank:
+            raise JobServiceError("题库不存在", status_code=404)
+        return len(list_untagged_question_ids(db, bank_id))
 
     raise ValueError(f"不支持的任务类型: {job_type}")
 
@@ -160,7 +171,7 @@ def create_or_reuse_job(
 
     pending_total = count_pending_items(db, job_type, payload)
     if pending_total <= 0:
-        return "no_work", None, "当前没有待翻译数据"
+        return "no_work", None, "当前没有待处理数据"
 
     job = BackgroundJob(
         job_type=job_type,

@@ -2,7 +2,7 @@
 
 import json
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_exam_context
@@ -19,16 +19,20 @@ from app.services.ai_service import (
     sanitize_options_for_storage,
 )
 from app.services.exam_service import get_bank_in_exam_or_404, get_question_in_exam_or_404
+from app.services.topic_service import set_question_topics_manually, topics_for_questions
 
 router = APIRouter()
 
 
-def question_to_dict(q: Question, include_answer: bool = True) -> dict:
+def question_to_dict(
+    q: Question, include_answer: bool = True, topics: list[dict] | None = None
+) -> dict:
     options = q.options
     if isinstance(options, str):
         options = json.loads(options)
 
     d = {
+        "topics": topics if topics is not None else [],
         "id": q.id,
         "bank_id": q.bank_id,
         "question_type": q.question_type,
@@ -59,9 +63,12 @@ def list_questions(
     total = query.count()
     questions = query.offset(offset).limit(per_page).all()
     pages = (total + per_page - 1) // per_page if total > 0 else 0
+    topics_by_question = topics_for_questions(db, [q.id for q in questions])
 
     return {
-        "questions": [question_to_dict(q) for q in questions],
+        "questions": [
+            question_to_dict(q, topics=topics_by_question.get(q.id, [])) for q in questions
+        ],
         "total": total,
         "page": page,
         "pages": pages,
@@ -127,9 +134,17 @@ def update_question(
             clear_question_explanation(db, q)
         q.question_type = data.question_type
 
+    # 考点不随题干和选项变动失效：它比翻译和解析稳定，清掉只会白白触发重打标
+    if data.topic_ids is not None:
+        try:
+            set_question_topics_manually(db, q, data.topic_ids)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=400, detail=str(exc))
+
     db.commit()
     db.refresh(q)
-    return question_to_dict(q)
+    return question_to_dict(q, topics=topics_for_questions(db, [q.id]).get(q.id, []))
 
 
 @router.delete("/{question_id}")

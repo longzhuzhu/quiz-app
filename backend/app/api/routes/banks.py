@@ -16,6 +16,7 @@ from app.schemas.bank import BankCreateRequest, BankUpdateRequest
 from app.services.ai_service import batch_translate_terms
 from app.services.exam_service import delete_bank_data, get_bank_in_exam_or_404
 from app.services.smart_import_service import create_smart_import_job
+from app.services.topic_service import list_bank_topic_overview
 
 router = APIRouter()
 
@@ -94,6 +95,17 @@ def list_banks(
 ):
     banks = db.query(QuestionBank).filter_by(exam_id=exam.id).order_by(QuestionBank.created_at.desc()).all()
     return [bank_to_dict(b) for b in banks]
+
+
+@router.get("/{bank_id}/topics")
+def list_bank_topics(
+    bank_id: int,
+    exam: Exam = Depends(get_exam_context),
+    db: Session = Depends(get_db),
+):
+    """题库的考点概览，供专项练习选择考点"""
+    bank = get_bank_in_exam_or_404(db, bank_id, exam)
+    return list_bank_topic_overview(db, exam.id, bank.id)
 
 
 @router.post("", status_code=201)

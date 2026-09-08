@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/09-08-topic-practice-by-bok/research/bok-4.0.0-taxonomy.md", "reason": "验收 AC1 需逐条比对灌入的 21 行考点的 code 与 blueprint_min/max 是否与本文件一致"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端改动的质量门槛：新增服务、路由、迁移与测试是否达标"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核查两张新表的约束、索引、级联删除与迁移可逆性（AC12）"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端改动的质量门槛：新增弹窗与按钮、modeLabel 扩展"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "打标任务应复用既有 job_service / job_handlers 形态，弹窗应复用 BaseModal，核查是否出现重复实现"}
