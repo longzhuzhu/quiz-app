@@ -1,12 +1,12 @@
 <template>
   <div>
-    <button @click="handleExplain" :disabled="loading"
+    <button @click="handleExplain" :disabled="loading || displayed"
       class="inline-flex items-center gap-1.5 rounded-button px-3 py-1.5 text-sm font-medium
              bg-gray-100 text-gray-700 hover:bg-gray-200
              dark:bg-slate-700 dark:text-gray-300 dark:hover:bg-slate-600
              disabled:opacity-50 transition-colors">
       <LightBulbIcon class="h-4 w-4" />
-      {{ loading ? '解析中...' : 'AI 解析' }}
+      {{ displayed ? '解析已显示' : loading ? '解析中...' : 'AI 解析' }}
     </button>
   </div>
 </template>
@@ -22,6 +22,7 @@ const toast = useToast()
 const props = defineProps({
   questionId: Number,
   initialExplanation: { type: Object, default: null },
+  displayed: { type: Boolean, default: false },
 })
 const emit = defineEmits(['explained'])
 const loading = ref(false)
