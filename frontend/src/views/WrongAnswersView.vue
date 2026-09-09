@@ -1,5 +1,5 @@
 <template>
-  <div class="mx-auto max-w-3xl">
+  <div>
     <!-- 顶部区域：标题 + 统计摘要 -->
     <div class="mb-8">
       <h1 class="text-2xl font-bold text-gray-900 dark:text-white">错题本</h1>
