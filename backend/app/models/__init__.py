@@ -7,6 +7,7 @@ from app.models.question import Question
 from app.models.exam_topic import ExamTopic
 from app.models.question_topic import QuestionTopic
 from app.models.quiz import QuizSession, QuizAnswer
+from app.models.practice import PracticeDayQuestion
 from app.models.wrong import WrongAnswer, UserQuestionStat
 from app.models.vocabulary import Vocabulary, UserVocabProgress
 from app.models.bank_word import BankWordFrequency, UserBankWordProgress, BankWordExclusion
@@ -28,6 +29,7 @@ __all__ = [
     "QuestionTopic",
     "QuizSession",
     "QuizAnswer",
+    "PracticeDayQuestion",
     "WrongAnswer",
     "UserQuestionStat",
     "Vocabulary",

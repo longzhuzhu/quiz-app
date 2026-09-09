@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import client from '../api/client'
+import { formatLocalDate } from '../utils/localDate'
 
 export const useQuizStore = defineStore('quiz', () => {
   const session = ref(null)
@@ -24,6 +25,7 @@ export const useQuizStore = defineStore('quiz', () => {
       session_id: session.value.id,
       question_id: questionId,
       user_answer: userAnswer,
+      local_date: formatLocalDate(),
     })
     return res.data
   }

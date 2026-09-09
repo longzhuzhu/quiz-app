@@ -1,0 +1,7 @@
+{"file": "CONTEXT.md", "reason": "验收用词必须与练习日、当日作答量、连续练习日定义一致"}
+{"file": "docs/adr/0005-practice-days-not-from-last-answered-at.md", "reason": "核查实现没有用 answered_at 回填或按最后写入聚合"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "核查新表约束、索引、CASCADE 与迁移可逆（AC11）"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端服务、路由、测试是否达到质量门槛"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "首页新增热力图的 API 调用、空态与响应式是否达标"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "PracticeHeatmap 是否复用约定而不是把网格内联进 HomeView"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "核对 local_date 与 today 在前后端是否同一套本地日，没有 UTC 重切"}

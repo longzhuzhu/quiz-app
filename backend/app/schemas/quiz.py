@@ -1,8 +1,10 @@
 """Pydantic schemas - Quiz"""
 
-from datetime import datetime
+from datetime import date
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.services.practice_service import coerce_local_date
 
 
 class QuizStartRequest(BaseModel):
@@ -17,6 +19,13 @@ class QuizAnswerRequest(BaseModel):
     session_id: int
     question_id: int
     user_answer: str
+    local_date: date | None = None
+
+    @field_validator("local_date", mode="before")
+    @classmethod
+    def parse_local_date(cls, value):
+        """缺省或非法本地日不打断答题，交给练习日写入侧丢弃。"""
+        return coerce_local_date(value)
 
 
 class QuizFinishRequest(BaseModel):
