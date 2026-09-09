@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.api.deps import get_current_user, get_exam_context
 from app.core.database import get_db
 from app.models.exam import Exam
-from app.models.exam_topic import ExamTopic, TOPIC_LEVEL_DOMAIN
+from app.models.exam_topic import ExamTopic, TOPIC_LEVEL_COMPETENCY, TOPIC_LEVEL_DOMAIN
 from app.models.question import Question
 from app.models.question_bank import QuestionBank
 from app.models.quiz import QuizSession, QuizAnswer
@@ -25,6 +25,7 @@ from app.services.practice_service import (
     record_question_touch,
 )
 from app.services.topic_service import (
+    list_question_ids_for_competency,
     list_question_ids_for_domain,
     list_unclassified_question_ids,
 )
@@ -108,9 +109,13 @@ def _resolve_topic_scope(
         return None, list_unclassified_question_ids(db, bank.id)
 
     topic = db.get(ExamTopic, topic_id)
-    if not topic or topic.exam_id != exam.id or topic.level != TOPIC_LEVEL_DOMAIN:
+    if not topic or topic.exam_id != exam.id:
         raise HTTPException(status_code=404, detail="考点不存在")
-    return topic, list_question_ids_for_domain(db, bank.id, topic.id)
+    if topic.level == TOPIC_LEVEL_DOMAIN:
+        return topic, list_question_ids_for_domain(db, bank.id, topic.id)
+    if topic.level == TOPIC_LEVEL_COMPETENCY:
+        return topic, list_question_ids_for_competency(db, bank.id, topic.id)
+    raise HTTPException(status_code=404, detail="考点不存在")
 
 
 def _compute_resume_index(question_ids: list[int], answers: list[QuizAnswer]) -> int:

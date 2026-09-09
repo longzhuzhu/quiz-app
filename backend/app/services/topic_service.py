@@ -86,8 +86,27 @@ def list_competency_ids(db: Session, exam_id: int) -> dict[str, int]:
     return {code: topic_id for code, topic_id in rows}
 
 
+def topic_number(domain_order: int, competency_order: int | None = None) -> str:
+    """界面用的阿拉伯数字编号。官方 BOK 编码（I.A）只留给打标 prompt。"""
+    if competency_order is None:
+        return str(domain_order)
+    return f"{domain_order}.{competency_order}"
+
+
+def _question_counts_by_topic(db: Session, bank_id: int) -> dict[int, int]:
+    """每个能力项在该题库中的去重题数"""
+    return dict(
+        db.execute(
+            select(QuestionTopic.topic_id, func.count(func.distinct(QuestionTopic.question_id)))
+            .join(Question, QuestionTopic.question_id == Question.id)
+            .where(Question.bank_id == bank_id)
+            .group_by(QuestionTopic.topic_id)
+        ).all()
+    )
+
+
 def list_bank_topic_overview(db: Session, exam_id: int, bank_id: int) -> dict:
-    """题库维度的考点概览：每个域的题数、考试出题配额，以及未分类题数。
+    """题库维度的考点概览：每个域及其能力项的题数、考试出题配额，以及未分类题数。
 
     域的题数是其下能力项关联题目的去重计数——一道题挂了同域两个能力项只算一次。
     """
@@ -110,6 +129,11 @@ def list_bank_topic_overview(db: Session, exam_id: int, bank_id: int) -> dict:
             .group_by(parent.c.id)
         ).all()
     )
+    counts_by_competency = _question_counts_by_topic(db, bank_id)
+    competencies = list_competencies(db, exam_id, counts_by_competency)
+    competencies_by_parent: dict[int, list[dict]] = {}
+    for competency in competencies:
+        competencies_by_parent.setdefault(competency["parent_id"], []).append(competency)
 
     total_questions = db.query(func.count(Question.id)).filter_by(bank_id=bank_id).scalar() or 0
     classified = (
@@ -125,36 +149,73 @@ def list_bank_topic_overview(db: Session, exam_id: int, bank_id: int) -> dict:
             {
                 "id": domain.id,
                 "code": domain.code,
+                "number": topic_number(domain.order_index),
                 "name_zh": domain.name_zh,
                 "short_name_zh": domain.short_name_zh,
                 "blueprint_min": domain.blueprint_min,
                 "blueprint_max": domain.blueprint_max,
                 "question_count": counts_by_domain.get(domain.id, 0),
+                "competencies": competencies_by_parent.get(domain.id, []),
             }
             for domain in domains
         ],
-        # 能力项不参与专项练习选择，供管理端人工设定单题考点使用
-        "competencies": list_competencies(db, exam_id),
+        # 扁平列表留给管理端人工设定单题考点，避免前端再拆一次树
+        "competencies": competencies,
         "unclassified_count": total_questions - classified,
         "total_questions": total_questions,
     }
 
 
-def list_competencies(db: Session, exam_id: int) -> list[dict]:
+def list_competencies(
+    db: Session,
+    exam_id: int,
+    counts_by_competency: dict[int, int] | None = None,
+) -> list[dict]:
     """按域顺序、域内顺序列出所有能力项"""
     parent = ExamTopic.__table__.alias("parent_topic")
     rows = db.execute(
-        select(ExamTopic.id, ExamTopic.code, ExamTopic.short_name_zh, ExamTopic.name_zh)
+        select(
+            ExamTopic.id,
+            ExamTopic.parent_id,
+            ExamTopic.code,
+            ExamTopic.short_name_zh,
+            ExamTopic.name_zh,
+            ExamTopic.blueprint_min,
+            ExamTopic.blueprint_max,
+            parent.c.order_index,
+            ExamTopic.order_index,
+        )
         .join(parent, ExamTopic.parent_id == parent.c.id)
         .where(
             ExamTopic.exam_id == exam_id,
             ExamTopic.level == TOPIC_LEVEL_COMPETENCY,
         )
-        .order_by(parent.c.order_index, ExamTopic.order_index)
+        .order_by(parent.c.order_index, ExamTopic.order_index, ExamTopic.code)
     ).all()
+    counts = counts_by_competency or {}
     return [
-        {"id": topic_id, "code": code, "short_name_zh": short_name_zh, "name_zh": name_zh}
-        for topic_id, code, short_name_zh, name_zh in rows
+        {
+            "id": topic_id,
+            "parent_id": parent_id,
+            "code": code,
+            "number": topic_number(domain_order, competency_order),
+            "short_name_zh": short_name_zh,
+            "name_zh": name_zh,
+            "blueprint_min": blueprint_min,
+            "blueprint_max": blueprint_max,
+            "question_count": counts.get(topic_id, 0),
+        }
+        for (
+            topic_id,
+            parent_id,
+            code,
+            short_name_zh,
+            name_zh,
+            blueprint_min,
+            blueprint_max,
+            domain_order,
+            competency_order,
+        ) in rows
     ]
 
 
@@ -167,6 +228,17 @@ def list_question_ids_for_domain(db: Session, bank_id: int, domain_id: int) -> l
         .join(QuestionTopic, QuestionTopic.question_id == Question.id)
         .join(ExamTopic, QuestionTopic.topic_id == ExamTopic.id)
         .where(Question.bank_id == bank_id, ExamTopic.parent_id == domain_id)
+        .order_by(Question.id)
+    ).all()
+    return [row[0] for row in rows]
+
+
+def list_question_ids_for_competency(db: Session, bank_id: int, competency_id: int) -> list[int]:
+    """某个能力项直接关联的题目 id，按题目顺序返回"""
+    rows = db.execute(
+        select(Question.id)
+        .join(QuestionTopic, QuestionTopic.question_id == Question.id)
+        .where(Question.bank_id == bank_id, QuestionTopic.topic_id == competency_id)
         .order_by(Question.id)
     ).all()
     return [row[0] for row in rows]
@@ -245,6 +317,8 @@ def topics_for_questions(db: Session, question_ids: list[int]) -> dict[int, list
             ExamTopic.id,
             ExamTopic.code,
             ExamTopic.short_name_zh,
+            parent.c.order_index,
+            ExamTopic.order_index,
         )
         .join(ExamTopic, QuestionTopic.topic_id == ExamTopic.id)
         .join(parent, ExamTopic.parent_id == parent.c.id)
@@ -253,8 +327,13 @@ def topics_for_questions(db: Session, question_ids: list[int]) -> dict[int, list
     ).all()
 
     result: dict[int, list[dict]] = {}
-    for question_id, topic_id, code, short_name_zh in rows:
+    for question_id, topic_id, code, short_name_zh, domain_order, competency_order in rows:
         result.setdefault(question_id, []).append(
-            {"id": topic_id, "code": code, "short_name_zh": short_name_zh}
+            {
+                "id": topic_id,
+                "code": code,
+                "number": topic_number(domain_order, competency_order),
+                "short_name_zh": short_name_zh,
+            }
         )
     return result
