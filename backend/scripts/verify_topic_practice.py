@@ -49,10 +49,16 @@ def main() -> None:
 
     domains = overview["topics"]
     check("AC6 返回 5 个域", len(domains) == 5, f"实际 {len(domains)} 个")
+    competencies = [c for d in domains for c in d.get("competencies") or []]
+    check("AC6 域下挂出 16 个能力项", len(competencies) == 16, f"实际 {len(competencies)} 个")
     check(
         "AC6 每个域都带蓝图配额",
         all(d["blueprint_max"] > 0 for d in domains),
         ", ".join(f"{d['code']}={d['blueprint_min']}-{d['blueprint_max']}" for d in domains),
+    )
+    check(
+        "AC6 每个能力项都带题数和配额",
+        all("question_count" in c and c.get("blueprint_max", 0) > 0 for c in competencies),
     )
 
     classified = overview["total_questions"] - overview["unclassified_count"]
@@ -62,9 +68,9 @@ def main() -> None:
         f"{classified} + {overview['unclassified_count']} = {overview['total_questions']}",
     )
 
-    target = next((d for d in domains if d["question_count"] > 0), None)
+    target = next((c for c in competencies if c["question_count"] > 0), None)
     if target is None:
-        check("AC7 专项练习出题", False, "没有任何域有题目，先跑批量打标")
+        check("AC7 专项练习出题", False, "没有任何能力项有题目，先跑批量打标")
         return
 
     resp = client.post(
@@ -78,9 +84,9 @@ def main() -> None:
     question_ids = [q["id"] for q in started["questions"]]
 
     check(
-        "AC7 出题数等于该域题数",
+        "AC7 出题数等于该能力项题数",
         len(question_ids) == target["question_count"],
-        f"出题 {len(question_ids)}，域内 {target['question_count']}",
+        f"出题 {len(question_ids)}，能力项 {target['question_count']}",
     )
     check("AC7 题目不重复", len(question_ids) == len(set(question_ids)))
     check(
@@ -89,11 +95,11 @@ def main() -> None:
         str(started["session"]["topic_short_name"]),
     )
 
-    from app.services.topic_service import list_question_ids_for_domain
+    from app.services.topic_service import list_question_ids_for_competency
 
     db = SessionLocal()
-    expected = set(list_question_ids_for_domain(db, args.bank_id, target["id"]))
-    check("AC7 出题范围全部属于该域", set(question_ids) == expected)
+    expected = set(list_question_ids_for_competency(db, args.bank_id, target["id"]))
+    check("AC7 出题范围全部属于该能力项", set(question_ids) == expected)
 
     resp = client.get(f"/api/quiz/session/{session_id}", headers=headers)
     check(

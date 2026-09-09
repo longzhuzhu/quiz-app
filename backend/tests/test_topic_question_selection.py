@@ -46,6 +46,7 @@ from app.models.exam_topic import TOPIC_LEVEL_COMPETENCY, TOPIC_LEVEL_DOMAIN  # 
 from app.models.question_topic import TOPIC_SOURCE_AI, TOPIC_SOURCE_MANUAL  # noqa: E402
 from app.services.topic_service import (  # noqa: E402
     list_bank_topic_overview,
+    list_question_ids_for_competency,
     list_question_ids_for_domain,
     list_unclassified_question_ids,
     set_question_topics_manually,
@@ -177,7 +178,26 @@ def test_domain_without_tagged_questions_returns_empty(db, fixture_data):
     assert list_question_ids_for_domain(db, fixture_data["bank"].id, empty_domain.id) == []
 
 
-def test_unclassified_selection_only_returns_untagged_questions(db, fixture_data):
+def test_competency_selection_returns_only_that_competency(db, fixture_data):
+    q = fixture_data["questions"]
+
+    ids = list_question_ids_for_competency(
+        db, fixture_data["bank"].id, fixture_data["comp_iia"].id
+    )
+
+    # q1 只挂 II.A；q2 同时挂 II.A 和 II.B；q4 跨域也挂了 II.A
+    assert ids == sorted([q["q1"].id, q["q2"].id, q["q4"].id])
+
+
+def test_competency_selection_does_not_include_sibling_competency(db, fixture_data):
+    q = fixture_data["questions"]
+
+    ids = list_question_ids_for_competency(
+        db, fixture_data["bank"].id, fixture_data["comp_iib"].id
+    )
+
+    assert ids == [q["q2"].id]
+    assert q["q1"].id not in ids
     q = fixture_data["questions"]
 
     ids = list_unclassified_question_ids(db, fixture_data["bank"].id)
@@ -199,10 +219,22 @@ def test_overview_counts_reconcile_with_bank_total(db, fixture_data):
     assert classified == 4
 
 
-def test_overview_exposes_competencies_in_outline_order(db, fixture_data):
+def test_overview_nests_competency_counts_under_domains(db, fixture_data):
     overview = list_bank_topic_overview(db, fixture_data["exam"].id, fixture_data["bank"].id)
+    by_code = {item["code"]: item for item in overview["topics"]}
 
-    assert [c["code"] for c in overview["competencies"]] == ["II.A", "II.B", "III.C"]
+    ii_counts = {c["code"]: c["question_count"] for c in by_code["II"]["competencies"]}
+    iii_counts = {c["code"]: c["question_count"] for c in by_code["III"]["competencies"]}
+
+    # q1,q2,q4 挂 II.A；q2 挂 II.B；q3,q4 挂 III.C
+    assert ii_counts == {"II.A": 3, "II.B": 1}
+    assert iii_counts == {"III.C": 2}
+    assert [c["code"] for c in by_code["II"]["competencies"]] == ["II.A", "II.B"]
+    # 界面编号按 order_index 生成：fixture 里 II 是第 1 个域
+    assert by_code["II"]["number"] == "1"
+    assert [c["number"] for c in by_code["II"]["competencies"]] == ["1.1", "1.2"]
+    assert by_code["III"]["number"] == "2"
+    assert [c["number"] for c in by_code["III"]["competencies"]] == ["2.1"]
 
 
 def test_tagging_prompt_lists_competencies_in_outline_order(db, fixture_data):

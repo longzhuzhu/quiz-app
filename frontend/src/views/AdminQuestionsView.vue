@@ -60,7 +60,7 @@
             <div class="mt-1 flex flex-wrap items-center gap-1">
               <span v-for="t in q.topics" :key="t.id"
                 class="rounded-md bg-sky-100 dark:bg-sky-900/30 px-2 py-0.5 text-xs text-sky-700 dark:text-sky-400">
-                {{ t.code }} {{ t.short_name_zh }}
+                {{ t.number || t.code }} {{ t.short_name_zh }}
               </span>
               <span v-if="!q.topics || q.topics.length === 0" class="text-xs text-gray-400 dark:text-gray-500">
                 考点未分类
@@ -161,7 +161,7 @@
             <label v-for="c in competencies" :key="c.id"
               class="flex items-start gap-2 rounded px-1 py-0.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700">
               <input type="checkbox" :value="c.id" v-model="editTopicIds" class="mt-1" />
-              <span>{{ c.code }} {{ c.short_name_zh }}</span>
+              <span>{{ c.number || c.code }} {{ c.short_name_zh }}</span>
             </label>
           </div>
         </div>

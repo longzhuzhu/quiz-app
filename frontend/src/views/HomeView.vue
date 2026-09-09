@@ -132,31 +132,55 @@
     </div>
 
     <!-- 专项练习考点选择弹窗 -->
-    <BaseModal :open="showTopicModal" title="选择专项考点" @close="showTopicModal = false">
+    <BaseModal :open="showTopicModal" title="选择专项考点" maxWidth="lg" @close="showTopicModal = false">
       <div v-if="topicsLoading" class="py-6">
         <SkeletonLoader type="text" :count="3" />
       </div>
-      <p v-else-if="topicOptions.length === 0" class="py-6 text-center text-sm text-gray-500 dark:text-gray-400">
+      <p v-else-if="topicGroups.length === 0" class="py-6 text-center text-sm text-gray-500 dark:text-gray-400">
         该题库所在的考试项目还没有考点，请管理员先灌入考点大纲。
       </p>
-      <div v-else class="space-y-2">
-        <button
-          v-for="option in topicOptions"
-          :key="option.key"
-          type="button"
-          :disabled="option.question_count === 0"
-          class="w-full rounded-lg border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 enabled:hover:border-primary-500 enabled:hover:bg-primary-50 dark:enabled:hover:bg-primary-900/20"
-          :class="option.key === selectedTopicKey
-            ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
-            : 'border-gray-200 dark:border-slate-600'"
-          @click="selectedTopicKey = option.key"
-        >
-          <div class="font-medium text-gray-900 dark:text-white">{{ option.label }}</div>
-          <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            <span v-if="option.blueprint_max">考试占 {{ option.blueprint_min }}–{{ option.blueprint_max }} 题 · </span>
-            本库 {{ option.question_count }} 题
+      <div v-else class="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
+        <section v-for="group in topicGroups" :key="group.code">
+          <h4 class="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">
+            {{ group.number }} {{ group.short_name_zh }}
+            <span class="font-normal">
+              · 考试占 {{ group.blueprint_min }}–{{ group.blueprint_max }} 题 · 本库 {{ group.question_count }} 题
+            </span>
+          </h4>
+          <div class="space-y-2">
+            <button
+              v-for="option in group.options"
+              :key="option.key"
+              type="button"
+              :disabled="option.question_count === 0"
+              class="w-full rounded-lg border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 enabled:hover:border-primary-500 enabled:hover:bg-primary-50 dark:enabled:hover:bg-primary-900/20"
+              :class="option.key === selectedTopicKey
+                ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
+                : 'border-gray-200 dark:border-slate-600'"
+              @click="selectedTopicKey = option.key"
+            >
+              <div class="font-medium text-gray-900 dark:text-white">{{ option.label }}</div>
+              <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                <span v-if="option.blueprint_max">考试占 {{ option.blueprint_min }}–{{ option.blueprint_max }} 题 · </span>
+                本库 {{ option.question_count }} 题
+              </div>
+            </button>
           </div>
-        </button>
+        </section>
+        <section v-if="unclassifiedOption">
+          <button
+            type="button"
+            :disabled="unclassifiedOption.question_count === 0"
+            class="w-full rounded-lg border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 enabled:hover:border-primary-500 enabled:hover:bg-primary-50 dark:enabled:hover:bg-primary-900/20"
+            :class="unclassifiedOption.key === selectedTopicKey
+              ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
+              : 'border-gray-200 dark:border-slate-600'"
+            @click="selectedTopicKey = unclassifiedOption.key"
+          >
+            <div class="font-medium text-gray-900 dark:text-white">{{ unclassifiedOption.label }}</div>
+            <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">本库 {{ unclassifiedOption.question_count }} 题</div>
+          </button>
+        </section>
       </div>
       <template #actions>
         <BaseButton variant="secondary" @click="showTopicModal = false">取消</BaseButton>
@@ -223,7 +247,8 @@ const examBank = ref(null)
 const examQuestionCount = ref(90)
 const showTopicModal = ref(false)
 const topicBank = ref(null)
-const topicOptions = ref([])
+const topicGroups = ref([])
+const unclassifiedOption = ref(null)
 const topicsLoading = ref(false)
 const selectedTopicKey = ref(null)
 
@@ -232,9 +257,14 @@ const UNCLASSIFIED_TOPIC_KEY = '__unclassified__'
 const banks = computed(() => bankStore.banks)
 const loading = computed(() => bankStore.loading)
 const totalQuestions = computed(() => banks.value.reduce((s, b) => s + b.question_count, 0))
-const selectedTopicOption = computed(
-  () => topicOptions.value.find(o => o.key === selectedTopicKey.value) || null
-)
+const selectedTopicOption = computed(() => {
+  for (const group of topicGroups.value) {
+    const match = group.options.find(o => o.key === selectedTopicKey.value)
+    if (match) return match
+  }
+  if (unclassifiedOption.value?.key === selectedTopicKey.value) return unclassifiedOption.value
+  return null
+})
 const quizHistoryPerPage = 100
 
 onMounted(fetchDashboardData)
@@ -276,32 +306,44 @@ async function fetchDashboardData() {
 
 async function openTopicModal(bank) {
   topicBank.value = bank
-  topicOptions.value = []
+  topicGroups.value = []
+  unclassifiedOption.value = null
   selectedTopicKey.value = null
   topicsLoading.value = true
   showTopicModal.value = true
 
   try {
     const res = await client.get(`/banks/${bank.id}/topics`)
-    const domains = (res.data?.topics || []).map(topic => ({
-      key: String(topic.id),
-      topic_id: topic.id,
-      label: `${topic.code}. ${topic.short_name_zh}`,
-      blueprint_min: topic.blueprint_min,
-      blueprint_max: topic.blueprint_max,
-      question_count: topic.question_count,
+    const groups = (res.data?.topics || []).map(domain => ({
+      code: domain.code,
+      number: domain.number,
+      short_name_zh: domain.short_name_zh,
+      blueprint_min: domain.blueprint_min,
+      blueprint_max: domain.blueprint_max,
+      question_count: domain.question_count,
+      options: (domain.competencies || []).map(competency => ({
+        key: String(competency.id),
+        topic_id: competency.id,
+        label: `${competency.number} ${competency.short_name_zh}`,
+        blueprint_min: competency.blueprint_min,
+        blueprint_max: competency.blueprint_max,
+        question_count: competency.question_count,
+      })),
     }))
-    // 未分类始终列出：题数为 0 时显示为不可选，让用户知道全部题目都已归类
-    domains.push({
+    unclassifiedOption.value = {
       key: UNCLASSIFIED_TOPIC_KEY,
       topic_id: null,
       label: '未分类',
       blueprint_min: 0,
       blueprint_max: 0,
       question_count: res.data?.unclassified_count || 0,
-    })
-    topicOptions.value = domains
-    selectedTopicKey.value = domains.find(o => o.question_count > 0)?.key || null
+    }
+    topicGroups.value = groups
+    const firstSelectable = groups
+      .flatMap(group => group.options)
+      .find(option => option.question_count > 0)
+    selectedTopicKey.value = firstSelectable?.key
+      || (unclassifiedOption.value.question_count > 0 ? unclassifiedOption.value.key : null)
   } catch (e) {
     toast.error(e.response?.data?.detail || '获取考点失败')
     showTopicModal.value = false
