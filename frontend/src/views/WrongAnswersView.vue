@@ -138,7 +138,7 @@
                   :question-id="w.question.id"
                   :initial-explanation="{ explanation: w.question.explanation, explanation_zh: w.question.explanation_zh }"
                   :displayed="!!displayedExplanation(w)"
-                  @explained="(e) => explainResults[w.id] = e"
+                  @explained="onExplained(w, $event)"
                 />
                 <AddVocabButton />
               </div>
@@ -205,6 +205,14 @@ function isCorrectOption(question, key) {
 
 function displayedExplanation(wrong) {
   return explainResults[wrong.id]?.explanation_zh || wrong.question.explanation_zh || null
+}
+
+function onExplained(w, payload) {
+  explainResults[w.id] = payload
+  if (w.question) {
+    w.question.explanation = payload.explanation
+    w.question.explanation_zh = payload.explanation_zh
+  }
 }
 
 function onTranslated(w, data) {

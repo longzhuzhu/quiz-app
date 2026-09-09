@@ -1,0 +1,12 @@
+{"file":".trellis/tasks/09-09-optimize-ai-explanation/research/current-ai-explanation-flow.md","reason":"包含当前前后端调用链、缓存根因、历史数据、竞态和已确认产品边界"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"本任务跨越组件、API、服务、数据库与后台预热，需要显式维护端到端契约"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"缓存判断、解析组装和校验必须集中复用，避免同步接口与预热路径分叉"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"ExplainButton 属于直接调用 client 并通过 emit 返回结果的智能组件"}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"切题与异步响应需要遵循项目现有 generation 防竞态模式"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"约束 Axios 调用、考试项目请求头、组件错误提示和预热静默语义"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"约束 FastAPI detail 错误契约与数据库失败 rollback"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"约束 SQLAlchemy 2.x、JSONB Profile 快照、并发与迁移边界"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"约束 FastAPI 服务签名、返回格式、考试项目隔离与部署验证"}
+{"file": ".trellis/tasks/09-09-optimize-ai-explanation/prd.md", "reason": "验收标准与产品决策，实现时不得缩小范围"}
+{"file": ".trellis/tasks/09-09-optimize-ai-explanation/design.md", "reason": "force 契约、平台输出契约、校验重试与 CAS 的技术边界"}
+{"file": ".trellis/tasks/09-09-optimize-ai-explanation/implement.md", "reason": "分段实施清单、测试命令与回滚点"}

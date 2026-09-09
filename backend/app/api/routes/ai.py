@@ -149,14 +149,15 @@ def explain(
 ):
     question = get_question_in_exam_or_404(db, data.question_id, exam)
 
-    if has_question_explanation(question):
+    if not data.force and has_question_explanation(question):
         return {
             **build_question_explanation_payload(question),
             "cached": True,
         }
 
     try:
-        result = explain_question(db, question)
+        result = explain_question(db, question, force=data.force)
         return {**result, "cached": False}
     except Exception as e:
+        db.rollback()
         raise HTTPException(status_code=500, detail=f"解析失败: {str(e)}")

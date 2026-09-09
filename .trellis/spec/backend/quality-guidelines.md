@@ -378,7 +378,11 @@ curl -s http://localhost:5003/api/quiz/recent-accuracy \
 - `active_exam_id`：只用于账号信息和 UI 默认选择，不参与后端 exam-scoped API 的自动解析。
 - 题库/题目/导入任务：必须先确认所属 bank/job 在当前 `exam.id` 下，再读取、写入、删除或启动后台处理。
 - 词汇：业务 API 只暴露个人词汇语义；不得新增 `professional`、`system`、official vocabulary 兼容端点。
-- AI：翻译和解析 prompt 从当前题目所属考试项目的 `ai_profile` 读取，缺字段时才使用代码内默认 prompt。
+- AI 翻译：prompt 从当前题目所属考试项目的 `ai_profile` 读取，缺字段时才使用代码内默认 prompt。
+- AI 解析：Profile 的 `explanation_system_prompt` 只提供 persona；平台三段式契约由
+  `build_explanation_system_prompt()` 运行时追加，不得让 Profile 整段替换输出协议。
+  缓存命中以 `explanation_zh` 为准（英文-only 视为未缓存）。
+  `POST /api/ai/explain` 的 `force=true` 必须调模型，禁止返回旧缓存冒充更新。
 - 管理员只读 API：可查看所有考试项目及其题库/题目，不得写入、删除他人数据，也不得暴露用户答题历史。
 
 ### 4. Validation & Error Matrix
@@ -407,7 +411,8 @@ curl -s http://localhost:5003/api/quiz/recent-accuracy \
 - Route isolation: bank/question/job/wrong/quiz/vocab/ai endpoint 对跨项目 ID 返回 404。
 - Migration: 在真实 PostgreSQL 上执行 `alembic upgrade head`，断言存量 bank、system vocabulary、active exam 迁移到指定 owner 的 `cipt` 项目。
 - Vocabulary: `scope=personal|exam_personal|all` 只返回当前用户词汇，且无 professional/system API 路径。
-- AI: 翻译/解析从题目所属 exam 的 `ai_profile` 取 prompt，跨项目 question ID 返回 404。
+- AI: 翻译从 exam `ai_profile` 取 prompt；解析 persona 来自 Profile、输出契约由平台组装；跨项目 question ID 返回 404。
+- AI explain: `force=true` 必须调模型；缓存命中只认 `explanation_zh`。
 - Admin read-only: 管理员可读取所有 exams/banks/questions，但没有写/删他人数据和用户 quiz history endpoint。
 
 ### 7. Wrong vs Correct
@@ -542,6 +547,77 @@ def prewarm(
         raise HTTPException(status_code=404, detail="答题会话不存在")
     if session.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="无权限")
+```
+
+---
+
+## Scenario: AI 解析获取与更新
+
+### 1. Scope / Trigger
+
+- Trigger: 修改 `POST /api/ai/explain`、`explain_question`、解析缓存判定、预热跳过条件，或 ExplainButton 获取/更新语义。
+- 范围：同步解析接口、预热 job、答题页、错题本。模拟考试继续隐藏解析。
+
+### 2. Signatures
+
+- `AIExplainRequest(question_id: int, force: bool = False)`
+- `has_question_explanation(question) -> bool`：仅 `bool(question.explanation_zh)`
+- `explain_question(db, question, *, force=False) -> dict`
+- `validate_structured_explanation(result, question) -> list[str]`
+- `build_explanation_system_prompt(persona) -> str`
+
+### 3. Contracts
+
+- `force=false` 且已有中文解析：返回 `{explanation, explanation_zh, cached: true}`，不调模型。
+- `force=true`：必须调用模型；成功后覆盖中英文字段；`cached` 为 false。
+- 新生成必须通过三段式校验；首次不合格带错误列表再调一次，合计最多 2 次 `call_ai_api`。
+- `force=false` 落库前 `db.refresh`：若此时已有中文解析则不覆盖（挡住预热后提交）。
+- 失败不写半成品；路由 `except` 后 `db.rollback()`，HTTP 500 + `detail`。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+|---|---|
+| 无中文缓存 + force=false | 调模型，合格则写入 |
+| 有中文缓存 + force=false | 返回缓存 |
+| 英文-only | 视为无缓存 |
+| force=true | 调模型并覆盖 |
+| JSON/结构首次失败 | 纠正重试一次 |
+| 第二次仍失败 / HTTP 超时 / 缺 Key | 不 commit；更新场景前端提示“更新失败，已保留原解析” |
+
+### 5. Good/Base/Bad Cases
+
+- Good: 错题本已展示解析时按钮为可点的“更新AI解析”，请求带 `force: true`。
+- Base: 未显示时点“AI 解析”，本地或数据库有 `explanation_zh` 则不重新生成。
+- Bad: `has_question_explanation` 把仅英文当成命中，前端永远看不到解析却以为成功。
+- Bad: 预热 `explain_question(force=false)` 在用户更新之后仍 commit 覆盖。
+
+### 6. Tests Required
+
+- `tests/test_ai_explanation_refresh.py`：中文缓存口径、校验拒绝、一次重试、第二次不 commit、CAS、force 覆盖。
+- `tests/test_explanation_prompt_structure.py`：004/006 tripwire，persona 不含 JSON 契约。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+def has_question_explanation(question):
+    return bool(question.explanation or question.explanation_zh)
+
+if has_question_explanation(question):
+    return {**payload, "cached": True}  # force=true 也被短路
+```
+
+#### Correct
+
+```python
+def has_question_explanation(question):
+    return bool(question.explanation_zh)
+
+if not data.force and has_question_explanation(question):
+    return {**payload, "cached": True}
+explain_question(db, question, force=data.force)
 ```
 
 ---

@@ -252,6 +252,10 @@ WHERE ai_profile->>'explanation_system_prompt' = :old_prompt   -- 逐字节相�
   测试会失败并提示补迁移（参见 `backend/tests/test_explanation_prompt_structure.py`）。
 - 如果这份配置的产物被缓存到别的列（如 `Question.explanation`），换默认值后还要清缓存才能看到新行为，
   否则命中缓存就不会重算。
+- **平台输出契约不要写进 JSONB。** `explanation_system_prompt` 只存领域角色 / 术语 / 讲解偏好；
+  三段式 JSON 形状、干扰项枚举与质量规则由 `build_explanation_system_prompt(persona)` 在运行时追加。
+  否则自定义 Profile 会整段替换平台结构（`migration 006` 把 004 写入的默认全文收成 persona）。
+  改 persona 常量仍要配套迁移 + tripwire：`006` old == `004` new，`006` new == 当前 persona。
 
 ---
 
