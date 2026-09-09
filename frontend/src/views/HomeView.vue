@@ -65,6 +65,12 @@
       </router-link>
     </div>
 
+    <PracticeHeatmap
+      :days="heatmap.days"
+      :today="heatmap.today"
+      :current-streak="heatmap.current_streak"
+    />
+
     <!-- 题库列表 -->
     <div v-if="lastIncompleteSession" class="mb-4 rounded-xl bg-white dark:bg-slate-800 shadow-card p-6">
       <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -193,8 +199,10 @@ import { currentExamPath } from '../utils/examRoutes'
 import { sessionModeLabel } from '../utils/quizMode'
 import { useToast } from '../composables/useToast'
 import client from '../api/client'
+import { formatLocalDate } from '../utils/localDate'
 import BaseButton from '../components/BaseButton.vue'
 import BaseModal from '../components/BaseModal.vue'
+import PracticeHeatmap from '../components/PracticeHeatmap.vue'
 import SkeletonLoader from '../components/SkeletonLoader.vue'
 import { FolderIcon, DocumentTextIcon, CheckBadgeIcon, ExclamationTriangleIcon } from '@heroicons/vue/24/outline'
 
@@ -207,6 +215,7 @@ const toast = useToast()
 const wrongStats = ref({})
 const recentAccuracy = ref(0)
 const recentTotal = ref(0)
+const heatmap = ref({ today: formatLocalDate(), current_streak: 0, days: [] })
 const lastIncompleteSession = ref(null)
 const incompleteSessionByBankId = ref({})
 const showExamModal = ref(false)
@@ -235,6 +244,8 @@ watch(() => route.params.examSlug, fetchDashboardData)
 async function fetchDashboardData() {
   lastIncompleteSession.value = null
   incompleteSessionByBankId.value = {}
+  const localToday = formatLocalDate()
+  heatmap.value = { today: localToday, current_streak: 0, days: [] }
 
   const bankP = bankStore.fetchBanks().catch((e) => {
     toast.error(e.response?.data?.error || '获取题库失败')
@@ -244,6 +255,15 @@ async function fetchDashboardData() {
     recentAccuracy.value = r.data.accuracy
     recentTotal.value = r.data.total
   }).catch(() => {})
+  const heatmapP = client.get('/quiz/practice-heatmap', { params: { today: localToday } }).then(r => {
+    heatmap.value = {
+      today: r.data?.today || localToday,
+      current_streak: Number(r.data?.current_streak) || 0,
+      days: Array.isArray(r.data?.days) ? r.data.days : [],
+    }
+  }).catch(() => {
+    heatmap.value = { today: localToday, current_streak: 0, days: [] }
+  })
   const lastSessionP = client.get('/quiz/history', { params: { page: 1, per_page: quizHistoryPerPage } }).then(r => {
     const items = Array.isArray(r.data?.items) ? r.data.items : []
     updateIncompleteSessions(items)
@@ -251,7 +271,7 @@ async function fetchDashboardData() {
     lastIncompleteSession.value = null
     incompleteSessionByBankId.value = {}
   })
-  await Promise.allSettled([bankP, wrongP, accP, lastSessionP])
+  await Promise.allSettled([bankP, wrongP, accP, heatmapP, lastSessionP])
 }
 
 async function openTopicModal(bank) {

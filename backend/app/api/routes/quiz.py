@@ -1,7 +1,7 @@
 """Quiz API 路由 - 答题会话（开始/答题/结束/历史/详情）"""
 
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
@@ -19,6 +19,11 @@ from app.models.wrong import WrongAnswer, UserQuestionStat
 from app.models.user import User
 from app.schemas.quiz import QuizStartRequest, QuizAnswerRequest, QuizFinishRequest
 from app.services.exam_service import get_bank_in_exam_or_404
+from app.services.practice_service import (
+    clear_practice_days,
+    heatmap_for,
+    record_question_touch,
+)
 from app.services.topic_service import (
     list_question_ids_for_domain,
     list_unclassified_question_ids,
@@ -292,6 +297,14 @@ def submit_answer(
             wrong = WrongAnswer(user_id=user_id, question_id=question_id)
             db.add(wrong)
 
+    record_question_touch(
+        db,
+        user_id=user_id,
+        exam_id=exam.id,
+        question_id=question_id,
+        local_date=data.local_date,
+    )
+
     db.commit()
 
     # 模拟考试模式不返回正确答案和解析
@@ -418,6 +431,7 @@ def clear_history(
     )
     for s in sessions:
         db.delete(s)
+    clear_practice_days(db, user_id, exam.id)
     db.commit()
     return {"message": "已清空答题历史"}
 
@@ -460,6 +474,16 @@ def recent_accuracy(
         "accuracy": accuracy,
         "limit": limit,
     }
+
+
+@router.get("/practice-heatmap")
+def practice_heatmap(
+    today: date = Query(..., description="浏览器本地今天 YYYY-MM-DD"),
+    current_user: User = Depends(get_current_user),
+    exam: Exam = Depends(get_exam_context),
+    db: Session = Depends(get_db),
+):
+    return heatmap_for(db, current_user.id, exam.id, today)
 
 
 @router.get("/session/{session_id}")

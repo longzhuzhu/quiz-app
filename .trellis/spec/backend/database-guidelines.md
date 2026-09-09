@@ -190,6 +190,8 @@ def _upsert_user_question_stat(user_id, question_id):
         return ...
 ```
 
+附属表 upsert（如练习日）也走同一模式，但 **savepoint 里的 `flush()` 会写出该 Session 里所有脏对象**。唯一冲突回滚 savepoint 时，可能把同事务里尚未提交的 `QuizAnswer` 改答一并撤掉。约定：先按唯一键查重，已存在则直接返回；插入前先 `db.flush()` 落盘主路径，再 `begin_nested()` 只包附属插入。见 `backend/app/services/practice_service.py` 的 `record_question_touch`。
+
 ---
 
 ## 命名规则

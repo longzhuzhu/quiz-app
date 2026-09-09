@@ -1,0 +1,8 @@
+{"file": "CONTEXT.md", "reason": "练习日 / 练习热力图 / 连续练习日 / 当日作答量的领域定义与关系，实现时不得改写成打卡或贡献"}
+{"file": "docs/adr/0005-practice-days-not-from-last-answered-at.md", "reason": "禁止用 QuizAnswer.answered_at 回放练习日；提交时按本地日另行记录"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "新表 practice_day_questions、Alembic 007、唯一约束与级联删除需符合建模约定"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "新模型 models/practice.py 与 services/practice_service.py 的放置位置"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "local_date 非法时不打断答题主流程，错误处理需与现有 HTTPException 约定一致"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "PracticeHeatmap 作为独立组件，HomeView 只编排，需遵循 script setup / 无 style 块 / Base 组件约定"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "quiz store 的 submitAnswer 必须带 local_date，所有模式走同一写入"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本地日从浏览器冻结、经 API 写入、再按 today 查询，是跨层日期契约"}
