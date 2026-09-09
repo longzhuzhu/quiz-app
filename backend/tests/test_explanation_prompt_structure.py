@@ -4,7 +4,7 @@
     TC-1  新默认 prompt 包含 stem_breakdown / distractors 契约、限定词与干扰项枚举。
     TC-2  compose_explanation_zh 把结构化字段组装成固定顺序的分段文本。
     TC-3  只有 stem_breakdown 或只有 distractors 时也能组装，缺失字段被跳过。
-    TC-4  旧的两键返回结构原样透传（自定义 prompt 向后兼容）。
+    TC-4  旧的两键返回结构被校验拒绝，不得再作为可落库成功结果。
     TC-5  explain_question 写入组装后的文本，且缺 explanation 键不抛 KeyError。
     TC-6  两个字段都为空时抛 ValueError，由路由层转成 500，不写入空解析。
     TC-7  migration 004 的旧 prompt 字面量与 migration 003 实际写入的值一致
@@ -28,10 +28,16 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.services import ai_service  # noqa: E402
 from app.services.exam_service import (  # noqa: E402
+    CIPT_AI_PROFILE,
+    CIPT_EXPLANATION_PERSONA,
     CIPT_EXPLANATION_SYSTEM_PROMPT,
+    DEFAULT_AI_PROFILE,
+    DEFAULT_EXPLANATION_PERSONA,
     DEFAULT_EXPLANATION_SYSTEM_PROMPT,
     EXPLANATION_DISTRACTOR_TYPES,
+    EXPLANATION_OUTPUT_CONTRACT,
     EXPLANATION_STEM_QUALIFIERS,
+    build_explanation_system_prompt,
 )
 
 
@@ -53,8 +59,8 @@ def _structured_result() -> dict:
             "constraint": "处理必须在数据离开公司边界前完成",
             "asked": "四种做法里哪一种最能降低再识别风险（MOST 问最优而非可行）",
         },
-        "explanation": "The correct answer is B because ...",
-        "explanation_zh": "B 正确，因为在数据离开边界前做去标识化 ...",
+        "explanation": "The correct answer is B because de-identification happens before data leaves the boundary.",
+        "explanation_zh": "在数据离开公司边界前做去标识化，能降低再识别风险。仅加密或仅限制传输范围都无法覆盖存储侧暴露。",
         "distractors": [
             {"key": "A", "type": "范围过窄", "reason": "只覆盖传输环节，没处理存储侧"},
             {"key": "C", "type": "术语混淆", "reason": "把加密当成去标识化"},
@@ -87,6 +93,34 @@ def test_explanation_prompt_declares_structured_contract(prompt):
 def test_cipt_prompt_keeps_exam_specific_persona():
     assert CIPT_EXPLANATION_SYSTEM_PROMPT.startswith("你是一位 CIPT")
     assert DEFAULT_EXPLANATION_SYSTEM_PROMPT.startswith("你是专业考试辅导专家。")
+
+
+def test_profile_persona_does_not_embed_output_contract():
+    """Profile 只存 persona，不能单独带另一套可生效的 JSON 形状。"""
+    personas = (
+        DEFAULT_EXPLANATION_PERSONA,
+        CIPT_EXPLANATION_PERSONA,
+        DEFAULT_AI_PROFILE["explanation_system_prompt"],
+        CIPT_AI_PROFILE["explanation_system_prompt"],
+    )
+    for persona in personas:
+        assert "stem_breakdown" not in persona
+        assert "distractors" not in persona
+        assert '{"' not in persona
+        assert "返回 JSON" not in persona
+
+
+def test_build_explanation_system_prompt_appends_platform_contract():
+    assembled = build_explanation_system_prompt(DEFAULT_EXPLANATION_PERSONA)
+    assert assembled == DEFAULT_EXPLANATION_SYSTEM_PROMPT
+    assert assembled.endswith(EXPLANATION_OUTPUT_CONTRACT)
+    assert assembled.startswith(DEFAULT_EXPLANATION_PERSONA)
+    for key in ("stem_breakdown", "distractors", "explanation_zh", "qualifier", "asked"):
+        assert key in assembled
+    for qualifier in EXPLANATION_STEM_QUALIFIERS:
+        assert qualifier in assembled
+    for distractor_type in EXPLANATION_DISTRACTOR_TYPES:
+        assert distractor_type in assembled
 
 
 # ─── TC-2 ────────────────────────────────────────────────────────────
@@ -180,14 +214,20 @@ def test_compose_explanation_zh_coerces_numeric_option_key():
 # ─── TC-4 ────────────────────────────────────────────────────────────
 
 
-def test_compose_explanation_zh_passes_through_legacy_two_key_shape():
-    """自定义 prompt 仍返回旧的两键结构时，行为与改动前完全一致。"""
-    legacy = {"explanation": "English", "explanation_zh": "中文解析"}
+def test_legacy_two_key_shape_is_rejected_by_validation():
+    """旧两键结构不得再作为可落库的成功结果。"""
+    question = MagicMock(name="question")
+    question.options = [{"key": "A", "text": "opt a"}, {"key": "B", "text": "opt b"}]
+    question.content = "stem"
+    question.correct_answer = "B"
 
-    composed = ai_service.compose_explanation_zh(legacy)
+    errors = ai_service.validate_structured_explanation(
+        {"explanation": "English", "explanation_zh": "中文解析"},
+        question,
+    )
 
-    assert composed == "中文解析"
-    assert ai_service.SECTION_ANSWER_ANALYSIS not in composed
+    assert errors
+    assert any("stem_breakdown" in item or "题干拆解" in item for item in errors)
 
 
 # ─── TC-5 / TC-6 ─────────────────────────────────────────────────────
@@ -196,8 +236,12 @@ def test_compose_explanation_zh_passes_through_legacy_two_key_shape():
 @pytest.fixture
 def fake_question():
     question = MagicMock(name="question")
-    question.options = [{"key": "A", "text": "opt a"}, {"key": "B", "text": "opt b"}]
-    question.content = "stem"
+    question.options = [
+        {"key": "A", "text": "opt a"},
+        {"key": "B", "text": "opt b"},
+        {"key": "C", "text": "opt c"},
+    ]
+    question.content = "Which control is MOST effective before data leaves the company?"
     question.correct_answer = "B"
     question.bank = None
     question.explanation = None
@@ -226,7 +270,8 @@ def test_explain_question_persists_composed_text(monkeypatch, fake_question):
     payload = ai_service.explain_question(db, fake_question)
 
     assert captured["scene"] == "explain"
-    assert fake_question.explanation == "The correct answer is B because ..."
+    assert "de-identification" in fake_question.explanation
+    assert captured["messages"][0]["content"] == build_explanation_system_prompt(DEFAULT_EXPLANATION_PERSONA)
     assert ai_service.SECTION_STEM_BREAKDOWN in fake_question.explanation_zh
     assert ai_service.SECTION_DISTRACTORS in fake_question.explanation_zh
     assert payload["explanation_zh"] == fake_question.explanation_zh
@@ -235,15 +280,16 @@ def test_explain_question_persists_composed_text(monkeypatch, fake_question):
 
 def test_explain_question_without_explanation_key_does_not_raise(monkeypatch, fake_question):
     """LLM 漏返 explanation 键时不再 KeyError，中文解析仍然落库。"""
-    _patch_ai_response(
-        monkeypatch,
-        '{"explanation_zh": "中文解析", "distractors": [{"key": "A", "type": "范围过窄", "reason": "太窄"}]}',
-    )
+    import json
+
+    payload = _structured_result()
+    payload.pop("explanation")
+    _patch_ai_response(monkeypatch, json.dumps(payload, ensure_ascii=False))
 
     ai_service.explain_question(MagicMock(name="db"), fake_question)
 
     assert fake_question.explanation is None
-    assert "A（范围过窄）：太窄" in fake_question.explanation_zh
+    assert "A（范围过窄）：只覆盖传输环节，没处理存储侧" in fake_question.explanation_zh
 
 
 def test_explain_question_raises_when_result_is_empty(monkeypatch, fake_question):
@@ -347,3 +393,69 @@ def test_migration_004_downgrade_is_exact_inverse(monkeypatch):
     # 反向防御：persona 不能在替换过程中被串到另一个 prompt 上
     assert migration_004.NEW_CIPT_EXPLANATION_PROMPT.startswith("你是一位 CIPT")
     assert migration_004.NEW_DEFAULT_EXPLANATION_PROMPT.startswith("你是专业考试辅导专家。")
+
+
+# ─── 006 tripwires ───────────────────────────────────────────────────
+
+
+def test_migration_006_old_prompt_matches_004_new():
+    """006 的 old 全文必须与 004 当时写入的 new 全文逐字节相等。"""
+    migration_004 = _load_migration("004_structured_explanation_prompt.py")
+    migration_006 = _load_migration("006_explanation_prompt_persona_split.py")
+
+    assert migration_006.OLD_DEFAULT_EXPLANATION_PROMPT == migration_004.NEW_DEFAULT_EXPLANATION_PROMPT
+    assert migration_006.OLD_CIPT_EXPLANATION_PROMPT == migration_004.NEW_CIPT_EXPLANATION_PROMPT
+
+
+def test_migration_006_new_prompt_matches_current_persona_constants():
+    """006 的 new persona 必须等于当前代码 persona 常量。"""
+    migration_006 = _load_migration("006_explanation_prompt_persona_split.py")
+
+    assert migration_006.NEW_DEFAULT_EXPLANATION_PROMPT == DEFAULT_EXPLANATION_PERSONA
+    assert migration_006.NEW_CIPT_EXPLANATION_PROMPT == CIPT_EXPLANATION_PERSONA
+
+
+def test_migration_006_revision_chain():
+    migration_006 = _load_migration("006_explanation_prompt_persona_split.py")
+
+    assert migration_006.revision == "006"
+    assert migration_006.down_revision == "005"
+
+
+def _run_006_direction(monkeypatch, direction: str) -> _RecordingBind:
+    migration_006 = _load_migration("006_explanation_prompt_persona_split.py")
+    bind = _RecordingBind()
+    monkeypatch.setattr(migration_006.op, "get_bind", lambda: bind)
+    getattr(migration_006, direction)()
+    return bind
+
+
+def test_migration_006_upgrade_maps_full_prompts_to_persona(monkeypatch):
+    migration_006 = _load_migration("006_explanation_prompt_persona_split.py")
+    bind = _run_006_direction(monkeypatch, "upgrade")
+
+    assert len(bind.calls) == 2
+    for call in bind.calls:
+        assert "explanation_system_prompt" in call["sql"]
+        assert "jsonb_set" in call["sql"]
+
+    swaps = {(call["params"]["old_prompt"], call["params"]["new_prompt"]) for call in bind.calls}
+    assert swaps == {
+        (migration_006.OLD_CIPT_EXPLANATION_PROMPT, migration_006.NEW_CIPT_EXPLANATION_PROMPT),
+        (migration_006.OLD_DEFAULT_EXPLANATION_PROMPT, migration_006.NEW_DEFAULT_EXPLANATION_PROMPT),
+    }
+
+
+def test_migration_006_downgrade_is_exact_inverse(monkeypatch):
+    upgrade_swaps = {
+        (call["params"]["old_prompt"], call["params"]["new_prompt"])
+        for call in _run_006_direction(monkeypatch, "upgrade").calls
+    }
+    downgrade_swaps = {
+        (call["params"]["new_prompt"], call["params"]["old_prompt"])
+        for call in _run_006_direction(monkeypatch, "downgrade").calls
+    }
+
+    assert upgrade_swaps == downgrade_swaps
+    assert CIPT_EXPLANATION_PERSONA.startswith("你是一位 CIPT")
+    assert DEFAULT_EXPLANATION_PERSONA.startswith("你是专业考试辅导专家。")

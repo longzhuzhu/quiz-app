@@ -1,0 +1,10 @@
+{"file":".trellis/tasks/09-09-optimize-ai-explanation/research/current-ai-explanation-flow.md","reason":"核对实现是否覆盖已验证根因、双入口、英文-only 缓存和预热竞态"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查请求、生成、持久化、返回和展示全链路契约是否一致"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"检查 Vue 组件状态、props/emits 和智能组件惯例"}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"检查切题后过期响应不会污染当前题目"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查前端错误提示、认证/考试项目上下文和预热回归"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"检查错误状态、detail 文案和事务 rollback"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"检查缓存并发、JSONB Profile 与是否误增迁移"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查 FastAPI 风格、考试项目隔离、API 与部署验证"}
+{"file": ".trellis/tasks/09-09-optimize-ai-explanation/prd.md", "reason": "按验收标准核对获取/更新语义、失败保留与三段式质量"}
+{"file": ".trellis/tasks/09-09-optimize-ai-explanation/design.md", "reason": "核对 API force、中文缓存口径、Profile 拆分和预热 CAS 是否按设计落地"}

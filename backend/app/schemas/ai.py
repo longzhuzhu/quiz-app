@@ -13,6 +13,7 @@ class AITranslateBatchRequest(BaseModel):
 
 class AIExplainRequest(BaseModel):
     question_id: int
+    force: bool = False
 
 
 class AIPrewarmRequest(BaseModel):

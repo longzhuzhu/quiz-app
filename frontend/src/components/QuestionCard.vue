@@ -59,7 +59,7 @@
         :question-id="question.id"
         :initial-explanation="initialExplanation"
         :displayed="!!displayedExplanation"
-        @explained="(e) => explainData = e"
+        @explained="onExplained"
       />
       <AddVocabButton :initial-term="question.content" />
       <button @click="copyQuestion"
@@ -138,15 +138,18 @@ const showTranslation = ref(false)
 const explainData = ref(null)
 const submitting = ref(false)
 const initialExplanation = computed(() => {
-  if (!props.question) return null
-  const { explanation, explanation_zh } = props.question
-  if (!explanation && !explanation_zh) return null
-  return { explanation, explanation_zh }
+  if (!props.question?.explanation_zh) return null
+  return {
+    explanation: props.question.explanation,
+    explanation_zh: props.question.explanation_zh,
+  }
 })
 
 const displayedExplanation = computed(() => {
   if (explainData.value?.explanation_zh) return explainData.value.explanation_zh
-  if (answered.value) return result.value?.explanation_zh || null
+  if (answered.value) {
+    return result.value?.explanation_zh || props.question?.explanation_zh || null
+  }
   return null
 })
 
@@ -168,6 +171,18 @@ watch(
   },
   { immediate: true }
 )
+
+function onExplained(payload) {
+  explainData.value = payload
+  if (result.value) {
+    result.value.explanation = payload.explanation
+    result.value.explanation_zh = payload.explanation_zh
+  }
+  if (props.question) {
+    props.question.explanation = payload.explanation
+    props.question.explanation_zh = payload.explanation_zh
+  }
+}
 
 function toggleOption(key) {
   if (!props.question) return

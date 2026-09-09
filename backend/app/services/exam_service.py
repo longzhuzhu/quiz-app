@@ -52,6 +52,10 @@ EXPLANATION_DISTRACTOR_TYPES = (
 # 题干限定词。读反限定词是高频错因，需要在解析中被显式点出来。
 EXPLANATION_STEM_QUALIFIERS = ("MOST", "BEST", "LEAST", "EXCEPT", "NOT", "PRIMARY", "FIRST")
 
+# 考试项目 AI Profile 只存领域角色 / 术语 / 讲解偏好；三段式输出契约由平台在运行时追加。
+DEFAULT_EXPLANATION_PERSONA = "你是专业考试辅导专家。"
+CIPT_EXPLANATION_PERSONA = "你是一位 CIPT（认证信息隐私技术师）考试辅导专家。"
+
 _EXPLANATION_JSON_SHAPE = (
     '{"stem_breakdown": {"qualifier": "题干限定词", "role": "主体或视角", '
     '"scenario": "场景概括", "constraint": "限定条件", "asked": "到底问什么"}, '
@@ -59,36 +63,42 @@ _EXPLANATION_JSON_SHAPE = (
     '"distractors": [{"key": "A", "type": "干扰项类型", "reason": "为什么错"}]}'
 )
 
-
-def _build_explanation_system_prompt(persona: str) -> str:
-    return (
-        persona
-        + "考生母语为中文、正在备考全英文考试，除知识点之外还需要读题训练。请完成三件事："
-        "一是拆解题干结构，让考生看清题目到底在问什么；"
-        "二是解析正确答案的原理；"
-        "三是逐个说明错误选项属于哪一类干扰、为什么错。"
-        "stem_breakdown 字段要求："
-        f"qualifier 只填题干中实际出现的限定词（{'/'.join(EXPLANATION_STEM_QUALIFIERS)} 等），没有则填空字符串；"
-        "role 填题干的主体或视角；scenario 用一句话概括发生了什么；"
-        "constraint 填题干给出的限定条件（法规、技术、数据生命周期阶段等），没有则填空字符串；"
-        "asked 用一句中文说清到底问什么，并点明限定词的含义。"
-        "distractors 只包含错误选项，不包含正确答案；"
-        f"type 必须从以下枚举中选一个：{'、'.join(EXPLANATION_DISTRACTOR_TYPES)}。"
-        "explanation_zh 只写正确答案的原理和相关知识点，不要重复题干拆解和干扰项分析的内容。"
-        f"返回 JSON 格式：{_EXPLANATION_JSON_SHAPE}"
-        "只返回 JSON，不要其他内容。"
-    )
-
-
-DEFAULT_EXPLANATION_SYSTEM_PROMPT = _build_explanation_system_prompt("你是专业考试辅导专家。")
-
-CIPT_EXPLANATION_SYSTEM_PROMPT = _build_explanation_system_prompt(
-    "你是一位 CIPT（认证信息隐私技术师）考试辅导专家。"
+# 平台级输出契约。必须与 migration 004 写入的全文在 persona 之后逐字节一致，
+# 否则 004 tripwire（004 new == 当前组装常量）会失败。
+EXPLANATION_OUTPUT_CONTRACT = (
+    "考生母语为中文、正在备考全英文考试，除知识点之外还需要读题训练。请完成三件事："
+    "一是拆解题干结构，让考生看清题目到底在问什么；"
+    "二是解析正确答案的原理；"
+    "三是逐个说明错误选项属于哪一类干扰、为什么错。"
+    "stem_breakdown 字段要求："
+    f"qualifier 只填题干中实际出现的限定词（{'/'.join(EXPLANATION_STEM_QUALIFIERS)} 等），没有则填空字符串；"
+    "role 填题干的主体或视角；scenario 用一句话概括发生了什么；"
+    "constraint 填题干给出的限定条件（法规、技术、数据生命周期阶段等），没有则填空字符串；"
+    "asked 用一句中文说清到底问什么，并点明限定词的含义。"
+    "distractors 只包含错误选项，不包含正确答案；"
+    f"type 必须从以下枚举中选一个：{'、'.join(EXPLANATION_DISTRACTOR_TYPES)}。"
+    "explanation_zh 只写正确答案的原理和相关知识点，不要重复题干拆解和干扰项分析的内容。"
+    f"返回 JSON 格式：{_EXPLANATION_JSON_SHAPE}"
+    "只返回 JSON，不要其他内容。"
 )
+
+
+def build_explanation_system_prompt(persona: str) -> str:
+    """组装解析 system prompt：persona overlay + 平台输出契约。
+
+    这是唯一组装入口。Profile 里的 explanation_system_prompt 只表示领域角色，
+    即使自定义内容残留旧 JSON 说明，运行时仍追加同一份平台契约。
+    """
+    return (persona or DEFAULT_EXPLANATION_PERSONA) + EXPLANATION_OUTPUT_CONTRACT
+
+
+# 004 当时写入 DB 的全文（persona + 契约）。004 tripwire 锁的是这段历史组装结果。
+DEFAULT_EXPLANATION_SYSTEM_PROMPT = build_explanation_system_prompt(DEFAULT_EXPLANATION_PERSONA)
+CIPT_EXPLANATION_SYSTEM_PROMPT = build_explanation_system_prompt(CIPT_EXPLANATION_PERSONA)
 
 DEFAULT_AI_PROFILE = {
     "translation_system_prompt": DEFAULT_TRANSLATION_SYSTEM_PROMPT,
-    "explanation_system_prompt": DEFAULT_EXPLANATION_SYSTEM_PROMPT,
+    "explanation_system_prompt": DEFAULT_EXPLANATION_PERSONA,
     "vocab_extract_system_prompt": "从下列题目中识别专业术语。",
     "source_lang": "en",
     "target_lang": "zh-CN",
@@ -99,7 +109,7 @@ DEFAULT_AI_PROFILE = {
 CIPT_AI_PROFILE = {
     **DEFAULT_AI_PROFILE,
     "translation_system_prompt": CIPT_TRANSLATION_SYSTEM_PROMPT,
-    "explanation_system_prompt": CIPT_EXPLANATION_SYSTEM_PROMPT,
+    "explanation_system_prompt": CIPT_EXPLANATION_PERSONA,
 }
 
 

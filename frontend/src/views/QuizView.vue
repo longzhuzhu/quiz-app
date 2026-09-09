@@ -309,16 +309,18 @@ async function handleSubmit(answer, callback) {
       return
     }
 
-    // 提交后覆盖映射，保证切回本题时展示最新答案与结果
-    questionResultMap[submitQuestionId] = {
+    // 提交后覆盖映射，保证切回本题时展示最新答案与结果。
+    // 必须把同一对象交给 QuestionCard，更新 AI 解析时才能写回这份缓存。
+    const resultPayload = {
       is_correct: res.is_correct,
       correct_answer: res.correct_answer,
       explanation: res.explanation,
       explanation_zh: res.explanation_zh,
     }
+    questionResultMap[submitQuestionId] = resultPayload
 
     answerResults[submitIndex] = res.is_correct
-    callback(res)
+    callback(resultPayload)
 
     if (canAutoNext && hasNext) {
       setTimeout(() => {

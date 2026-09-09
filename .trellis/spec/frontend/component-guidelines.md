@@ -119,8 +119,12 @@ async function handleClick() {
 
 真实示例：
 - `frontend/src/components/TranslateButton.vue` 行12-43
-- `frontend/src/components/ExplainButton.vue` 行14-51
+- `frontend/src/components/ExplainButton.vue` 行14-79
 - `frontend/src/components/AddVocabButton.vue` 行40-90
+
+`ExplainButton` 额外约定：未显示时文案“AI 解析”、可短路由中文缓存；已显示时文案“更新AI解析”，请求必须带 `force: true`。禁用只看 `loading`。FastAPI 错误读 `e.response?.data?.detail`。更新失败固定提示“更新失败，已保留原解析”。
+
+父组件写回时，`QuestionCard` 的 `result` 必须与 `QuizView.questionResultMap[questionId]` 是**同一对象**。若 submit 回调传入 API 响应、映射表另存一份拷贝，更新解析后切题再切回会显示旧文案。
 
 ---
 

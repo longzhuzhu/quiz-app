@@ -1,13 +1,20 @@
 """AI 服务 - 翻译、解析、术语翻译（适配 FastAPI + SQLAlchemy 2.x）"""
 
 import json
+import re
 
 import httpx
 
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.question import Question
-from app.services.exam_service import DEFAULT_EXPLANATION_SYSTEM_PROMPT, DEFAULT_TRANSLATION_SYSTEM_PROMPT
+from app.services.exam_service import (
+    DEFAULT_EXPLANATION_PERSONA,
+    DEFAULT_TRANSLATION_SYSTEM_PROMPT,
+    EXPLANATION_DISTRACTOR_TYPES,
+    EXPLANATION_STEM_QUALIFIERS,
+    build_explanation_system_prompt,
+)
 from app.services.settings_service import get_effective_ai_settings, validate_ai_base_url
 
 
@@ -47,7 +54,7 @@ def has_question_translation(question: Question) -> bool:
 
 
 def has_question_explanation(question: Question) -> bool:
-    return bool(question.explanation or question.explanation_zh)
+    return bool(question.explanation_zh)
 
 
 def build_question_translation_payload(question: Question) -> dict:
@@ -331,18 +338,14 @@ def _render_distractors(distractors) -> str:
 
 
 def compose_explanation_zh(result: dict) -> str:
-    """把 LLM 返回的结构化解析组装成分段中文文本。
+    """把已通过校验的结构化解析组装成分段中文文本。
 
-    版式由服务端控制而不是让 LLM 自己拼，输出才稳定。
-    ``stem_breakdown`` 和 ``distractors`` 都缺失时（自定义 prompt 仍返回旧的
-    两键结构），原样返回 ``explanation_zh``，保持改动前的行为。
+    版式由服务端控制而不是让 LLM 自己拼。本函数只负责渲染，
+    不再把旧两键结构当作可落库的成功结果。
     """
     answer_analysis = _clean_text(result.get("explanation_zh"))
     stem_breakdown = _render_stem_breakdown(result.get("stem_breakdown"))
     distractors = _render_distractors(result.get("distractors"))
-
-    if not stem_breakdown and not distractors:
-        return answer_analysis
 
     sections = []
     if stem_breakdown:
@@ -354,15 +357,140 @@ def compose_explanation_zh(result: dict) -> str:
     return "\n\n".join(sections)
 
 
-def explain_question(db, question: Question) -> dict:
+_SENTENCE_SPLIT_RE = re.compile(r"[。！？；.!?]+")
+_CONCLUSION_ONLY_RE = re.compile(
+    r"^(正确答案是|正确答案为|正确选项是|答案是|The correct answer is)\s*[A-Za-z0-9,，、\s]+$",
+    re.IGNORECASE,
+)
+_GENERIC_DISTRACTOR_REASONS = ("该选项不正确", "该选项错误", "不正确", "不对")
+_QUALIFIER_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(word) for word in EXPLANATION_STEM_QUALIFIERS) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def _option_keys(question: Question) -> list[str]:
+    return [_clean_text(option.get("key")) for option in _load_options(question) if _clean_text(option.get("key"))]
+
+
+def _correct_answer_keys(question: Question) -> set[str]:
+    return {part.strip() for part in str(question.correct_answer or "").split(",") if part.strip()}
+
+
+def _wrong_option_keys(question: Question) -> set[str]:
+    return set(_option_keys(question)) - _correct_answer_keys(question)
+
+
+def _substantive_sentences(text: str) -> list[str]:
+    parts = [part.strip() for part in _SENTENCE_SPLIT_RE.split(text or "") if part.strip()]
+    return [part for part in parts if not _CONCLUSION_ONLY_RE.match(part)]
+
+
+def _is_generic_distractor_reason(reason: str) -> bool:
+    text = _clean_text(reason)
+    if not text:
+        return True
+    normalized = re.sub(r"[。.!！？?；;，,\s]+$", "", text)
+    return normalized in _GENERIC_DISTRACTOR_REASONS
+
+
+def _stem_has_qualifier(stem: str) -> bool:
+    return bool(_QUALIFIER_RE.search(stem or ""))
+
+
+def validate_structured_explanation(result: dict, question: Question) -> list[str]:
+    """校验 LLM 解析 JSON。返回空列表表示通过。"""
+    errors: list[str] = []
+    if not isinstance(result, dict):
+        return ["返回内容必须是 JSON 对象"]
+
+    breakdown = result.get("stem_breakdown")
+    if not isinstance(breakdown, dict):
+        errors.append("stem_breakdown 必须是对象")
+        breakdown = {}
+
+    for field, label in (("role", "主体或视角"), ("scenario", "场景"), ("asked", "问的是什么")):
+        if not _clean_text(breakdown.get(field)):
+            errors.append(f"题干拆解缺少{label}（{field}）")
+
+    qualifier = _clean_text(breakdown.get("qualifier"))
+    if _stem_has_qualifier(getattr(question, "content", "") or "") and not qualifier:
+        errors.append("题干含有限定词，qualifier 不能为空")
+
+    explanation_zh = _clean_text(result.get("explanation_zh"))
+    if not explanation_zh:
+        errors.append("explanation_zh 不能为空")
+    elif len(_substantive_sentences(explanation_zh)) < 2:
+        errors.append("知识点解析至少需要两句有实质信息的完整说明，不能只有答案结论")
+
+    distractors = result.get("distractors")
+    if not isinstance(distractors, list):
+        errors.append("distractors 必须是数组")
+        return errors
+
+    expected_wrong = _wrong_option_keys(question)
+    correct_keys = _correct_answer_keys(question)
+    seen: list[str] = []
+    for item in distractors:
+        if not isinstance(item, dict):
+            errors.append("干扰项必须是对象")
+            continue
+        key = _clean_text(item.get("key"))
+        if not key:
+            errors.append("干扰项缺少选项 key")
+            continue
+        seen.append(key)
+        if key in correct_keys:
+            errors.append(f"干扰项不能包含正确答案 {key}")
+        distractor_type = _clean_text(item.get("type"))
+        if distractor_type not in EXPLANATION_DISTRACTOR_TYPES:
+            errors.append(f"干扰项 {key} 的 type 不在允许枚举中")
+        if _is_generic_distractor_reason(item.get("reason")):
+            errors.append(f"干扰项 {key} 的 reason 过于空泛，需要说明与本题相关的具体错误原因")
+
+    seen_set = set(seen)
+    missing = expected_wrong - seen_set
+    extra = seen_set - expected_wrong - correct_keys
+    if missing:
+        errors.append(f"干扰项未覆盖错误选项：{', '.join(sorted(missing))}")
+    if extra:
+        errors.append(f"干扰项包含不存在的选项：{', '.join(sorted(extra))}")
+    if len(seen) != len(seen_set):
+        errors.append("干扰项 key 不能重复")
+    return errors
+
+
+def _format_correction_message(errors: list[str]) -> str:
+    bullets = "\n".join(f"- {item}" for item in errors)
+    return (
+        "上次返回的 JSON 未通过校验，请只返回修正后的完整 JSON，不要其他内容。\n"
+        f"校验错误：\n{bullets}"
+    )
+
+
+def _parse_explanation_payload(result_text: str, question: Question) -> tuple[dict | None, list[str]]:
+    try:
+        result = json.loads(result_text)
+    except json.JSONDecodeError as exc:
+        return None, [f"返回内容不是合法 JSON: {exc}"]
+    if not isinstance(result, dict):
+        return None, ["返回内容必须是 JSON 对象"]
+    errors = validate_structured_explanation(result, question)
+    if errors:
+        return None, errors
+    return result, []
+
+
+def explain_question(db, question: Question, *, force: bool = False) -> dict:
     options = _load_options(question)
     options_text = "\n".join([f"{o['key']}. {o['text']}" for o in options])
     ai_profile = _exam_ai_profile(question)
+    persona = ai_profile.get("explanation_system_prompt") or DEFAULT_EXPLANATION_PERSONA
 
     messages = [
         {
             "role": "system",
-            "content": ai_profile.get("explanation_system_prompt") or DEFAULT_EXPLANATION_SYSTEM_PROMPT,
+            "content": build_explanation_system_prompt(persona),
         },
         {
             "role": "user",
@@ -371,15 +499,26 @@ def explain_question(db, question: Question) -> dict:
     ]
 
     result_text = strip_code_fence(call_ai_api(messages, db, scene="explain"))
-    result = json.loads(result_text)
+    result, errors = _parse_explanation_payload(result_text, question)
+    if errors:
+        retry_messages = [*messages, {"role": "user", "content": _format_correction_message(errors)}]
+        result_text = strip_code_fence(call_ai_api(retry_messages, db, scene="explain"))
+        result, errors = _parse_explanation_payload(result_text, question)
+        if errors:
+            raise ValueError("解析结果未通过校验: " + "; ".join(errors))
 
     explanation = _clean_text(result.get("explanation"))
     explanation_zh = compose_explanation_zh(result)
-    if not explanation and not explanation_zh:
+    if not explanation_zh:
         raise ValueError("AI 未返回解析内容")
 
+    if not force:
+        db.refresh(question)
+        if has_question_explanation(question):
+            return build_question_explanation_payload(question)
+
     question.explanation = explanation or None
-    question.explanation_zh = explanation_zh or None
+    question.explanation_zh = explanation_zh
     db.commit()
 
     return build_question_explanation_payload(question)
