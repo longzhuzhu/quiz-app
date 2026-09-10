@@ -1,0 +1,8 @@
+{"file": "CONTEXT.md", "reason": "练习趋势图 / 滚动正确率 / 当日作答量的领域定义，实现时不得改写成准确率或题数"}
+{"file": "docs/adr/0005-practice-days-not-from-last-answered-at.md", "reason": "禁止用 answered_at 回放按日事实"}
+{"file": "docs/adr/0006-rolling-accuracy-daily-snapshot.md", "reason": "滚动正确率按日快照，不作答流水、不回放 answered_at"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "新表、Alembic 008、唯一约束与级联删除"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "静态路由必须在 /session/{id} 之前；正确率用条件聚合"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "PracticeTrendChart 独立组件，script setup，无 style 块"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "首页多请求必须 Promise.allSettled 独立降级"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本地日写入、today 查询、卡片与今日点同口径"}

@@ -132,6 +132,42 @@ HomeView.vue display:
 
 ---
 
+## Practice Trend — Cross-Layer Flow
+
+### Data Flow
+
+```
+POST /api/quiz/answer (local_date)
+  → record_question_touch → practice_day_questions
+  → record_accuracy_snapshot → recent_accuracy_for(limit=100) → practice_accuracy_days
+  → 非法/缺失 local_date：两表都不写，答题照常
+
+HomeView.vue fetchDashboardData()
+  → GET /api/quiz/recent-accuracy          （四格卡片，现势）
+  → GET /api/quiz/practice-trend?today=    （30 日密集序列）
+  → 各自独立 catch + Promise.allSettled；趋势失败则 30 日空轴
+
+trend_for():
+  → count 来自 practice_day_questions 按日去重
+  → 历史正确率来自 practice_accuracy_days，空日沿用上一快照
+  → 窗口开始日前最近一条快照要当作种子，否则窗口前段会假断档
+  → today 用 recent_accuracy_for 现势覆盖，与四格卡片同一查询
+  → 不用 QuizAnswer.answered_at 回放
+```
+
+### Critical Consistency Points
+
+| Checkpoint | Risk | Mitigation |
+|-----------|------|-----------|
+| 今日点 vs 卡片 | 两套查询口径分叉 | 卡片与 `trend_for` 的 today 都走 `recent_accuracy_for`，N=100 |
+| 窗口前快照 | 只查窗口内快照会让窗口第一天从 null 起画 | `local_date < window_start` 取最近一条作种子 |
+| 0 记快照 | 查询没看见刚提交的作答会写入 0% 假悬崖 | `total <= 0` 不写快照 |
+| 空日展开 | 稀疏返回让折线错位 | API 固定 30 个本地日；前端只接受 `days.length === 30` |
+| 路由顺序 | `/session/{id}` 吞掉 `/practice-trend` | 静态路由写在动态参数路由之前 |
+| 清历史 | 只删练习日会留下正确率形状 | `clear_practice_days` 同时删两表 |
+
+---
+
 ## Smart Import Cross-Layer Flow
 
 ### Data Flow

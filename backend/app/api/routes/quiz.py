@@ -22,7 +22,10 @@ from app.services.exam_service import get_bank_in_exam_or_404
 from app.services.practice_service import (
     clear_practice_days,
     heatmap_for,
+    recent_accuracy_for,
+    record_accuracy_snapshot,
     record_question_touch,
+    trend_for,
 )
 from app.services.topic_service import (
     list_question_ids_for_competency,
@@ -309,6 +312,12 @@ def submit_answer(
         question_id=question_id,
         local_date=data.local_date,
     )
+    record_accuracy_snapshot(
+        db,
+        user_id=user_id,
+        exam_id=exam.id,
+        local_date=data.local_date,
+    )
 
     db.commit()
 
@@ -448,37 +457,7 @@ def recent_accuracy(
     exam: Exam = Depends(get_exam_context),
     db: Session = Depends(get_db),
 ):
-    user_id = current_user.id
-    # 子查询：按答题时间降序取最近 limit 条记录
-    sub = (
-        db.query(QuizAnswer.id, QuizAnswer.is_correct)
-        .join(QuizSession, QuizAnswer.session_id == QuizSession.id)
-        .join(QuestionBank, QuizSession.bank_id == QuestionBank.id)
-        .filter(
-            QuizSession.user_id == user_id,
-            QuestionBank.exam_id == exam.id,
-            QuizAnswer.answered_at.isnot(None),
-            QuizAnswer.is_correct.isnot(None),
-        )
-        .order_by(QuizAnswer.answered_at.desc(), QuizAnswer.id.desc())
-        .limit(limit)
-        .subquery()
-    )
-    # 条件聚合：一次查询同时算 total 和 correct
-    total, correct = db.query(
-        func.count(),
-        func.count().filter(sub.c.is_correct.is_(True)),
-    ).select_from(sub).one()
-    total = total or 0
-    correct = correct or 0
-    accuracy = round(correct / max(total, 1) * 100, 1)
-
-    return {
-        "total": total,
-        "correct": correct,
-        "accuracy": accuracy,
-        "limit": limit,
-    }
+    return recent_accuracy_for(db, current_user.id, exam.id, limit=limit)
 
 
 @router.get("/practice-heatmap")
@@ -489,6 +468,16 @@ def practice_heatmap(
     db: Session = Depends(get_db),
 ):
     return heatmap_for(db, current_user.id, exam.id, today)
+
+
+@router.get("/practice-trend")
+def practice_trend(
+    today: date = Query(..., description="浏览器本地今天 YYYY-MM-DD"),
+    current_user: User = Depends(get_current_user),
+    exam: Exam = Depends(get_exam_context),
+    db: Session = Depends(get_db),
+):
+    return trend_for(db, current_user.id, exam.id, today)
 
 
 @router.get("/session/{session_id}")

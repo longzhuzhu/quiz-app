@@ -65,11 +65,17 @@
       </router-link>
     </div>
 
-    <PracticeHeatmap
-      :days="heatmap.days"
-      :today="heatmap.today"
-      :current-streak="heatmap.current_streak"
-    />
+    <div class="mb-4 grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch">
+      <PracticeHeatmap
+        :days="heatmap.days"
+        :today="heatmap.today"
+        :current-streak="heatmap.current_streak"
+      />
+      <PracticeTrendChart
+        :days="trend.days"
+        :today="trend.today"
+      />
+    </div>
 
     <!-- 题库列表 -->
     <div v-if="lastIncompleteSession" class="mb-4 rounded-xl bg-white dark:bg-slate-800 shadow-card p-6">
@@ -227,6 +233,7 @@ import { formatLocalDate } from '../utils/localDate'
 import BaseButton from '../components/BaseButton.vue'
 import BaseModal from '../components/BaseModal.vue'
 import PracticeHeatmap from '../components/PracticeHeatmap.vue'
+import PracticeTrendChart from '../components/PracticeTrendChart.vue'
 import SkeletonLoader from '../components/SkeletonLoader.vue'
 import { FolderIcon, DocumentTextIcon, CheckBadgeIcon, ExclamationTriangleIcon } from '@heroicons/vue/24/outline'
 
@@ -239,7 +246,23 @@ const toast = useToast()
 const wrongStats = ref({})
 const recentAccuracy = ref(0)
 const recentTotal = ref(0)
+function emptyTrend(todayIso) {
+  const [year, month, day] = String(todayIso).split('-').map(Number)
+  const days = []
+  for (let offset = 29; offset >= 0; offset--) {
+    const date = new Date(year, month - 1, day - offset)
+    days.push({
+      date: formatLocalDate(date),
+      count: 0,
+      accuracy: null,
+      sample_size: 0,
+    })
+  }
+  return { today: todayIso, days }
+}
+
 const heatmap = ref({ today: formatLocalDate(), current_streak: 0, days: [] })
+const trend = ref(emptyTrend(formatLocalDate()))
 const lastIncompleteSession = ref(null)
 const incompleteSessionByBankId = ref({})
 const showExamModal = ref(false)
@@ -276,6 +299,7 @@ async function fetchDashboardData() {
   incompleteSessionByBankId.value = {}
   const localToday = formatLocalDate()
   heatmap.value = { today: localToday, current_streak: 0, days: [] }
+  trend.value = emptyTrend(localToday)
 
   const bankP = bankStore.fetchBanks().catch((e) => {
     toast.error(e.response?.data?.error || '获取题库失败')
@@ -301,7 +325,15 @@ async function fetchDashboardData() {
     lastIncompleteSession.value = null
     incompleteSessionByBankId.value = {}
   })
-  await Promise.allSettled([bankP, wrongP, accP, heatmapP, lastSessionP])
+  const trendP = client.get('/quiz/practice-trend', { params: { today: localToday } }).then(r => {
+    const days = Array.isArray(r.data?.days) ? r.data.days : []
+    trend.value = days.length === 30
+      ? { today: r.data?.today || localToday, days }
+      : emptyTrend(localToday)
+  }).catch(() => {
+    trend.value = emptyTrend(localToday)
+  })
+  await Promise.allSettled([bankP, wrongP, accP, heatmapP, lastSessionP, trendP])
 }
 
 async function openTopicModal(bank) {
