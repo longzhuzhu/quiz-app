@@ -49,3 +49,9 @@ class QuestionUpdateRequest(BaseModel):
     question_type: str | None = None
     # 人工设定的考点，整份替换；写入后不会被批量打标覆盖
     topic_ids: list[int] | None = None
+
+
+class CorrectAnswerUpdateRequest(BaseModel):
+    correct_answer: str
+    session_id: int | None = None
+    local_date: str | None = None

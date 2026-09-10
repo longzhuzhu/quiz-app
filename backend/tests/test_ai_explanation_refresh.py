@@ -52,6 +52,7 @@ def _valid_result(**overrides) -> dict:
             "在数据离开公司边界前做去标识化，能降低再识别风险。"
             "仅加密或仅限制传输范围都无法覆盖存储侧暴露。"
         ),
+        "judged_answer": "B",
         "distractors": [
             {"key": "A", "type": "范围过窄", "reason": "只覆盖传输环节，没处理存储侧"},
             {"key": "C", "type": "术语混淆", "reason": "把加密当成去标识化"},
@@ -292,3 +293,97 @@ def test_explain_question_uses_platform_contract_even_with_custom_persona(monkey
     assert system_prompt == build_explanation_system_prompt("你是 CIPP 辅导专家。")
     assert system_prompt != DEFAULT_EXPLANATION_PERSONA
     assert "stem_breakdown" in system_prompt
+    assert "judged_answer" in system_prompt
+
+
+def test_validate_structured_explanation_requires_judged_answer():
+    result = _valid_result()
+    result.pop("judged_answer")
+    errors = ai_service.validate_structured_explanation(result, _question())
+    assert any("judged_answer" in item for item in errors)
+
+
+def test_validate_structured_explanation_rejects_unknown_judged_key():
+    errors = ai_service.validate_structured_explanation(
+        _valid_result(judged_answer="Z"),
+        _question(),
+    )
+    assert any("judged_answer" in item and "Z" in item for item in errors)
+
+
+def test_validate_structured_explanation_strips_trailing_dot_on_judged_answer():
+    assert ai_service.validate_structured_explanation(
+        _valid_result(judged_answer="B."),
+        _question(),
+    ) == []
+
+
+def test_validate_structured_explanation_uses_judged_answer_not_db_correct():
+    """模型认定 B、库内 C 时，干扰项覆盖 A/C 即可。"""
+    question = _question(correct_answer="C")
+    result = _valid_result(
+        judged_answer="B",
+        distractors=[
+            {"key": "A", "type": "范围过窄", "reason": "只覆盖传输环节，没处理存储侧"},
+            {"key": "C", "type": "术语混淆", "reason": "把加密当成去标识化"},
+        ],
+    )
+    assert ai_service.validate_structured_explanation(result, question) == []
+
+
+def _conflict_result() -> dict:
+    return _valid_result(
+        judged_answer="C",
+        distractors=[
+            {"key": "A", "type": "范围过窄", "reason": "只覆盖传输环节，没处理存储侧"},
+            {"key": "B", "type": "术语混淆", "reason": "把加密当成去标识化"},
+        ],
+    )
+
+
+def test_explain_question_conflict_does_not_retry_or_rewrite(monkeypatch):
+    captured = _patch_calls(monkeypatch, [json.dumps(_conflict_result(), ensure_ascii=False)])
+    db = MagicMock(name="db")
+    question = _question(correct_answer="B")
+
+    payload = ai_service.explain_question(db, question)
+
+    assert captured["calls"] == 1
+    assert payload["explanation_zh"].startswith(ai_service.SECTION_ANSWER_CONFLICT)
+    assert "题库答案：B" in payload["explanation_zh"]
+    assert "AI 认定：C" in payload["explanation_zh"]
+    assert ai_service.SECTION_STEM_BREAKDOWN in payload["explanation_zh"]
+    assert ai_service.SECTION_DISTRACTORS in payload["explanation_zh"]
+    assert "把加密当成去标识化" in payload["explanation_zh"]
+    db.commit.assert_called_once()
+
+
+def test_explain_question_matching_answers_have_no_conflict_section(monkeypatch):
+    captured = _patch_calls(monkeypatch, [json.dumps(_valid_result(), ensure_ascii=False)])
+    payload = ai_service.explain_question(MagicMock(name="db"), _question(correct_answer="B"))
+
+    assert captured["calls"] == 1
+    assert ai_service.SECTION_ANSWER_CONFLICT not in payload["explanation_zh"]
+
+
+def test_explain_question_missing_judged_answer_retries_once(monkeypatch):
+    missing = _valid_result()
+    missing.pop("judged_answer")
+    captured = _patch_calls(
+        monkeypatch,
+        [json.dumps(missing, ensure_ascii=False), json.dumps(_valid_result(), ensure_ascii=False)],
+    )
+    db = MagicMock(name="db")
+
+    payload = ai_service.explain_question(db, _question())
+
+    assert captured["calls"] == 2
+    retry_content = captured["messages"][1][-1]["content"]
+    assert "校验错误" in retry_content
+    assert "正确答案：" not in retry_content
+    for messages in captured["messages"]:
+        for message in messages:
+            if message["role"] == "user":
+                assert "正确答案：" not in message["content"]
+    assert ai_service.SECTION_STEM_BREAKDOWN in payload["explanation_zh"]
+    db.commit.assert_called_once()

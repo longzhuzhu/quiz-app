@@ -8,6 +8,14 @@ import httpx
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.question import Question
+from app.services.answer_keys import (
+    answers_equivalent,
+    format_answer_keys,
+    normalize_option_key,
+    option_keys_from,
+    parse_answer_keys,
+    resolve_answer_keys,
+)
 from app.services.exam_service import (
     DEFAULT_EXPLANATION_PERSONA,
     DEFAULT_TRANSLATION_SYSTEM_PROMPT,
@@ -21,6 +29,7 @@ from app.services.settings_service import get_effective_ai_settings, validate_ai
 SECTION_STEM_BREAKDOWN = "【题干拆解】"
 SECTION_ANSWER_ANALYSIS = "【知识点解析】"
 SECTION_DISTRACTORS = "【干扰项分析】"
+SECTION_ANSWER_CONFLICT = "【答案冲突】"
 
 STEM_BREAKDOWN_LABELS = (
     ("qualifier", "限定词"),
@@ -337,17 +346,39 @@ def _render_distractors(distractors) -> str:
     return "\n".join([SECTION_DISTRACTORS, *lines])
 
 
-def compose_explanation_zh(result: dict) -> str:
+def _conflict_section(result: dict, question: Question | None) -> str:
+    if question is None:
+        return ""
+    judged_raw = result.get("judged_answer")
+    judged_keys = parse_answer_keys(judged_raw)
+    if not judged_keys:
+        return ""
+    db_raw = getattr(question, "correct_answer", None)
+    if answers_equivalent(judged_raw, db_raw):
+        return ""
+    db_keys = parse_answer_keys(db_raw)
+    return (
+        f"{SECTION_ANSWER_CONFLICT}\n"
+        f"题库答案：{format_answer_keys(db_keys)}\n"
+        f"AI 认定：{format_answer_keys(judged_keys)}"
+    )
+
+
+def compose_explanation_zh(result: dict, question: Question | None = None) -> str:
     """把已通过校验的结构化解析组装成分段中文文本。
 
     版式由服务端控制而不是让 LLM 自己拼。本函数只负责渲染，
     不再把旧两键结构当作可落库的成功结果。
+    认定与库内正确答案不一致时，在文首插入固定【答案冲突】段；冲突不是校验错误。
     """
     answer_analysis = _clean_text(result.get("explanation_zh"))
     stem_breakdown = _render_stem_breakdown(result.get("stem_breakdown"))
     distractors = _render_distractors(result.get("distractors"))
 
     sections = []
+    conflict = _conflict_section(result, question)
+    if conflict:
+        sections.append(conflict)
     if stem_breakdown:
         sections.append(stem_breakdown)
     if answer_analysis:
@@ -370,15 +401,23 @@ _QUALIFIER_RE = re.compile(
 
 
 def _option_keys(question: Question) -> list[str]:
-    return [_clean_text(option.get("key")) for option in _load_options(question) if _clean_text(option.get("key"))]
+    return option_keys_from(question)
 
 
-def _correct_answer_keys(question: Question) -> set[str]:
-    return {part.strip() for part in str(question.correct_answer or "").split(",") if part.strip()}
-
-
-def _wrong_option_keys(question: Question) -> set[str]:
-    return set(_option_keys(question)) - _correct_answer_keys(question)
+def _judged_answer_keys(result: dict, option_keys: list[str]) -> tuple[set[str], list[str]]:
+    """Resolve judged_answer against option keys. Returns (resolved_set, errors)."""
+    if "judged_answer" not in result:
+        return set(), ["缺少 judged_answer"]
+    raw = result.get("judged_answer")
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return set(), ["judged_answer 不能为空"]
+    resolved, unknown = resolve_answer_keys(raw, option_keys)
+    errors: list[str] = []
+    if unknown:
+        errors.append(f"judged_answer 包含不存在的选项：{', '.join(unknown)}")
+    if not resolved and not errors:
+        errors.append("judged_answer 不能为空")
+    return set(resolved), errors
 
 
 def _substantive_sentences(text: str) -> list[str]:
@@ -423,24 +462,33 @@ def validate_structured_explanation(result: dict, question: Question) -> list[st
     elif len(_substantive_sentences(explanation_zh)) < 2:
         errors.append("知识点解析至少需要两句有实质信息的完整说明，不能只有答案结论")
 
+    option_keys = _option_keys(question)
+    judged_keys, judged_errors = _judged_answer_keys(result, option_keys)
+    errors.extend(judged_errors)
+
     distractors = result.get("distractors")
     if not isinstance(distractors, list):
         errors.append("distractors 必须是数组")
         return errors
 
-    expected_wrong = _wrong_option_keys(question)
-    correct_keys = _correct_answer_keys(question)
+    expected_wrong = set(option_keys) - judged_keys
     seen: list[str] = []
     for item in distractors:
         if not isinstance(item, dict):
             errors.append("干扰项必须是对象")
             continue
-        key = _clean_text(item.get("key"))
-        if not key:
-            errors.append("干扰项缺少选项 key")
+        raw_key = item.get("key")
+        resolved_key, unknown_key = resolve_answer_keys(raw_key, option_keys)
+        if unknown_key or not resolved_key:
+            key = normalize_option_key(raw_key)
+            if not key:
+                errors.append("干扰项缺少选项 key")
+                continue
+            errors.append(f"干扰项包含不存在的选项：{key}")
             continue
+        key = resolved_key[0]
         seen.append(key)
-        if key in correct_keys:
+        if key in judged_keys:
             errors.append(f"干扰项不能包含正确答案 {key}")
         distractor_type = _clean_text(item.get("type"))
         if distractor_type not in EXPLANATION_DISTRACTOR_TYPES:
@@ -450,7 +498,7 @@ def validate_structured_explanation(result: dict, question: Question) -> list[st
 
     seen_set = set(seen)
     missing = expected_wrong - seen_set
-    extra = seen_set - expected_wrong - correct_keys
+    extra = seen_set - expected_wrong - judged_keys
     if missing:
         errors.append(f"干扰项未覆盖错误选项：{', '.join(sorted(missing))}")
     if extra:
@@ -481,9 +529,14 @@ def _parse_explanation_payload(result_text: str, question: Question) -> tuple[di
     return result, []
 
 
-def explain_question(db, question: Question, *, force: bool = False) -> dict:
+def build_explanation_user_message(question: Question) -> str:
+    """User 消息只含题干和选项，禁止写入库内正确答案。"""
     options = _load_options(question)
     options_text = "\n".join([f"{o['key']}. {o['text']}" for o in options])
+    return f"题目：{question.content}\n\n选项：\n{options_text}"
+
+
+def explain_question(db, question: Question, *, force: bool = False) -> dict:
     ai_profile = _exam_ai_profile(question)
     persona = ai_profile.get("explanation_system_prompt") or DEFAULT_EXPLANATION_PERSONA
 
@@ -494,7 +547,7 @@ def explain_question(db, question: Question, *, force: bool = False) -> dict:
         },
         {
             "role": "user",
-            "content": f"题目：{question.content}\n\n选项：\n{options_text}\n\n正确答案：{question.correct_answer}",
+            "content": build_explanation_user_message(question),
         },
     ]
 
@@ -508,7 +561,7 @@ def explain_question(db, question: Question, *, force: bool = False) -> dict:
             raise ValueError("解析结果未通过校验: " + "; ".join(errors))
 
     explanation = _clean_text(result.get("explanation"))
-    explanation_zh = compose_explanation_zh(result)
+    explanation_zh = compose_explanation_zh(result, question)
     if not explanation_zh:
         raise ValueError("AI 未返回解析内容")
 

@@ -1,0 +1,9 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查提示词、展示文本、更正答案与本场重判是否端到端一致"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"检查 QuestionCard 更正态与复制图标是否符合组件惯例"}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"检查切题后过期更正/解析响应不会写到新题"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"检查错误 toast、确认框和考试项目请求头"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"检查更正答案与解析失败的 detail 和事务"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查不引入管理员校验、服务层边界"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"检查未误加迁移、未改错题本和其他场次"}
+{"file":".trellis/tasks/09-10-quiz-answer-surface/prd.md","reason":"按验收标准核对文案、复制、更正答案和解析脱钩"}
+{"file":".trellis/tasks/09-10-quiz-answer-surface/design.md","reason":"核对专用端点、冲突段版式和 prompt 后缀是否按设计落地"}

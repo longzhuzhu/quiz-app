@@ -31,7 +31,7 @@ let generation = 0
 
 const buttonLabel = computed(() => {
   if (props.displayed) {
-    return loading.value ? '更新中...' : '更新AI解析'
+    return loading.value ? '更新中...' : '更新解析'
   }
   return loading.value ? '解析中...' : 'AI 解析'
 })

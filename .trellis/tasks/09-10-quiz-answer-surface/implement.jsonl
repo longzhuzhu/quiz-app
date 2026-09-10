@@ -1,0 +1,11 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"解析提示词、落库文本、答题卡片展示和更正答案重判跨越组件/API/服务"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"正确答案规范化、选项 key 拆分和解析组装必须复用现有函数，避免再写一套"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"QuestionCard/ExplainButton 的 props、emits 与智能组件惯例"}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"切题与异步更正/解析响应需要 generation 防竞态"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Axios、考试项目请求头、toast 与 ConfirmDialog 错误提示"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"FastAPI detail、400/404 与写答案事务 rollback"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"服务签名、考试项目隔离、不另加 is_admin"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"只改 Question.correct_answer 与本场 QuizAnswer，不误增表或迁移"}
+{"file":".trellis/tasks/09-10-quiz-answer-surface/prd.md","reason":"验收标准与产品决策，实现时不得缩小范围"}
+{"file":".trellis/tasks/09-10-quiz-answer-surface/design.md","reason":"专用更正端点、judged_answer、冲突段与 004 tripwire 边界"}
+{"file":".trellis/tasks/09-10-quiz-answer-surface/implement.md","reason":"分段清单、测试命令与回滚点"}

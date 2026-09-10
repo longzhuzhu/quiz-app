@@ -571,8 +571,12 @@ def prewarm(
 - `force=false` 且已有中文解析：返回 `{explanation, explanation_zh, cached: true}`，不调模型。
 - `force=true`：必须调用模型；成功后覆盖中英文字段；`cached` 为 false。
 - 新生成必须通过三段式校验；首次不合格带错误列表再调一次，合计最多 2 次 `call_ai_api`。
+- user 提示词只含题干和选项，禁止写入库内正确答案；纠正重试也不得补回。
+- JSON 必须含 `judged_answer`。干扰项期望集合按认定 key 划分，不按库内 `correct_answer`。
+- 认定与库内答案不一致时仍落库，由 `compose_explanation_zh` 在文首插入固定【答案冲突】段；冲突不是校验错误，不占用重试。
 - `force=false` 落库前 `db.refresh`：若此时已有中文解析则不覆盖（挡住预热后提交）。
 - 失败不写半成品；路由 `except` 后 `db.rollback()`，HTTP 500 + `detail`。
+- `004` tripwire 锁 `persona + EXPLANATION_OUTPUT_CONTRACT`（004 当时写入值），不等于含后续运行时后缀的当前全文。
 
 ### 4. Validation & Error Matrix
 
@@ -582,20 +586,22 @@ def prewarm(
 | 有中文缓存 + force=false | 返回缓存 |
 | 英文-only | 视为无缓存 |
 | force=true | 调模型并覆盖 |
-| JSON/结构首次失败 | 纠正重试一次 |
+| JSON/结构首次失败（含缺 judged_answer） | 纠正重试一次 |
+| 认定与库内答案不一致 | 落库并加冲突段；不重试 |
 | 第二次仍失败 / HTTP 超时 / 缺 Key | 不 commit；更新场景前端提示“更新失败，已保留原解析” |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: 错题本已展示解析时按钮为可点的“更新AI解析”，请求带 `force: true`。
+- Good: 错题本已展示解析时按钮为可点的“更新解析”，请求带 `force: true`。
 - Base: 未显示时点“AI 解析”，本地或数据库有 `explanation_zh` 则不重新生成。
 - Bad: `has_question_explanation` 把仅英文当成命中，前端永远看不到解析却以为成功。
 - Bad: 预热 `explain_question(force=false)` 在用户更新之后仍 commit 覆盖。
+- Bad: user 消息写入 `正确答案：{question.correct_answer}`，或按库内答案校验干扰项，会把解析掰回去护错答案。
 
 ### 6. Tests Required
 
-- `tests/test_ai_explanation_refresh.py`：中文缓存口径、校验拒绝、一次重试、第二次不 commit、CAS、force 覆盖。
-- `tests/test_explanation_prompt_structure.py`：004/006 tripwire，persona 不含 JSON 契约。
+- `tests/test_ai_explanation_refresh.py`：中文缓存口径、校验拒绝、一次重试、第二次不 commit、CAS、force 覆盖、judged_answer、冲突不重试。
+- `tests/test_explanation_prompt_structure.py`：004 NEW == persona + 契约正文（不含独立判断后缀）；006 锁 persona；user 消息不含库内答案。
 
 ### 7. Wrong vs Correct
 
@@ -618,6 +624,67 @@ def has_question_explanation(question):
 if not data.force and has_question_explanation(question):
     return {**payload, "cached": True}
 explain_question(db, question, force=data.force)
+```
+
+---
+
+## Scenario: 更正答案
+
+### 1. Scope / Trigger
+
+- Trigger: 答题现场改题库正确答案，或修改 `PUT /api/questions/{id}/correct-answer`。
+- 范围：考试项目所有者在非模拟考试提交后更正。不重算其他场次，不改错题本。
+
+### 2. Signatures
+
+- `PUT /api/questions/{question_id}/correct-answer`
+- Body: `{ correct_answer: str, session_id: int | null, local_date: str | null }`
+- `update_question_correct_answer(db, question, exam, *, correct_answer, session_id, local_date=None)`
+
+### 3. Contracts
+
+- 依赖 `get_exam_context`，不加 `require_admin`。
+- 同一事务：写 `Question.correct_answer`；有变化则清 AI 解析；若 session 属于当前考试且已有该题作答，只改本场 `QuizAnswer.is_correct` 与 `session.correct_count`。
+- 不碰 `WrongAnswer` / `UserQuestionStat` / `answered_count`，不走 `POST /quiz/answer`。
+- 本场重判后若带了 `local_date`，按客户端本地日刷正确率快照，禁止用 UTC 当天冒充本地日。
+- 规范化后与当前答案相同：无操作，不清解析，不 commit。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+|---|---|
+| key 空 / 不属于选项 / 单选判断不是恰好 1 个 | 400 `detail` |
+| 题目不属于当前考试 | 404 |
+| session 不属于当前考试或不属于所有者 | 404 `答题会话不存在` |
+| 答案未变 | 200，保留原解析 |
+
+### 5. Good/Base/Bad Cases
+
+- Good: 提交后更正，本场对错立刻按新答案更新，错次不加。
+- Base: 不传 `session_id` 只改题库答案。
+- Bad: 再调 `/quiz/answer` 做重判，仍错会再加错次。
+- Bad: 快照用 `datetime.now(timezone.utc).date()`，会把滚动正确率写到错误的本地日。
+
+### 6. Tests Required
+
+- `tests/test_correct_answer.py`：校验、无操作、清解析、本场重判 delta、不导入 WrongAnswer。
+- 前端：`local_date` 来自 `formatLocalDate()`。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+record_accuracy_snapshot(..., local_date=datetime.now(timezone.utc).date())
+# 或
+quiz_store.submitAnswer(question_id, user_answer)  # 更正后再提交
+```
+
+#### Correct
+
+```python
+record_accuracy_snapshot(..., local_date=data.local_date)  # 客户端本地日
+apply_session_regrade(session, quiz_answer, formatted)
 ```
 
 ---

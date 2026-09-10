@@ -35,6 +35,7 @@ from app.services.exam_service import (  # noqa: E402
     DEFAULT_EXPLANATION_PERSONA,
     DEFAULT_EXPLANATION_SYSTEM_PROMPT,
     EXPLANATION_DISTRACTOR_TYPES,
+    EXPLANATION_INDEPENDENT_JUDGMENT_CONTRACT,
     EXPLANATION_OUTPUT_CONTRACT,
     EXPLANATION_STEM_QUALIFIERS,
     build_explanation_system_prompt,
@@ -61,6 +62,7 @@ def _structured_result() -> dict:
         },
         "explanation": "The correct answer is B because de-identification happens before data leaves the boundary.",
         "explanation_zh": "在数据离开公司边界前做去标识化，能降低再识别风险。仅加密或仅限制传输范围都无法覆盖存储侧暴露。",
+        "judged_answer": "B",
         "distractors": [
             {"key": "A", "type": "范围过窄", "reason": "只覆盖传输环节，没处理存储侧"},
             {"key": "C", "type": "术语混淆", "reason": "把加密当成去标识化"},
@@ -113,8 +115,10 @@ def test_profile_persona_does_not_embed_output_contract():
 def test_build_explanation_system_prompt_appends_platform_contract():
     assembled = build_explanation_system_prompt(DEFAULT_EXPLANATION_PERSONA)
     assert assembled == DEFAULT_EXPLANATION_SYSTEM_PROMPT
-    assert assembled.endswith(EXPLANATION_OUTPUT_CONTRACT)
+    assert assembled.endswith(EXPLANATION_INDEPENDENT_JUDGMENT_CONTRACT)
+    assert EXPLANATION_OUTPUT_CONTRACT in assembled
     assert assembled.startswith(DEFAULT_EXPLANATION_PERSONA)
+    assert "judged_answer" in assembled
     for key in ("stem_breakdown", "distractors", "explanation_zh", "qualifier", "asked"):
         assert key in assembled
     for qualifier in EXPLANATION_STEM_QUALIFIERS:
@@ -124,6 +128,30 @@ def test_build_explanation_system_prompt_appends_platform_contract():
 
 
 # ─── TC-2 ────────────────────────────────────────────────────────────
+
+
+def test_compose_explanation_zh_prepends_conflict_when_judged_differs():
+    question = MagicMock(name="question")
+    question.correct_answer = "B"
+    result = _structured_result()
+    result["judged_answer"] = "C"
+    composed = ai_service.compose_explanation_zh(result, question)
+
+    assert composed.startswith(ai_service.SECTION_ANSWER_CONFLICT)
+    assert "题库答案：B" in composed
+    assert "AI 认定：C" in composed
+    assert composed.index(ai_service.SECTION_ANSWER_CONFLICT) < composed.index(
+        ai_service.SECTION_STEM_BREAKDOWN
+    )
+    assert "在数据离开公司边界前做去标识化" in composed
+
+
+def test_compose_explanation_zh_omits_conflict_when_answers_match():
+    question = MagicMock(name="question")
+    question.correct_answer = "B"
+    composed = ai_service.compose_explanation_zh(_structured_result(), question)
+    assert ai_service.SECTION_ANSWER_CONFLICT not in composed
+    assert composed.index(ai_service.SECTION_STEM_BREAKDOWN) == 0
 
 
 def test_compose_explanation_zh_renders_sections_in_fixed_order():
@@ -272,6 +300,8 @@ def test_explain_question_persists_composed_text(monkeypatch, fake_question):
     assert captured["scene"] == "explain"
     assert "de-identification" in fake_question.explanation
     assert captured["messages"][0]["content"] == build_explanation_system_prompt(DEFAULT_EXPLANATION_PERSONA)
+    assert "正确答案" not in captured["messages"][1]["content"]
+    assert "judged_answer" in captured["messages"][0]["content"]
     assert ai_service.SECTION_STEM_BREAKDOWN in fake_question.explanation_zh
     assert ai_service.SECTION_DISTRACTORS in fake_question.explanation_zh
     assert payload["explanation_zh"] == fake_question.explanation_zh
@@ -308,6 +338,17 @@ def test_explain_question_raises_when_result_is_empty(monkeypatch, fake_question
 # ─── TC-7 / TC-8 ─────────────────────────────────────────────────────
 
 
+def test_explain_question_user_message_excludes_bank_answer(monkeypatch, fake_question):
+    import json
+
+    captured = _patch_ai_response(monkeypatch, json.dumps(_structured_result(), ensure_ascii=False))
+    ai_service.explain_question(MagicMock(name="db"), fake_question)
+    for message in captured["messages"]:
+        if message["role"] == "user":
+            assert "正确答案：" not in message["content"]
+            assert "正确答案" not in message["content"]
+
+
 def test_migration_004_old_prompt_matches_what_migration_003_wrote():
     """004 的旧 CIPT prompt 必须与 003 写入 DB 的值逐字节相等。
 
@@ -324,15 +365,20 @@ def test_migration_004_old_prompt_matches_what_migration_003_wrote():
 
 
 def test_migration_004_new_prompt_matches_current_service_constants():
-    """004 的新 prompt 必须等于 exam_service 当前常量。
+    """004 的新 prompt 必须等于当时写入的 persona + 输出契约（不含后续运行时后缀）。
 
-    失败说明有人改了 prompt 常量但没补迁移：新建的考试项目会用新 prompt，
-    存量项目仍停在旧 prompt，两边行为分叉。修法是新增一个迁移把存量行升级。
+    004 锁的是当时写入值；独立判断规则是运行时追加，不改 004 字面量、不写新迁移。
     """
     migration_004 = _load_migration("004_structured_explanation_prompt.py")
 
-    assert migration_004.NEW_DEFAULT_EXPLANATION_PROMPT == DEFAULT_EXPLANATION_SYSTEM_PROMPT
-    assert migration_004.NEW_CIPT_EXPLANATION_PROMPT == CIPT_EXPLANATION_SYSTEM_PROMPT
+    assert migration_004.NEW_DEFAULT_EXPLANATION_PROMPT == (
+        DEFAULT_EXPLANATION_PERSONA + EXPLANATION_OUTPUT_CONTRACT
+    )
+    assert migration_004.NEW_CIPT_EXPLANATION_PROMPT == (
+        CIPT_EXPLANATION_PERSONA + EXPLANATION_OUTPUT_CONTRACT
+    )
+    assert EXPLANATION_INDEPENDENT_JUDGMENT_CONTRACT not in migration_004.NEW_DEFAULT_EXPLANATION_PROMPT
+    assert EXPLANATION_INDEPENDENT_JUDGMENT_CONTRACT not in migration_004.NEW_CIPT_EXPLANATION_PROMPT
 
 
 def test_migration_004_revision_chain():
