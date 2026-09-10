@@ -1,16 +1,12 @@
 <template>
-  <div class="mb-4 rounded-xl bg-white dark:bg-slate-800 shadow-card p-5 md:p-6">
+  <div class="flex h-full flex-col rounded-xl bg-white dark:bg-slate-800 shadow-card p-5 md:p-6">
     <div class="mb-3">
       <h2 class="text-sm font-medium text-gray-900 dark:text-white">连续 {{ currentStreak }} 天</h2>
     </div>
 
-    <div
-      v-for="grid in grids"
-      :key="grid.key"
-      :class="['overflow-x-auto', grid.wrapperClass]"
-    >
-      <div class="inline-flex gap-[3px]">
-        <div class="mr-1 flex flex-col gap-[3px]">
+    <div ref="gridRef" class="min-w-0 overflow-hidden">
+      <div class="flex gap-[3px]">
+        <div class="mr-1 flex shrink-0 flex-col gap-[3px]">
           <div class="h-3"></div>
           <div
             v-for="(label, index) in weekdayLabels"
@@ -20,11 +16,11 @@
             {{ label }}
           </div>
         </div>
-        <div class="flex gap-[3px]">
+        <div class="flex min-w-0 gap-[3px]">
           <div
-            v-for="column in grid.columns"
+            v-for="column in columns"
             :key="column.key"
-            class="flex w-[11px] flex-col gap-[3px]"
+            class="flex w-[11px] shrink-0 flex-col gap-[3px]"
           >
             <div class="h-3 overflow-visible whitespace-nowrap text-[9px] leading-3 text-gray-400 dark:text-gray-500">
               {{ column.monthLabel }}
@@ -55,7 +51,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { formatLocalDate, parseLocalDate } from '../utils/localDate'
 
 const LEVEL_CLASSES = [
@@ -66,6 +62,12 @@ const LEVEL_CLASSES = [
   'bg-[#216e39] dark:bg-[#39d353]',
 ]
 
+const CELL = 11
+const GAP = 3
+const WEEKDAY_COL = 16
+const MAX_WEEKS = 53
+const MIN_WEEKS = 8
+
 const props = defineProps({
   days: { type: Array, default: () => [] },
   today: { type: String, default: '' },
@@ -75,6 +77,10 @@ const props = defineProps({
 const weekdayLabels = ['一', '', '三', '', '五', '', '']
 const legendLevels = [0, 1, 2, 3, 4]
 const monthNames = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月']
+
+const gridRef = ref(null)
+const weekCount = ref(20)
+let observer = null
 
 const countByDate = computed(() => {
   const map = new Map()
@@ -87,10 +93,32 @@ const countByDate = computed(() => {
 
 const todayIso = computed(() => props.today || formatLocalDate())
 
-const grids = computed(() => [
-  { key: 'sm', wrapperClass: 'md:hidden', columns: buildColumns(16) },
-  { key: 'md', wrapperClass: 'hidden md:block', columns: buildColumns(53) },
-])
+const columns = computed(() => buildColumns(weekCount.value))
+
+onMounted(() => {
+  const el = gridRef.value
+  if (!el || typeof ResizeObserver === 'undefined') {
+    weekCount.value = weeksThatFit(el?.clientWidth || 280)
+    return
+  }
+  observer = new ResizeObserver((entries) => {
+    const width = entries[0]?.contentRect?.width || el.clientWidth
+    weekCount.value = weeksThatFit(width)
+  })
+  observer.observe(el)
+  weekCount.value = weeksThatFit(el.clientWidth)
+})
+
+onBeforeUnmount(() => {
+  observer?.disconnect()
+  observer = null
+})
+
+function weeksThatFit(width) {
+  const usable = Math.max(0, Number(width) || 0) - WEEKDAY_COL
+  const col = CELL + GAP
+  return Math.max(MIN_WEEKS, Math.min(MAX_WEEKS, Math.floor(usable / col)))
+}
 
 function addDays(date, n) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate() + n)
@@ -120,15 +148,15 @@ function cellClass(cell) {
   return classes
 }
 
-function buildColumns(weekCount) {
+function buildColumns(weeks) {
   const todayDate = parseLocalDate(todayIso.value)
   if (Number.isNaN(todayDate.getTime())) return []
 
   const lastMonday = startOfWeekMonday(todayDate)
-  const firstMonday = addDays(lastMonday, -7 * (weekCount - 1))
+  const firstMonday = addDays(lastMonday, -7 * (weeks - 1))
   const columns = []
 
-  for (let week = 0; week < weekCount; week++) {
+  for (let week = 0; week < weeks; week++) {
     const weekStart = addDays(firstMonday, week * 7)
     const cells = []
     let monthLabel = ''

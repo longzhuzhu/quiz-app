@@ -1,0 +1,5 @@
+{"file": "CONTEXT.md", "reason": "对照领域词与关系验收文案和口径"}
+{"file": "docs/adr/0006-rolling-accuracy-daily-snapshot.md", "reason": "确认未回放 answered_at、未用流水表"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "路由顺序与正确率聚合"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "首页请求降级与口径一致"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "今日点与卡片、30 日密集序列的跨层契约"}

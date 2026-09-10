@@ -325,6 +325,38 @@ client.post('/ai/prewarm', { session_id: sessionId, question_ids: ids }).catch((
 
 ---
 
+## 首页练习趋势图前端契约
+
+### 1. Scope / Trigger
+
+- Trigger: `HomeView` 在热力图旁请求 `/quiz/practice-trend`。
+- Scope: 只适用于考试项目首页所有者视图；不引入图表库。
+
+### 2. Signatures
+
+```javascript
+client.get('/quiz/practice-trend', { params: { today: formatLocalDate() } })
+```
+
+### 3. Contracts
+
+- 与热力图、正确率卡片各自独立 catch，`Promise.allSettled` 聚合。
+- `days` 必须是 30 项才采用；否则退回近 30 日空轴（`count=0`，`accuracy=null`）。
+- 图例短写「答题数」和「正确率」，禁止「准确率」，也不展示连续练习日。
+- 悬停或点到具体点时，只展示该点数值：`答题数：20题` 或 `正确率：80%`；不展示日期，也不把两条线的值叠在同一块。
+- 点击不跳转。
+- 桌面与热力图等宽等高，高度由热力图内容决定；趋势图绘图区 `md:min-h-0`，避免 `min-h-[180px]` 把热力图撑出底空。窄屏绘图区保留 `min-h-[148px]`。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 前端行为 |
+|------|----------|
+| 请求失败 / `days` 不是 30 项 | 画空轴，不影响热力图和四格卡片 |
+| `accuracy == null` | 正确率折线不连该点；该日不可选正确率点 |
+| 指针离可见点超过命中半径 | 不展示提示 |
+
+---
+
 ## 错误处理三级体系
 
 ### 第 1 级：全局拦截器（认证失效）
