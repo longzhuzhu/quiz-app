@@ -116,11 +116,13 @@
           :initial-result="currentInitialResult"
           :answer-count="currentQuestion?.user_answer_count ?? 0"
           :exam-mode="isExamMode"
+          :session-id="quizStore.session?.id"
           @submit="handleSubmit"
           @next="quizStore.nextQuestion()"
           @prev="quizStore.prevQuestion()"
           @finish="handleFinish"
           @translated="handleTranslated"
+          @answer-corrected="handleAnswerCorrected"
         />
       </div>
     </div>
@@ -351,6 +353,38 @@ function handleTranslated(data) {
       const translated = data.options_zh.find(o => o.key === opt.key)
       if (translated) opt.text_zh = translated.text_zh
     }
+  }
+}
+
+function handleAnswerCorrected(payload) {
+  const questionId = payload?.questionId
+  if (!questionId) return
+
+  const mapped = questionResultMap[questionId]
+  if (mapped) {
+    mapped.is_correct = payload.is_correct
+    mapped.correct_answer = payload.correct_answer
+    mapped.explanation = payload.explanation
+    mapped.explanation_zh = payload.explanation_zh
+  } else {
+    questionResultMap[questionId] = {
+      is_correct: payload.is_correct,
+      correct_answer: payload.correct_answer,
+      explanation: payload.explanation,
+      explanation_zh: payload.explanation_zh,
+    }
+  }
+
+  const question = quizStore.questions.find(q => q.id === questionId)
+  if (question) {
+    question.correct_answer = payload.correct_answer
+    question.explanation = payload.explanation
+    question.explanation_zh = payload.explanation_zh
+  }
+
+  const idx = quizStore.questions.findIndex(q => q.id === questionId)
+  if (idx >= 0 && payload.is_correct != null) {
+    answerResults[idx] = payload.is_correct
   }
 }
 </script>

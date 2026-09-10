@@ -12,13 +12,14 @@ from app.models.question import Question
 from app.models.question_bank import QuestionBank
 from app.models.quiz import QuizAnswer
 from app.models.wrong import UserQuestionStat, WrongAnswer
-from app.schemas.question import QuestionCreateRequest, QuestionUpdateRequest
+from app.schemas.question import CorrectAnswerUpdateRequest, QuestionCreateRequest, QuestionUpdateRequest
 from app.services.ai_service import (
     clear_question_explanation,
     clear_question_translation,
     sanitize_options_for_storage,
 )
 from app.services.exam_service import get_bank_in_exam_or_404, get_question_in_exam_or_404
+from app.services.question_service import update_question_correct_answer
 from app.services.topic_service import set_question_topics_manually, topics_for_questions
 
 router = APIRouter()
@@ -145,6 +146,28 @@ def update_question(
     db.commit()
     db.refresh(q)
     return question_to_dict(q, topics=topics_for_questions(db, [q.id]).get(q.id, []))
+
+
+@router.put("/{question_id}/correct-answer")
+def update_correct_answer(
+    question_id: int,
+    data: CorrectAnswerUpdateRequest,
+    exam: Exam = Depends(get_exam_context),
+    db: Session = Depends(get_db),
+):
+    q = get_question_in_exam_or_404(db, question_id, exam)
+    try:
+        return update_question_correct_answer(
+            db,
+            q,
+            exam,
+            correct_answer=data.correct_answer,
+            session_id=data.session_id,
+            local_date=data.local_date,
+        )
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.delete("/{question_id}")

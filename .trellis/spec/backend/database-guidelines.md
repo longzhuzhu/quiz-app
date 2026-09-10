@@ -258,6 +258,9 @@ WHERE ai_profile->>'explanation_system_prompt' = :old_prompt   -- 逐字节相�
   三段式 JSON 形状、干扰项枚举与质量规则由 `build_explanation_system_prompt(persona)` 在运行时追加。
   否则自定义 Profile 会整段替换平台结构（`migration 006` 把 004 写入的默认全文收成 persona）。
   改 persona 常量仍要配套迁移 + tripwire：`006` old == `004` new，`006` new == 当前 persona。
+- **运行时后缀不等于 004 全文。** `004` tripwire 锁的是当时写入的 `persona + EXPLANATION_OUTPUT_CONTRACT`，
+  不是「当前组装全文」。独立判断等后续规则用运行时后缀追加（如 `EXPLANATION_INDEPENDENT_JUDGMENT_CONTRACT`）；
+  只加后缀不必写 Alembic，也不要把 004 NEW 改成含后缀的全文，否则历史迁移测试会逼你改 004 字面量。
 
 ---
 

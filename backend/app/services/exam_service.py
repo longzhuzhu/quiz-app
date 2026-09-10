@@ -63,8 +63,8 @@ _EXPLANATION_JSON_SHAPE = (
     '"distractors": [{"key": "A", "type": "干扰项类型", "reason": "为什么错"}]}'
 )
 
-# 平台级输出契约。必须与 migration 004 写入的全文在 persona 之后逐字节一致，
-# 否则 004 tripwire（004 new == 当前组装常量）会失败。
+# 平台级输出契约。必须与 migration 004 写入的全文在 persona 之后逐字节一致。
+# 004 tripwire 锁的是 persona + 本契约，不含后续运行时后缀。
 EXPLANATION_OUTPUT_CONTRACT = (
     "考生母语为中文、正在备考全英文考试，除知识点之外还需要读题训练。请完成三件事："
     "一是拆解题干结构，让考生看清题目到底在问什么；"
@@ -82,17 +82,29 @@ EXPLANATION_OUTPUT_CONTRACT = (
     "只返回 JSON，不要其他内容。"
 )
 
+# 运行时追加在 EXPLANATION_OUTPUT_CONTRACT 之后。不改 004 锁住的契约正文。
+EXPLANATION_INDEPENDENT_JUDGMENT_CONTRACT = (
+    "你必须只根据题干和选项独立判断正确答案，禁止把外部给出的题库答案当作已知条件。"
+    "JSON 必须包含 judged_answer 字段（字符串）：选项 key，单选或判断恰好一个，多选多个 key 用逗号分隔。"
+    "distractors 只包含相对 judged_answer 的错误选项，不得包含 judged_answer 中的选项。"
+    "不要在 explanation_zh 中撰写答案冲突标记。"
+)
+
 
 def build_explanation_system_prompt(persona: str) -> str:
-    """组装解析 system prompt：persona overlay + 平台输出契约。
+    """组装解析 system prompt：persona overlay + 平台输出契约 + 独立判断后缀。
 
     这是唯一组装入口。Profile 里的 explanation_system_prompt 只表示领域角色，
-    即使自定义内容残留旧 JSON 说明，运行时仍追加同一份平台契约。
+    即使自定义内容残留旧 JSON 说明，运行时仍追加同一份平台契约与独立判断规则。
     """
-    return (persona or DEFAULT_EXPLANATION_PERSONA) + EXPLANATION_OUTPUT_CONTRACT
+    return (
+        (persona or DEFAULT_EXPLANATION_PERSONA)
+        + EXPLANATION_OUTPUT_CONTRACT
+        + EXPLANATION_INDEPENDENT_JUDGMENT_CONTRACT
+    )
 
 
-# 004 当时写入 DB 的全文（persona + 契约）。004 tripwire 锁的是这段历史组装结果。
+# 运行时全文（persona + 004 契约 + 独立判断后缀）。004 tripwire 锁的是 persona+契约，不含后缀。
 DEFAULT_EXPLANATION_SYSTEM_PROMPT = build_explanation_system_prompt(DEFAULT_EXPLANATION_PERSONA)
 CIPT_EXPLANATION_SYSTEM_PROMPT = build_explanation_system_prompt(CIPT_EXPLANATION_PERSONA)
 
