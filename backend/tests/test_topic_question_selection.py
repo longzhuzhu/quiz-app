@@ -40,6 +40,7 @@ from app.models import (  # noqa: E402,F401  —— 导入以注册全部映射
     Question,
     QuestionBank,
     QuestionTopic,
+    QuizSession,
     User,
 )
 from app.models.exam_topic import TOPIC_LEVEL_COMPETENCY, TOPIC_LEVEL_DOMAIN  # noqa: E402
@@ -309,6 +310,100 @@ def test_manually_tagged_questions_are_not_retagged(db, fixture_data):
 
     # 人工设过考点后，这道题不再被当作待打标，AI 不会在人工结果上叠加标签
     assert list_untagged_question_ids(db, fixture_data["bank"].id) == [q["q6"].id]
+
+
+def _competency_flags(overview, code):
+    for domain in overview["topics"]:
+        for competency in domain["competencies"]:
+            if competency["code"] == code:
+                return competency["practiced"], competency["in_progress"]
+    raise AssertionError(f"missing competency {code}")
+
+
+def _add_topic_session(db, user_id, bank_id, topic_id, *, completed, mode="topic"):
+    db.add(
+        QuizSession(
+            user_id=user_id,
+            bank_id=bank_id,
+            mode=mode,
+            topic_id=topic_id,
+            total_questions=1,
+            is_completed=completed,
+        )
+    )
+
+
+def test_overview_practice_flags_default_false_without_user(db, fixture_data):
+    overview = list_bank_topic_overview(db, fixture_data["exam"].id, fixture_data["bank"].id)
+
+    assert _competency_flags(overview, "II.A") == (False, False)
+    assert overview["unclassified_practiced"] is False
+    assert overview["unclassified_in_progress"] is False
+
+
+def test_overview_marks_practiced_and_in_progress_for_current_user_bank(db, fixture_data):
+    user_id = fixture_data["exam"].owner_id
+    bank_id = fixture_data["bank"].id
+    _add_topic_session(db, user_id, bank_id, fixture_data["comp_iia"].id, completed=True)
+    _add_topic_session(db, user_id, bank_id, fixture_data["comp_iib"].id, completed=False)
+    _add_topic_session(db, user_id, bank_id, None, completed=True)
+    _add_topic_session(db, user_id, bank_id, None, completed=False)
+    db.commit()
+
+    overview = list_bank_topic_overview(
+        db, fixture_data["exam"].id, bank_id, user_id=user_id
+    )
+
+    assert _competency_flags(overview, "II.A") == (True, False)
+    assert _competency_flags(overview, "II.B") == (False, True)
+    assert _competency_flags(overview, "III.C") == (False, False)
+    assert overview["unclassified_practiced"] is True
+    assert overview["unclassified_in_progress"] is True
+
+
+def test_overview_practice_flags_ignore_other_mode_bank_and_user(db, fixture_data):
+    owner_id = fixture_data["exam"].owner_id
+    other = User(username="other2", email="o2@example.com", password_hash="x")
+    db.add(other)
+    db.flush()
+    _add_topic_session(
+        db, owner_id, fixture_data["bank"].id, fixture_data["comp_iia"].id,
+        completed=True, mode="sequential",
+    )
+    _add_topic_session(
+        db, owner_id, fixture_data["other_bank"].id, fixture_data["comp_iia"].id,
+        completed=True,
+    )
+    _add_topic_session(
+        db, other.id, fixture_data["bank"].id, fixture_data["comp_iib"].id,
+        completed=True,
+    )
+    _add_topic_session(
+        db, owner_id, fixture_data["bank"].id, fixture_data["domain_ii"].id,
+        completed=True,
+    )
+    db.commit()
+
+    overview = list_bank_topic_overview(
+        db, fixture_data["exam"].id, fixture_data["bank"].id, user_id=owner_id
+    )
+
+    assert _competency_flags(overview, "II.A") == (False, False)
+    assert _competency_flags(overview, "II.B") == (False, False)
+
+
+def test_overview_practiced_and_in_progress_can_coexist(db, fixture_data):
+    user_id = fixture_data["exam"].owner_id
+    bank_id = fixture_data["bank"].id
+    _add_topic_session(db, user_id, bank_id, fixture_data["comp_iia"].id, completed=True)
+    _add_topic_session(db, user_id, bank_id, fixture_data["comp_iia"].id, completed=False)
+    db.commit()
+
+    overview = list_bank_topic_overview(
+        db, fixture_data["exam"].id, bank_id, user_id=user_id
+    )
+
+    assert _competency_flags(overview, "II.A") == (True, True)
 
 
 def test_clearing_manual_topics_returns_question_to_untagged(db, fixture_data):

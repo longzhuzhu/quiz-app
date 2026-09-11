@@ -10,6 +10,7 @@ from app.models.exam import Exam
 from app.models.exam_topic import ExamTopic, TOPIC_LEVEL_COMPETENCY, TOPIC_LEVEL_DOMAIN
 from app.models.question import Question
 from app.models.question_topic import QuestionTopic, TOPIC_SOURCE_MANUAL
+from app.models.quiz import QuizSession
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "data" / "topic_templates"
 
@@ -105,10 +106,42 @@ def _question_counts_by_topic(db: Session, bank_id: int) -> dict[int, int]:
     )
 
 
-def list_bank_topic_overview(db: Session, exam_id: int, bank_id: int) -> dict:
+def _topic_session_flags(
+    db: Session, user_id: int, bank_id: int
+) -> tuple[set[int], set[int], bool, bool]:
+    """当前用户在该题库的专项练习覆盖：已练 / 进行中的考点 id，以及未分类两态。"""
+    rows = db.execute(
+        select(QuizSession.topic_id, QuizSession.is_completed).where(
+            QuizSession.user_id == user_id,
+            QuizSession.bank_id == bank_id,
+            QuizSession.mode == "topic",
+        )
+    ).all()
+    practiced_ids: set[int] = set()
+    in_progress_ids: set[int] = set()
+    unclassified_practiced = False
+    unclassified_in_progress = False
+    for topic_id, is_completed in rows:
+        if topic_id is None:
+            if is_completed:
+                unclassified_practiced = True
+            else:
+                unclassified_in_progress = True
+            continue
+        if is_completed:
+            practiced_ids.add(topic_id)
+        else:
+            in_progress_ids.add(topic_id)
+    return practiced_ids, in_progress_ids, unclassified_practiced, unclassified_in_progress
+
+
+def list_bank_topic_overview(
+    db: Session, exam_id: int, bank_id: int, user_id: int | None = None
+) -> dict:
     """题库维度的考点概览：每个域及其能力项的题数、考试出题配额，以及未分类题数。
 
     域的题数是其下能力项关联题目的去重计数——一道题挂了同域两个能力项只算一次。
+    传入 user_id 时附上该用户的已练 / 进行中标记；不传则两态均为假。
     """
     domains = (
         db.query(ExamTopic)
@@ -144,6 +177,22 @@ def list_bank_topic_overview(db: Session, exam_id: int, bank_id: int) -> dict:
         or 0
     )
 
+    if user_id is None:
+        practiced_ids, in_progress_ids = set(), set()
+        unclassified_practiced = False
+        unclassified_in_progress = False
+    else:
+        (
+            practiced_ids,
+            in_progress_ids,
+            unclassified_practiced,
+            unclassified_in_progress,
+        ) = _topic_session_flags(db, user_id, bank_id)
+
+    for competency in competencies:
+        competency["practiced"] = competency["id"] in practiced_ids
+        competency["in_progress"] = competency["id"] in in_progress_ids
+
     return {
         "topics": [
             {
@@ -162,6 +211,8 @@ def list_bank_topic_overview(db: Session, exam_id: int, bank_id: int) -> dict:
         # 扁平列表留给管理端人工设定单题考点，避免前端再拆一次树
         "competencies": competencies,
         "unclassified_count": total_questions - classified,
+        "unclassified_practiced": unclassified_practiced,
+        "unclassified_in_progress": unclassified_in_progress,
         "total_questions": total_questions,
     }
 

@@ -101,11 +101,12 @@ def list_banks(
 def list_bank_topics(
     bank_id: int,
     exam: Exam = Depends(get_exam_context),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """题库的考点概览，供专项练习选择考点"""
     bank = get_bank_in_exam_or_404(db, bank_id, exam)
-    return list_bank_topic_overview(db, exam.id, bank.id)
+    return list_bank_topic_overview(db, exam.id, bank.id, user_id=current_user.id)
 
 
 @router.post("", status_code=201)
