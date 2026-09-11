@@ -14,6 +14,11 @@
       </div>
       <div class="flex items-center gap-2 flex-shrink-0">
         <span v-if="isExamMode" class="rounded-full bg-amber-100 dark:bg-amber-900/30 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400">模拟考试</span>
+        <span
+          v-else-if="isTopicMode"
+          class="max-w-[12rem] truncate rounded-full bg-sky-100 dark:bg-sky-900/30 px-2 py-0.5 text-xs font-medium text-sky-700 dark:text-sky-400"
+          :title="topicModeLabel"
+        >{{ topicModeLabel }}</span>
         <label class="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 cursor-pointer select-none">
           <input type="checkbox" v-model="autoNext"
             class="h-3.5 w-3.5 rounded border-gray-300 dark:border-slate-600 text-primary-600 dark:text-primary-500" />
@@ -135,6 +140,7 @@ import { computed, reactive, ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuizStore } from '../stores/quiz'
 import { currentExamPath } from '../utils/examRoutes'
+import { sessionModeLabel } from '../utils/quizMode'
 import { useToast } from '../composables/useToast'
 import QuestionCard from '../components/QuestionCard.vue'
 import client from '../api/client'
@@ -156,6 +162,8 @@ const autoNext = ref(false)
 const prewarmKeys = new Set()
 
 const isExamMode = computed(() => quizStore.session?.mode === 'exam')
+const isTopicMode = computed(() => quizStore.session?.mode === 'topic')
+const topicModeLabel = computed(() => sessionModeLabel(quizStore.session))
 const totalAnsweredCount = computed(() => Object.keys(answerResults).length)
 const correctCount = computed(() => Object.values(answerResults).filter(v => v === true).length)
 const wrongCount = computed(() => Object.values(answerResults).filter(v => v === false).length)

@@ -165,7 +165,19 @@
                 : 'border-gray-200 dark:border-slate-600'"
               @click="selectedTopicKey = option.key"
             >
-              <div class="font-medium text-gray-900 dark:text-white">{{ option.label }}</div>
+              <div class="flex items-start justify-between gap-2">
+                <div class="min-w-0 font-medium text-gray-900 dark:text-white">{{ option.label }}</div>
+                <div class="flex flex-shrink-0 flex-wrap justify-end gap-1">
+                  <span
+                    v-if="option.practiced"
+                    class="inline-flex items-center rounded-full bg-emerald-100 dark:bg-emerald-900/30 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400"
+                  >已练</span>
+                  <span
+                    v-if="option.in_progress"
+                    class="inline-flex items-center rounded-full bg-sky-100 dark:bg-sky-900/30 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 dark:text-sky-400"
+                  >进行中</span>
+                </div>
+              </div>
               <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 <span v-if="option.blueprint_max">考试占 {{ option.blueprint_min }}–{{ option.blueprint_max }} 题 · </span>
                 本库 {{ option.question_count }} 题
@@ -183,7 +195,19 @@
               : 'border-gray-200 dark:border-slate-600'"
             @click="selectedTopicKey = unclassifiedOption.key"
           >
-            <div class="font-medium text-gray-900 dark:text-white">{{ unclassifiedOption.label }}</div>
+            <div class="flex items-start justify-between gap-2">
+              <div class="min-w-0 font-medium text-gray-900 dark:text-white">{{ unclassifiedOption.label }}</div>
+              <div class="flex flex-shrink-0 flex-wrap justify-end gap-1">
+                <span
+                  v-if="unclassifiedOption.practiced"
+                  class="inline-flex items-center rounded-full bg-emerald-100 dark:bg-emerald-900/30 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400"
+                >已练</span>
+                <span
+                  v-if="unclassifiedOption.in_progress"
+                  class="inline-flex items-center rounded-full bg-sky-100 dark:bg-sky-900/30 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 dark:text-sky-400"
+                >进行中</span>
+              </div>
+            </div>
             <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">本库 {{ unclassifiedOption.question_count }} 题</div>
           </button>
         </section>
@@ -360,6 +384,8 @@ async function openTopicModal(bank) {
         blueprint_min: competency.blueprint_min,
         blueprint_max: competency.blueprint_max,
         question_count: competency.question_count,
+        practiced: Boolean(competency.practiced),
+        in_progress: Boolean(competency.in_progress),
       })),
     }))
     unclassifiedOption.value = {
@@ -369,6 +395,8 @@ async function openTopicModal(bank) {
       blueprint_min: 0,
       blueprint_max: 0,
       question_count: res.data?.unclassified_count || 0,
+      practiced: Boolean(res.data?.unclassified_practiced),
+      in_progress: Boolean(res.data?.unclassified_in_progress),
     }
     topicGroups.value = groups
     const firstSelectable = groups
