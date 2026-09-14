@@ -158,7 +158,7 @@
               v-for="option in group.options"
               :key="option.key"
               type="button"
-              :disabled="option.question_count === 0"
+              :disabled="option.question_count === 0 && !option.in_progress"
               class="w-full rounded-lg border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 enabled:hover:border-primary-500 enabled:hover:bg-primary-50 dark:enabled:hover:bg-primary-900/20"
               :class="option.key === selectedTopicKey
                 ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
@@ -188,7 +188,7 @@
         <section v-if="unclassifiedOption">
           <button
             type="button"
-            :disabled="unclassifiedOption.question_count === 0"
+            :disabled="unclassifiedOption.question_count === 0 && !unclassifiedOption.in_progress"
             class="w-full rounded-lg border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 enabled:hover:border-primary-500 enabled:hover:bg-primary-50 dark:enabled:hover:bg-primary-900/20"
             :class="unclassifiedOption.key === selectedTopicKey
               ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
@@ -214,8 +214,19 @@
       </div>
       <template #actions>
         <BaseButton variant="secondary" @click="showTopicModal = false">取消</BaseButton>
-        <BaseButton variant="primary" :disabled="!selectedTopicOption" @click="startTopicQuiz">
+        <BaseButton
+          :variant="selectedInProgressSessionId ? 'secondary' : 'primary'"
+          :disabled="!canStartTopicQuiz"
+          @click="startTopicQuiz"
+        >
           开始练习
+        </BaseButton>
+        <BaseButton
+          v-if="selectedInProgressSessionId"
+          variant="primary"
+          @click="continueTopicQuiz"
+        >
+          继续练习
         </BaseButton>
       </template>
     </BaseModal>
@@ -312,6 +323,8 @@ const selectedTopicOption = computed(() => {
   if (unclassifiedOption.value?.key === selectedTopicKey.value) return unclassifiedOption.value
   return null
 })
+const selectedInProgressSessionId = computed(() => selectedTopicOption.value?.in_progress_session_id ?? null)
+const canStartTopicQuiz = computed(() => (selectedTopicOption.value?.question_count || 0) > 0)
 const quizHistoryPerPage = 100
 
 onMounted(fetchDashboardData)
@@ -386,6 +399,7 @@ async function openTopicModal(bank) {
         question_count: competency.question_count,
         practiced: Boolean(competency.practiced),
         in_progress: Boolean(competency.in_progress),
+        in_progress_session_id: competency.in_progress_session_id ?? null,
       })),
     }))
     unclassifiedOption.value = {
@@ -397,6 +411,7 @@ async function openTopicModal(bank) {
       question_count: res.data?.unclassified_count || 0,
       practiced: Boolean(res.data?.unclassified_practiced),
       in_progress: Boolean(res.data?.unclassified_in_progress),
+      in_progress_session_id: res.data?.unclassified_in_progress_session_id ?? null,
     }
     topicGroups.value = groups
     const firstSelectable = groups
@@ -414,7 +429,7 @@ async function openTopicModal(bank) {
 
 async function startTopicQuiz() {
   const option = selectedTopicOption.value
-  if (!option) return
+  if (!option || !canStartTopicQuiz.value) return
 
   showTopicModal.value = false
   try {
@@ -423,6 +438,13 @@ async function startTopicQuiz() {
   } catch (e) {
     toast.error(e.response?.data?.detail || '开始专项练习失败')
   }
+}
+
+function continueTopicQuiz() {
+  const sessionId = selectedInProgressSessionId.value
+  if (sessionId == null) return
+  showTopicModal.value = false
+  continueSession({ id: sessionId })
 }
 
 function sessionAccuracy(session) {

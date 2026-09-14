@@ -10,7 +10,7 @@ from app.models.exam import Exam
 from app.models.exam_topic import ExamTopic, TOPIC_LEVEL_COMPETENCY, TOPIC_LEVEL_DOMAIN
 from app.models.question import Question
 from app.models.question_topic import QuestionTopic, TOPIC_SOURCE_MANUAL
-from app.models.quiz import QuizSession
+from app.models.quiz import QuizAnswer, QuizSession
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "data" / "topic_templates"
 
@@ -108,31 +108,65 @@ def _question_counts_by_topic(db: Session, bank_id: int) -> dict[int, int]:
 
 def _topic_session_flags(
     db: Session, user_id: int, bank_id: int
-) -> tuple[set[int], set[int], bool, bool]:
-    """当前用户在该题库的专项练习覆盖：已练 / 进行中的考点 id，以及未分类两态。"""
-    rows = db.execute(
-        select(QuizSession.topic_id, QuizSession.is_completed).where(
+) -> tuple[set[int], dict[int, int], bool, int | None]:
+    """当前用户在该题库的专项练习覆盖。
+
+    返回已练考点 id、进行中考点 -> 最近活动未结束会话 id、未分类是否已练、
+    未分类最近活动未结束会话 id。进行中会话排序与题库级继续答题相同。
+    """
+    practiced_ids: set[int] = set()
+    unclassified_practiced = False
+    for (topic_id,) in db.execute(
+        select(QuizSession.topic_id).where(
             QuizSession.user_id == user_id,
             QuizSession.bank_id == bank_id,
             QuizSession.mode == "topic",
+            QuizSession.is_completed.is_(True),
+        )
+    ).all():
+        if topic_id is None:
+            unclassified_practiced = True
+        else:
+            practiced_ids.add(topic_id)
+
+    last_answered = (
+        select(
+            QuizAnswer.session_id.label("session_id"),
+            func.max(QuizAnswer.answered_at).label("last_answered_at"),
+        )
+        .group_by(QuizAnswer.session_id)
+        .subquery()
+    )
+    incomplete_rows = db.execute(
+        select(QuizSession.id, QuizSession.topic_id)
+        .outerjoin(last_answered, QuizSession.id == last_answered.c.session_id)
+        .where(
+            QuizSession.user_id == user_id,
+            QuizSession.bank_id == bank_id,
+            QuizSession.mode == "topic",
+            QuizSession.is_completed.is_(False),
+        )
+        .order_by(
+            func.coalesce(last_answered.c.last_answered_at, QuizSession.created_at).desc(),
+            QuizSession.id.desc(),
         )
     ).all()
-    practiced_ids: set[int] = set()
-    in_progress_ids: set[int] = set()
-    unclassified_practiced = False
-    unclassified_in_progress = False
-    for topic_id, is_completed in rows:
+
+    in_progress_session_ids: dict[int, int] = {}
+    unclassified_in_progress_session_id = None
+    for session_id, topic_id in incomplete_rows:
         if topic_id is None:
-            if is_completed:
-                unclassified_practiced = True
-            else:
-                unclassified_in_progress = True
+            if unclassified_in_progress_session_id is None:
+                unclassified_in_progress_session_id = session_id
             continue
-        if is_completed:
-            practiced_ids.add(topic_id)
-        else:
-            in_progress_ids.add(topic_id)
-    return practiced_ids, in_progress_ids, unclassified_practiced, unclassified_in_progress
+        in_progress_session_ids.setdefault(topic_id, session_id)
+
+    return (
+        practiced_ids,
+        in_progress_session_ids,
+        unclassified_practiced,
+        unclassified_in_progress_session_id,
+    )
 
 
 def list_bank_topic_overview(
@@ -178,20 +212,23 @@ def list_bank_topic_overview(
     )
 
     if user_id is None:
-        practiced_ids, in_progress_ids = set(), set()
+        practiced_ids = set()
+        in_progress_session_ids: dict[int, int] = {}
         unclassified_practiced = False
-        unclassified_in_progress = False
+        unclassified_in_progress_session_id = None
     else:
         (
             practiced_ids,
-            in_progress_ids,
+            in_progress_session_ids,
             unclassified_practiced,
-            unclassified_in_progress,
+            unclassified_in_progress_session_id,
         ) = _topic_session_flags(db, user_id, bank_id)
 
     for competency in competencies:
+        session_id = in_progress_session_ids.get(competency["id"])
         competency["practiced"] = competency["id"] in practiced_ids
-        competency["in_progress"] = competency["id"] in in_progress_ids
+        competency["in_progress"] = session_id is not None
+        competency["in_progress_session_id"] = session_id
 
     return {
         "topics": [
@@ -212,7 +249,8 @@ def list_bank_topic_overview(
         "competencies": competencies,
         "unclassified_count": total_questions - classified,
         "unclassified_practiced": unclassified_practiced,
-        "unclassified_in_progress": unclassified_in_progress,
+        "unclassified_in_progress": unclassified_in_progress_session_id is not None,
+        "unclassified_in_progress_session_id": unclassified_in_progress_session_id,
         "total_questions": total_questions,
     }
 
