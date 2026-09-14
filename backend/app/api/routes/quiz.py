@@ -1,10 +1,11 @@
 """Quiz API 路由 - 答题会话（开始/答题/结束/历史/详情）"""
 
 import json
+import logging
 from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -34,6 +35,34 @@ from app.services.topic_service import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+PRACTICE_STATS_LOCK_TIMEOUT = "250ms"
+
+
+def _record_practice_stats(
+    db: Session,
+    *,
+    user_id: int,
+    exam_id: int,
+    question_id: int,
+    local_date,
+) -> None:
+    """写入练习日与正确率快照。PostgreSQL 上遇到共享行锁时快速放弃，不拖住已提交的作答。"""
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(text(f"SET LOCAL lock_timeout = '{PRACTICE_STATS_LOCK_TIMEOUT}'"))
+    record_question_touch(
+        db,
+        user_id=user_id,
+        exam_id=exam_id,
+        question_id=question_id,
+        local_date=local_date,
+    )
+    record_accuracy_snapshot(
+        db,
+        user_id=user_id,
+        exam_id=exam_id,
+        local_date=local_date,
+    )
 
 
 def _get_user_question_counts(user_id: int, question_ids: list[int], db: Session) -> dict:
@@ -305,24 +334,32 @@ def submit_answer(
             wrong = WrongAnswer(user_id=user_id, question_id=question_id)
             db.add(wrong)
 
-    record_question_touch(
-        db,
-        user_id=user_id,
-        exam_id=exam.id,
-        question_id=question_id,
-        local_date=data.local_date,
-    )
-    record_accuracy_snapshot(
-        db,
-        user_id=user_id,
-        exam_id=exam.id,
-        local_date=data.local_date,
-    )
-
+    session_mode = session.mode
+    correct_answer = question.correct_answer
+    explanation = question.explanation
+    explanation_zh = question.explanation_zh
     db.commit()
 
+    try:
+        _record_practice_stats(
+            db,
+            user_id=user_id,
+            exam_id=exam.id,
+            question_id=question_id,
+            local_date=data.local_date,
+        )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.warning(
+            "练习统计写入跳过 session_id=%s question_id=%s err=%s",
+            session_id,
+            question_id,
+            type(exc).__name__,
+        )
+
     # 模拟考试模式不返回正确答案和解析
-    if session.mode == "exam":
+    if session_mode == "exam":
         return {
             "submitted": True,
             "user_answer_count": user_answer_count,
@@ -331,9 +368,9 @@ def submit_answer(
 
     return {
         "is_correct": is_correct,
-        "correct_answer": question.correct_answer,
-        "explanation": question.explanation,
-        "explanation_zh": question.explanation_zh,
+        "correct_answer": correct_answer,
+        "explanation": explanation,
+        "explanation_zh": explanation_zh,
         "user_answer_count": user_answer_count,
         "counted_as_new_attempt": counted_as_new_attempt,
     }
