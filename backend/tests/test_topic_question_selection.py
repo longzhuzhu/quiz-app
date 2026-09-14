@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -40,6 +41,7 @@ from app.models import (  # noqa: E402,F401  —— 导入以注册全部映射
     Question,
     QuestionBank,
     QuestionTopic,
+    QuizAnswer,
     QuizSession,
     User,
 )
@@ -316,49 +318,58 @@ def _competency_flags(overview, code):
     for domain in overview["topics"]:
         for competency in domain["competencies"]:
             if competency["code"] == code:
-                return competency["practiced"], competency["in_progress"]
+                return (
+                    competency["practiced"],
+                    competency["in_progress"],
+                    competency.get("in_progress_session_id"),
+                )
     raise AssertionError(f"missing competency {code}")
 
 
 def _add_topic_session(db, user_id, bank_id, topic_id, *, completed, mode="topic"):
-    db.add(
-        QuizSession(
-            user_id=user_id,
-            bank_id=bank_id,
-            mode=mode,
-            topic_id=topic_id,
-            total_questions=1,
-            is_completed=completed,
-        )
+    session = QuizSession(
+        user_id=user_id,
+        bank_id=bank_id,
+        mode=mode,
+        topic_id=topic_id,
+        total_questions=1,
+        is_completed=completed,
     )
+    db.add(session)
+    db.flush()
+    return session
 
 
 def test_overview_practice_flags_default_false_without_user(db, fixture_data):
     overview = list_bank_topic_overview(db, fixture_data["exam"].id, fixture_data["bank"].id)
 
-    assert _competency_flags(overview, "II.A") == (False, False)
+    assert _competency_flags(overview, "II.A") == (False, False, None)
     assert overview["unclassified_practiced"] is False
     assert overview["unclassified_in_progress"] is False
+    assert overview["unclassified_in_progress_session_id"] is None
 
 
 def test_overview_marks_practiced_and_in_progress_for_current_user_bank(db, fixture_data):
     user_id = fixture_data["exam"].owner_id
     bank_id = fixture_data["bank"].id
     _add_topic_session(db, user_id, bank_id, fixture_data["comp_iia"].id, completed=True)
-    _add_topic_session(db, user_id, bank_id, fixture_data["comp_iib"].id, completed=False)
+    in_progress = _add_topic_session(
+        db, user_id, bank_id, fixture_data["comp_iib"].id, completed=False
+    )
     _add_topic_session(db, user_id, bank_id, None, completed=True)
-    _add_topic_session(db, user_id, bank_id, None, completed=False)
+    unclassified_open = _add_topic_session(db, user_id, bank_id, None, completed=False)
     db.commit()
 
     overview = list_bank_topic_overview(
         db, fixture_data["exam"].id, bank_id, user_id=user_id
     )
 
-    assert _competency_flags(overview, "II.A") == (True, False)
-    assert _competency_flags(overview, "II.B") == (False, True)
-    assert _competency_flags(overview, "III.C") == (False, False)
+    assert _competency_flags(overview, "II.A") == (True, False, None)
+    assert _competency_flags(overview, "II.B") == (False, True, in_progress.id)
+    assert _competency_flags(overview, "III.C") == (False, False, None)
     assert overview["unclassified_practiced"] is True
     assert overview["unclassified_in_progress"] is True
+    assert overview["unclassified_in_progress_session_id"] == unclassified_open.id
 
 
 def test_overview_practice_flags_ignore_other_mode_bank_and_user(db, fixture_data):
@@ -388,22 +399,54 @@ def test_overview_practice_flags_ignore_other_mode_bank_and_user(db, fixture_dat
         db, fixture_data["exam"].id, fixture_data["bank"].id, user_id=owner_id
     )
 
-    assert _competency_flags(overview, "II.A") == (False, False)
-    assert _competency_flags(overview, "II.B") == (False, False)
+    assert _competency_flags(overview, "II.A") == (False, False, None)
+    assert _competency_flags(overview, "II.B") == (False, False, None)
 
 
 def test_overview_practiced_and_in_progress_can_coexist(db, fixture_data):
     user_id = fixture_data["exam"].owner_id
     bank_id = fixture_data["bank"].id
     _add_topic_session(db, user_id, bank_id, fixture_data["comp_iia"].id, completed=True)
-    _add_topic_session(db, user_id, bank_id, fixture_data["comp_iia"].id, completed=False)
+    open_session = _add_topic_session(
+        db, user_id, bank_id, fixture_data["comp_iia"].id, completed=False
+    )
     db.commit()
 
     overview = list_bank_topic_overview(
         db, fixture_data["exam"].id, bank_id, user_id=user_id
     )
 
-    assert _competency_flags(overview, "II.A") == (True, True)
+    assert _competency_flags(overview, "II.A") == (True, True, open_session.id)
+
+
+def test_overview_in_progress_session_is_the_most_recently_active(db, fixture_data):
+    user_id = fixture_data["exam"].owner_id
+    bank_id = fixture_data["bank"].id
+    older = _add_topic_session(
+        db, user_id, bank_id, fixture_data["comp_iia"].id, completed=False
+    )
+    newer_idle = _add_topic_session(
+        db, user_id, bank_id, fixture_data["comp_iia"].id, completed=False
+    )
+    older.created_at = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    newer_idle.created_at = datetime(2026, 9, 10, tzinfo=timezone.utc)
+    db.add(
+        QuizAnswer(
+            session_id=older.id,
+            question_id=fixture_data["questions"]["q1"].id,
+            user_answer="A",
+            is_correct=True,
+            answered_at=datetime(2026, 9, 11, tzinfo=timezone.utc),
+        )
+    )
+    db.commit()
+
+    overview = list_bank_topic_overview(
+        db, fixture_data["exam"].id, bank_id, user_id=user_id
+    )
+
+    assert _competency_flags(overview, "II.A")[2] == older.id
+    assert newer_idle.id != older.id
 
 
 def test_clearing_manual_topics_returns_question_to_untagged(db, fixture_data):
