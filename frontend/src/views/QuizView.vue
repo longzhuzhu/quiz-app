@@ -340,7 +340,8 @@ async function handleSubmit(answer, callback) {
       }, 1500)
     }
   } catch (e) {
-    toast.error(e.response?.data?.error || '提交失败')
+    toast.error(e.response?.data?.error || e.response?.data?.detail || '提交失败')
+    callback()
   }
 }
 

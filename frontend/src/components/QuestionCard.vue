@@ -416,9 +416,10 @@ async function handleSubmit() {
   submitting.value = true
   const answer = selectedAnswers.value.sort().join(',')
   emit('submit', answer, (res) => {
+    submitting.value = false
+    if (!res) return
     result.value = res
     answered.value = true
-    submitting.value = false
   })
 }
 </script>
