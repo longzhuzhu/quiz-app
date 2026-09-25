@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查后端代码质量门（测试、查询写法）"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查前端改动质量门（构建、样式一致性）"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "复查新增查询是否符合数据库约定"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "复查前后端口径/字段一致性"}
