@@ -31,7 +31,7 @@
           </div>
           <div>
             <div class="text-2xl font-bold text-gray-900 dark:text-white">{{ totalQuestions }}</div>
-            <div class="text-sm text-gray-500 dark:text-gray-400">总题目 · 已刷 {{ practicedQuestions }} · {{ practicedPercent }}%</div>
+            <div class="text-sm text-gray-500 dark:text-gray-400">进展 {{ practicedQuestions }}题｜{{ practicedPercent }}%</div>
           </div>
         </div>
         <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-700">
