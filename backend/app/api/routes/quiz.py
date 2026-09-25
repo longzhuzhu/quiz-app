@@ -23,6 +23,7 @@ from app.services.exam_service import get_bank_in_exam_or_404
 from app.services.practice_service import (
     clear_practice_days,
     heatmap_for,
+    practiced_questions_for,
     recent_accuracy_for,
     record_accuracy_snapshot,
     record_question_touch,
@@ -495,6 +496,15 @@ def recent_accuracy(
     db: Session = Depends(get_db),
 ):
     return recent_accuracy_for(db, current_user.id, exam.id, limit=limit)
+
+
+@router.get("/practiced-summary")
+def practiced_summary(
+    current_user: User = Depends(get_current_user),
+    exam: Exam = Depends(get_exam_context),
+    db: Session = Depends(get_db),
+):
+    return {"practiced_questions": practiced_questions_for(db, current_user.id, exam.id)}
 
 
 @router.get("/practice-heatmap")

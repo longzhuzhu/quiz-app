@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import func
+from sqlalchemy import distinct, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -177,6 +177,21 @@ def recent_accuracy_for(
         "accuracy": accuracy,
         "limit": limit,
     }
+
+
+def practiced_questions_for(db: Session, user_id: int, exam_id: int) -> int:
+    """当前考试项目里存在至少一条作答记录的不重复题目数（已刷题目口径）。"""
+    count = (
+        db.query(func.count(distinct(QuizAnswer.question_id)))
+        .join(QuizSession, QuizAnswer.session_id == QuizSession.id)
+        .join(QuestionBank, QuizSession.bank_id == QuestionBank.id)
+        .filter(
+            QuizSession.user_id == user_id,
+            QuestionBank.exam_id == exam_id,
+        )
+        .scalar()
+    )
+    return count or 0
 
 
 def record_accuracy_snapshot(

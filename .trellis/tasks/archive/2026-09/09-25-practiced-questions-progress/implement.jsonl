@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端规范入口：服务层与路由层的分层约定"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "新增 COUNT(DISTINCT) 联表查询需遵循数据库查询约定"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "确认 service 函数、路由、测试文件的落位"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端规范入口：视图与状态组织方式"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "总题目卡片改造需遵循组件/视图写法约定"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "HomeView 内 ref/computed 与并发取数模式的约定"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本任务横跨后端端点与前端展示，需对照跨层一致性清单"}

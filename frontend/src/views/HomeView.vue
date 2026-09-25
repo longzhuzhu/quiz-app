@@ -31,8 +31,11 @@
           </div>
           <div>
             <div class="text-2xl font-bold text-gray-900 dark:text-white">{{ totalQuestions }}</div>
-            <div class="text-sm text-gray-500 dark:text-gray-400">总题目</div>
+            <div class="text-sm text-gray-500 dark:text-gray-400">总题目 · 已刷 {{ practicedQuestions }} · {{ practicedPercent }}%</div>
           </div>
+        </div>
+        <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-700">
+          <div class="h-full rounded-full bg-sky-500" :style="{ width: practicedPercent + '%' }"></div>
         </div>
       </div>
 
@@ -281,6 +284,7 @@ const toast = useToast()
 const wrongStats = ref({})
 const recentAccuracy = ref(0)
 const recentTotal = ref(0)
+const practicedQuestions = ref(0)
 function emptyTrend(todayIso) {
   const [year, month, day] = String(todayIso).split('-').map(Number)
   const days = []
@@ -315,6 +319,10 @@ const UNCLASSIFIED_TOPIC_KEY = '__unclassified__'
 const banks = computed(() => bankStore.banks)
 const loading = computed(() => bankStore.loading)
 const totalQuestions = computed(() => banks.value.reduce((s, b) => s + b.question_count, 0))
+const practicedPercent = computed(() => {
+  if (totalQuestions.value <= 0) return 0
+  return Math.min(100, Math.round((practicedQuestions.value / totalQuestions.value) * 100))
+})
 const selectedTopicOption = computed(() => {
   for (const group of topicGroups.value) {
     const match = group.options.find(o => o.key === selectedTopicKey.value)
@@ -346,6 +354,9 @@ async function fetchDashboardData() {
     recentAccuracy.value = r.data.accuracy
     recentTotal.value = r.data.total
   }).catch(() => {})
+  const practicedP = client.get('/quiz/practiced-summary').then(r => {
+    practicedQuestions.value = Number(r.data?.practiced_questions) || 0
+  }).catch(() => {})
   const heatmapP = client.get('/quiz/practice-heatmap', { params: { today: localToday } }).then(r => {
     heatmap.value = {
       today: r.data?.today || localToday,
@@ -370,7 +381,7 @@ async function fetchDashboardData() {
   }).catch(() => {
     trend.value = emptyTrend(localToday)
   })
-  await Promise.allSettled([bankP, wrongP, accP, heatmapP, lastSessionP, trendP])
+  await Promise.allSettled([bankP, wrongP, accP, practicedP, heatmapP, lastSessionP, trendP])
 }
 
 async function openTopicModal(bank) {
