@@ -692,3 +692,39 @@ Merged latest main into PR 32 branch and resolved the HomeView quiz button varia
 ### Next Steps
 
 - None - task complete
+
+---
+
+## 2026-10-04 | Quiz UI 重构优化与验证（quiz-ui-refactor）
+
+### Summary
+
+依据 10-04-quiz-ui-audit/audit.md 的 24 项审查结论，完成前端答题体验聚焦重构：QuestionCard 受控化（草稿/已提交答案分离）、QuizView 固定底部操作条 + 进度口径修正、首页优先级重排、错题本手机布局与翻译状态统一、结果页未答统计与可展开选项对比、全局降噪（去渐变/摇晃/emoji）与 reduced-motion。W1/W4 后端契约项与 M3 真机项明确范围外。
+
+### Key Decisions
+
+- QuestionCard 改为受控展示组件，答题状态归 QuizView；result 与 questionResultMap 保持同一对象引用（沿用既有约定）。
+- 答题路由 meta.quizFocus：App.vue 据此隐藏 MobileNav，答题页自带固定底栏，消除双底栏与 M3 叠加风险。
+- 自动下一题仅在答对且开启偏好时触发，1.5s 可取消；答错停留。
+- 已答选项保持正常对比度，用「你的选择/正确答案/你的答案 ✓」文本标签表达结果。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4076c92` | feat(quiz): 按审计结论重构答题界面与复习闭环 |
+| （chore×2） | 任务工件/spec 更新/验收记录 |
+
+### Testing
+
+- [OK] vite build 通过
+- [OK] 隔离 mock API 浏览器回归 39 项全过（桌面/390/320、明暗模式），console 0 error/warning
+- [OK] 补充回归：examMode、复制题目、更正答案流程
+
+### Status
+
+[OK] **Completed**（分支 feat/quiz-ui-refactor，未推远端、未建 PR）
+
+### Next Steps
+
+- 待用户决定是否推送/建 PR；M3 真机 iOS 安全区验证、W1/W4 后端契约项留待后续任务。
