@@ -8,6 +8,8 @@ dist/
 .claude/
 .agents/
 .codex/
+.zcode/
+.zcodeignore
 .superpowers/
 logs/
 plugins/

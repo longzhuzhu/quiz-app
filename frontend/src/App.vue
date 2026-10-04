@@ -8,7 +8,8 @@
         </transition>
       </router-view>
     </main>
-    <MobileNav v-if="showAuthenticatedShell" />
+    <!-- 答题页自带底部操作条，隐藏全局底栏避免双栏叠加 -->
+    <MobileNav v-if="showAuthenticatedShell && !route.meta.quizFocus" />
     <ToastNotification />
   </div>
 </template>
