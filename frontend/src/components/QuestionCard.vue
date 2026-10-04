@@ -1,64 +1,76 @@
 <template>
   <div class="rounded-xl bg-white dark:bg-slate-800 shadow-card p-4 md:p-6">
     <template v-if="question">
-    <!-- 题目信息：位置与辅助工具，弱化装饰 -->
-    <div class="mb-5 flex items-center justify-between gap-2">
-      <div class="min-w-0 text-sm text-gray-500 dark:text-gray-400">
-        第 {{ currentIndex + 1 }} / {{ total }} 题
+    <!-- 题目信息 -->
+    <div class="mb-4 flex items-center justify-between gap-2">
+      <div class="min-w-0">
+        <span class="text-sm text-gray-500 dark:text-gray-400 block truncate">
+          第 {{ currentIndex + 1 }}{{ !hideProgress ? ` / ${total}` : '' }} 题
+        </span>
       </div>
       <div class="flex items-center gap-2">
         <span v-if="question.question_type === 'multiple'" class="rounded-full bg-amber-100 dark:bg-amber-900/30 px-2.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400">多选</span>
         <span v-else-if="question.question_type === 'truefalse'" class="rounded-full bg-sky-100 dark:bg-sky-900/30 px-2.5 py-0.5 text-xs font-medium text-sky-700 dark:text-sky-400">判断</span>
-        <span v-if="answerCount > 0" class="text-xs text-gray-400 dark:text-gray-500">已答 {{ answerCount }} 次</span>
+        <span class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+          已答 {{ answerCount }} 次
+        </span>
         <button type="button" aria-label="复制题目" @click="copyQuestion"
-          class="inline-flex h-7 w-7 items-center justify-center rounded-button text-slate-500
-                 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700 transition-colors">
+          class="inline-flex h-7 w-7 items-center justify-center rounded-button text-slate-600
+                 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-600 transition-colors">
           <ClipboardDocumentIcon class="h-4 w-4" />
         </button>
       </div>
     </div>
 
-    <!-- 题干：常规字重、保留原始换行、限制阅读列宽 -->
-    <div class="mb-6">
-      <p class="max-w-[72ch] whitespace-pre-line text-lg font-normal leading-relaxed text-gray-900 dark:text-white">{{ question.content }}</p>
-      <!-- 翻译入口紧邻题干；显隐为会话级偏好（由父组件持有） -->
-      <div class="mt-2.5">
-        <TranslateButton :key="question.id" :question-id="question.id" :has-translation="hasFullTranslation" :show="showTranslation"
-          @translated="onTranslated"
-          @toggle="$emit('update:showTranslation', !showTranslation)" />
-      </div>
-      <p v-if="showTranslation && question.content_zh" class="mt-2 max-w-[72ch] whitespace-pre-line text-base leading-relaxed text-gray-600 dark:text-gray-400">{{ question.content_zh }}</p>
+    <!-- 进度条（仅 !hideProgress） -->
+    <div v-if="!hideProgress" class="mb-6 h-1.5 w-full rounded-full bg-gray-200 dark:bg-slate-700">
+      <div class="h-1.5 rounded-full bg-gradient-to-r from-primary-500 to-sky-400 transition-all duration-300"
+        :style="{ width: `${((currentIndex + 1) / total) * 100}%` }"></div>
     </div>
 
-    <!-- 选项：控件/标号/正文三列，标号窄列悬挂对齐；input 为唯一激活入口 -->
-    <fieldset class="min-w-0">
-      <legend class="sr-only">题目选项</legend>
-      <div class="space-y-2.5">
-        <component :is="interactive ? 'label' : 'div'" v-for="option in question.options" :key="option.key"
-          class="question-option"
-          :class="optionClass(option.key)">
-          <input v-if="question.question_type === 'multiple'"
-            type="checkbox" :name="inputGroupName" :checked="isOptionChecked(option.key)"
-            :class="inputClass(option.key)"
-            @change="onOptionChange(option.key)" />
-          <input v-else
-            type="radio" :name="inputGroupName" :checked="isOptionChecked(option.key)"
-            :class="inputClass(option.key)"
-            @change="onOptionChange(option.key)" />
-          <span class="w-7 shrink-0 pt-0.5 text-right font-medium text-gray-900 dark:text-white">{{ option.key }}.</span>
-          <span class="min-w-0 flex-1 text-gray-700 dark:text-gray-300">
-            <span class="break-words" :class="{ 'font-medium text-gray-900 dark:text-white': isResultKey(option.key) }">{{ option.text }}</span>
-            <span v-if="resultBadge(option.key)"
-              class="ml-2 inline-flex items-center rounded-full px-2 py-0.5 align-middle text-xs font-medium"
-              :class="resultBadge(option.key).tone">{{ resultBadge(option.key).text }}</span>
-            <span v-if="showTranslation && option.text_zh" class="mt-1 block text-sm leading-relaxed text-gray-500 dark:text-gray-400">{{ option.text_zh }}</span>
-          </span>
-        </component>
-      </div>
-    </fieldset>
+    <!-- 题目内容 -->
+    <div class="mb-6">
+      <p class="text-lg font-medium text-gray-900 dark:text-white leading-relaxed">{{ question.content }}</p>
+      <p v-if="showTranslation && question.content_zh" class="mt-2 text-base text-gray-600 dark:text-gray-400 leading-relaxed">{{ question.content_zh }}</p>
+    </div>
 
-    <!-- 答题反馈：对/错 + 你的答案与正确答案对照（aria 播报） -->
-    <div v-if="result && !examMode" role="status" aria-live="polite" class="mt-4 rounded-xl p-4 border"
+    <!-- 选项 -->
+    <div class="space-y-3">
+      <label v-for="option in question.options" :key="option.key"
+        :class="optionClass(option.key)"
+        @click="toggleOption(option.key)">
+        <input v-if="question.question_type === 'multiple'"
+          type="checkbox" :checked="isOptionChecked(option.key)"
+           class="mt-0.5 h-4 w-4 rounded text-primary-600 dark:text-primary-500" />
+        <input v-else
+          type="radio" :checked="isOptionChecked(option.key)"
+           class="mt-0.5 h-4 w-4 text-primary-600 dark:text-primary-500" />
+        <div>
+          <span class="font-medium text-gray-900 dark:text-white">{{ option.key }}.</span>
+          <span class="text-gray-700 dark:text-gray-300">{{ option.text }}</span>
+          <span v-if="showTranslation && option.text_zh" class="block text-sm text-gray-500 dark:text-gray-400 mt-1">{{ option.text_zh }}</span>
+        </div>
+      </label>
+    </div>
+
+    <!-- AI 按钮区 -->
+    <div class="mt-4 flex flex-wrap items-center gap-2">
+      <TranslateButton :key="question.id" :question-id="question.id" :has-translation="hasFullTranslation" :show="showTranslation"
+        @translated="(e) => { $emit('translated', e); showTranslation = true }"
+        @toggle="showTranslation = !showTranslation" />
+      <ExplainButton
+        v-if="!examMode"
+        :key="question.id"
+        :question-id="question.id"
+        :initial-explanation="initialExplanation"
+        :displayed="!!displayedExplanation"
+        @explained="onExplained"
+      />
+      <AddVocabButton :initial-term="question.content" />
+    </div>
+
+    <!-- 答题反馈 -->
+    <div v-if="answered && !examMode" class="mt-4 rounded-xl p-4 border"
       :class="result.is_correct
         ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800'
         : 'bg-rose-50 dark:bg-rose-900/20 border-rose-200 dark:border-rose-800'">
@@ -66,34 +78,15 @@
         <CheckCircleIcon v-if="result.is_correct" class="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
         <XCircleIcon v-else class="h-5 w-5 text-rose-600 dark:text-rose-400" />
         <p class="font-medium" :class="result.is_correct ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'">
-          {{ result.is_correct ? '回答正确' : '回答错误' }}
+          {{ result.is_correct ? '回答正确！' : '回答错误' }}
         </p>
       </div>
-      <p class="mt-1.5 text-sm text-gray-700 dark:text-gray-300">
-        你的答案 <span class="font-medium text-gray-900 dark:text-white">{{ submittedDisplay }}</span>
-        <template v-if="!result.is_correct">
-          <span class="mx-1 text-gray-400">→</span>
-          正确答案 <span class="font-medium text-emerald-700 dark:text-emerald-400">{{ result.correct_answer }}</span>
-        </template>
-      </p>
-      <div class="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5">
-        <template v-if="editing">
-          <span class="text-xs text-amber-600 dark:text-amber-400">重新作答中，提交后更新结果</span>
-          <button type="button" @click="$emit('cancel-editing')"
-            class="text-sm font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">
-            取消重做
-          </button>
-        </template>
-        <template v-else-if="!correctionMode">
-          <button type="button" @click="$emit('start-editing')"
-            class="text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300">
-            重新作答
-          </button>
-          <button type="button" @click="enterCorrectionMode"
-            class="text-sm font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">
-            更正答案
-          </button>
-        </template>
+      <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">正确答案: {{ result.correct_answer }}</p>
+      <div class="mt-2 flex flex-wrap items-center gap-2">
+        <button v-if="!correctionMode" type="button" @click="enterCorrectionMode"
+          class="text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400">
+          更正答案
+        </button>
         <template v-else>
           <span class="text-xs text-gray-500 dark:text-gray-400">点击选项选择新的正确答案</span>
           <BaseButton size="sm" variant="primary" @click="askConfirmCorrection"
@@ -103,31 +96,22 @@
       </div>
     </div>
 
-    <!-- AI 解析：可折叠，默认收起 -->
-    <div v-if="explanationShown && !examMode"
+    <!-- AI 解析内容（独立于按钮行） -->
+    <div v-if="displayedExplanation && !examMode"
       class="mt-3 rounded-card border border-sky-200 bg-sky-50 p-4 text-sm
              dark:border-sky-800 dark:bg-sky-900/20">
-      <div class="flex items-center justify-between gap-2">
-        <p class="font-medium text-sky-800 dark:text-sky-300">AI 解析</p>
-        <button type="button" @click="explainOpen = false"
-          class="text-xs font-medium text-sky-700 hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300">
-          收起
-        </button>
-      </div>
+      <p class="font-medium text-sky-800 dark:text-sky-300">AI 解析</p>
       <p class="mt-2 whitespace-pre-wrap text-gray-600 dark:text-gray-400">{{ displayedExplanation }}</p>
     </div>
 
-    <!-- 辅助工具行：解析获取/更新与生词，保持次级权重 -->
-    <div class="mt-5 flex flex-wrap items-center gap-2">
-      <ExplainButton
-        v-if="!examMode"
-        :key="question.id"
-        :question-id="question.id"
-        :initial-explanation="initialExplanation"
-        :displayed="explanationShown"
-        @explained="onExplained"
-      />
-      <AddVocabButton :initial-term="question.content" />
+    <!-- 操作栏 -->
+    <div class="mt-6 flex flex-wrap justify-between items-center gap-2">
+      <BaseButton variant="secondary" size="sm" @click="$emit('prev')" :disabled="currentIndex === 0">上一题</BaseButton>
+      <div class="flex items-center gap-2">
+        <BaseButton variant="primary" size="sm" @click="handleSubmit" :disabled="selectedAnswers.length === 0 || submitting || correctionMode" :loading="submitting">提交答案</BaseButton>
+        <BaseButton v-if="answered && currentIndex < total - 1" variant="primary" size="sm" @click="$emit('next')">下一题</BaseButton>
+        <BaseButton v-else-if="answered" variant="primary" size="sm" @click="$emit('finish')" class="!bg-emerald-600 hover:!bg-emerald-700">完成答题</BaseButton>
+      </div>
     </div>
     </template>
 
@@ -158,46 +142,28 @@ const props = defineProps({
   question: Object,
   currentIndex: Number,
   total: Number,
+  hideProgress: { type: Boolean, default: false },
+  initialAnswer: { type: String, default: '' },
+  initialResult: { type: Object, default: null },
   examMode: { type: Boolean, default: false },
   answerCount: { type: Number, default: 0 },
   sessionId: { type: Number, default: null },
-  // 受控状态：未提交草稿与已提交答案分离（N1/E2）
-  selectedAnswers: { type: Array, default: () => [] },
-  submittedAnswer: { type: String, default: '' },
-  result: { type: Object, default: null },
-  editing: { type: Boolean, default: false },
-  submitting: { type: Boolean, default: false },
-  showTranslation: { type: Boolean, default: false },
 })
 
-const emit = defineEmits([
-  'update:selectedAnswers',
-  'update:showTranslation',
-  'submit',
-  'start-editing',
-  'cancel-editing',
-  'translated',
-  'answer-corrected',
-])
+const emit = defineEmits(['submit', 'next', 'prev', 'finish', 'translated', 'answer-corrected'])
 const toast = useToast()
 
-const explainOpen = ref(false)
+const selectedAnswers = ref([])
+const answered = ref(false)
+const result = ref(null)
+const showTranslation = ref(false)
 const explainData = ref(null)
+const submitting = ref(false)
 const correctionMode = ref(false)
 const pendingCorrectKeys = ref([])
 const confirmCorrectOpen = ref(false)
 const correcting = ref(false)
 let correctionGeneration = 0
-
-const isAnswered = computed(() => !!props.result && !props.editing)
-const interactive = computed(() => !isAnswered.value || props.editing || correctionMode.value)
-const submittedKeys = computed(() => parseAnswerKeys(props.submittedAnswer))
-const inputGroupName = computed(() => `quiz-options-${props.question?.id ?? 'x'}`)
-
-const submittedDisplay = computed(() => {
-  if (submittedKeys.value.length) return submittedKeys.value.join(', ')
-  return props.submittedAnswer || '—'
-})
 
 const initialExplanation = computed(() => {
   if (!props.question?.explanation_zh) return null
@@ -208,15 +174,12 @@ const initialExplanation = computed(() => {
 })
 
 const displayedExplanation = computed(() => {
-  if (!props.result && !explainData.value) return null
   if (explainData.value?.explanation_zh) return explainData.value.explanation_zh
-  if (isAnswered.value) {
-    return props.result?.explanation_zh || props.question?.explanation_zh || null
+  if (answered.value) {
+    return result.value?.explanation_zh || props.question?.explanation_zh || null
   }
   return null
 })
-
-const explanationShown = computed(() => explainOpen.value && !!displayedExplanation.value)
 
 const hasFullTranslation = computed(() => {
   if (!props.question?.content_zh) return false
@@ -224,21 +187,28 @@ const hasFullTranslation = computed(() => {
 })
 
 const confirmCorrectMessage = computed(() => {
-  const oldAnswer = props.result?.correct_answer || ''
+  const oldAnswer = result.value?.correct_answer || ''
   const newAnswer = formatAnswerKeys(pendingCorrectKeys.value)
   return `将正确答案从 ${oldAnswer} 改为 ${newAnswer}？`
 })
 
-// 切题时重置瞬态状态；解析缓存保留（对应同一题目数据）
 watch(
-  () => props.question?.id,
+  [() => props.currentIndex, () => props.initialAnswer, () => props.initialResult],
   () => {
-    explainOpen.value = false
+    correctionGeneration += 1
+    selectedAnswers.value = props.initialAnswer
+      ? props.initialAnswer.split(',').map(s => s.trim()).filter(Boolean)
+      : []
+    answered.value = !!props.initialResult
+    result.value = props.initialResult
+    showTranslation.value = false
+    explainData.value = null
     correctionMode.value = false
     pendingCorrectKeys.value = []
     confirmCorrectOpen.value = false
     correcting.value = false
   },
+  { immediate: true }
 )
 
 function formatAnswerKeys(keys) {
@@ -259,26 +229,19 @@ function parseJudgedAnswerFromExplanation(text) {
 
 function isOptionChecked(key) {
   if (correctionMode.value) return pendingCorrectKeys.value.includes(key)
-  if (isAnswered.value) return submittedKeys.value.includes(key)
-  return props.selectedAnswers.includes(key)
+  return selectedAnswers.value.includes(key)
 }
 
 function onExplained(payload) {
   explainData.value = payload
-  explainOpen.value = true
-  if (props.result) {
-    props.result.explanation = payload.explanation
-    props.result.explanation_zh = payload.explanation_zh
+  if (result.value) {
+    result.value.explanation = payload.explanation
+    result.value.explanation_zh = payload.explanation_zh
   }
   if (props.question) {
     props.question.explanation = payload.explanation
     props.question.explanation_zh = payload.explanation_zh
   }
-}
-
-function onTranslated(data) {
-  emit('translated', data)
-  emit('update:showTranslation', true)
 }
 
 function enterCorrectionMode() {
@@ -287,7 +250,7 @@ function enterCorrectionMode() {
   if (judged.length) {
     pendingCorrectKeys.value = [...judged]
   } else {
-    pendingCorrectKeys.value = parseAnswerKeys(props.result?.correct_answer)
+    pendingCorrectKeys.value = parseAnswerKeys(result.value?.correct_answer)
   }
 }
 
@@ -314,11 +277,11 @@ async function submitCorrectAnswer() {
     })
     if (requestGeneration !== correctionGeneration) return
     const data = res.data || {}
-    if (props.result) {
-      if (data.is_correct != null) props.result.is_correct = data.is_correct
-      props.result.correct_answer = data.correct_answer
-      props.result.explanation = data.explanation
-      props.result.explanation_zh = data.explanation_zh
+    if (result.value) {
+      if (data.is_correct != null) result.value.is_correct = data.is_correct
+      result.value.correct_answer = data.correct_answer
+      result.value.explanation = data.explanation
+      result.value.explanation_zh = data.explanation_zh
     }
     if (props.question) {
       props.question.correct_answer = data.correct_answer
@@ -348,9 +311,8 @@ async function submitCorrectAnswer() {
   }
 }
 
-// 唯一激活入口：原生 input 的 change。锁定态守卫直接返回（E1）
-function onOptionChange(key) {
-  if (!interactive.value || !props.question) return
+function toggleOption(key) {
+  if (!props.question) return
 
   if (correctionMode.value) {
     if (props.question.question_type === 'multiple') {
@@ -366,13 +328,20 @@ function onOptionChange(key) {
     return
   }
 
+  if (answered.value) {
+    answered.value = false
+    result.value = null
+  }
+
   if (props.question.question_type === 'multiple') {
-    const next = props.selectedAnswers.includes(key)
-      ? props.selectedAnswers.filter(k => k !== key)
-      : [...props.selectedAnswers, key]
-    emit('update:selectedAnswers', next)
+    const idx = selectedAnswers.value.indexOf(key)
+    if (idx >= 0) {
+      selectedAnswers.value.splice(idx, 1)
+    } else {
+      selectedAnswers.value.push(key)
+    }
   } else {
-    emit('update:selectedAnswers', [key])
+    selectedAnswers.value = [key]
   }
 }
 
@@ -413,56 +382,44 @@ async function copyQuestion() {
   }
 }
 
-const OPTION_BASE = 'flex items-start gap-2.5 rounded-xl border p-3.5 transition-colors'
-const OPTION_NEUTRAL = `${OPTION_BASE} border-gray-200 dark:border-slate-700`
-const OPTION_HOVER = `${OPTION_NEUTRAL} hover:border-gray-300 dark:hover:border-slate-500 hover:bg-gray-50 dark:hover:bg-slate-700/40 cursor-pointer`
-const OPTION_SELECTED = `${OPTION_BASE} border-primary-500 bg-primary-50 dark:bg-primary-900/20 cursor-pointer`
-
 function optionClass(key) {
+  const base = 'flex cursor-pointer items-start gap-3 rounded-xl border-2 p-4 transition-all duration-200'
   if (correctionMode.value) {
-    return pendingCorrectKeys.value.includes(key) ? OPTION_SELECTED : OPTION_HOVER
+    if (pendingCorrectKeys.value.includes(key)) {
+      return `${base} border-primary-500 bg-primary-50 dark:bg-primary-900/20 ring-2 ring-primary-500/20`
+    }
+    return `${base} border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500 hover:bg-gray-50 dark:hover:bg-slate-700/50`
   }
-  if (!isAnswered.value) {
-    return props.selectedAnswers.includes(key) ? OPTION_SELECTED : OPTION_HOVER
+  if (!answered.value) {
+    if (selectedAnswers.value.includes(key)) {
+      return `${base} border-primary-500 bg-primary-50 dark:bg-primary-900/20 ring-2 ring-primary-500/20`
+    }
+    return `${base} border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500 hover:bg-gray-50 dark:hover:bg-slate-700/50`
   }
-  // 已答：全部选项保持正常对比度，用边框/轻背景/标签表达结果（O2）
-  const correct = submittedKeys.value.length ? isCorrectKey(key) : false
-  const chosen = submittedKeys.value.includes(key)
+  // 模拟考试模式：已答题后仅显示「已选中」灰色状态
   if (props.examMode) {
-    return chosen ? `${OPTION_BASE} border-sky-400 bg-sky-50 dark:border-sky-600 dark:bg-sky-900/20` : OPTION_NEUTRAL
+    if (selectedAnswers.value.includes(key)) {
+      return `${base} border-gray-400 dark:border-slate-500 bg-gray-100 dark:bg-slate-700`
+    }
+    return `${base} border-gray-200 dark:border-slate-700 opacity-50`
   }
-  if (correct) return `${OPTION_BASE} border-emerald-500 bg-emerald-50 dark:border-emerald-600 dark:bg-emerald-900/20`
-  if (chosen) return `${OPTION_BASE} border-rose-500 bg-rose-50 dark:border-rose-600 dark:bg-rose-900/20`
-  return OPTION_NEUTRAL
+  const correct = (result.value?.correct_answer || '').split(',').map(s => s.trim()).filter(Boolean)
+  const isCorrect = correct.includes(key)
+  const isSelected = selectedAnswers.value.includes(key)
+  if (isCorrect) return `${base} border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20`
+  if (isSelected && !isCorrect) return `${base} border-rose-500 bg-rose-50 dark:bg-rose-900/20 animate-shake`
+  return `${base} border-gray-200 dark:border-slate-700 opacity-50`
 }
 
-function inputClass(key) {
-  const disabledLike = !interactive.value ? ' pointer-events-none' : ''
-  return `mt-1 h-4 w-4 shrink-0 accent-primary-600 dark:accent-primary-500${disabledLike}`
-}
-
-function isCorrectKey(key) {
-  const correct = parseAnswerKeys(props.result?.correct_answer)
-  return correct.includes(key)
-}
-
-function isResultKey(key) {
-  if (correctionMode.value) return pendingCorrectKeys.value.includes(key)
-  if (!isAnswered.value) return props.selectedAnswers.includes(key)
-  return submittedKeys.value.includes(key)
-}
-
-function resultBadge(key) {
-  if (correctionMode.value) return null
-  if (!isAnswered.value) return null
-  const chosen = submittedKeys.value.includes(key)
-  if (props.examMode) {
-    return chosen ? { text: '已选', tone: 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-400' } : null
-  }
-  const correct = isCorrectKey(key)
-  if (correct && chosen) return { text: '你的答案 ✓', tone: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400' }
-  if (correct) return { text: '正确答案', tone: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400' }
-  if (chosen) return { text: '你的选择', tone: 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-400' }
-  return null
+async function handleSubmit() {
+  if (submitting.value || correctionMode.value) return
+  submitting.value = true
+  const answer = selectedAnswers.value.sort().join(',')
+  emit('submit', answer, (res) => {
+    submitting.value = false
+    if (!res) return
+    result.value = res
+    answered.value = true
+  })
 }
 </script>
