@@ -6,81 +6,7 @@
       <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ examStore.current?.name || '项目首页' }}</h1>
     </div>
 
-    <!-- 统计仪表盘 - 4列 -->
-    <div class="mb-8 grid grid-cols-2 md:grid-cols-4 gap-4">
-      <!-- 题库数量 -->
-      <div class="relative overflow-hidden rounded-xl bg-white dark:bg-slate-800 shadow-card p-5">
-        <div class="absolute top-0 left-0 right-0 h-1 bg-primary-500 rounded-t-xl"></div>
-        <div class="flex items-center gap-3">
-          <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary-100 dark:bg-primary-900/30">
-            <FolderIcon class="h-5 w-5 text-primary-600 dark:text-primary-400" />
-          </div>
-          <div>
-            <div class="text-2xl font-bold text-gray-900 dark:text-white">{{ banks.length }}</div>
-            <div class="text-sm text-gray-500 dark:text-gray-400">题库</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 总题目 -->
-      <div class="relative overflow-hidden rounded-xl bg-white dark:bg-slate-800 shadow-card p-5">
-        <div class="absolute top-0 left-0 right-0 h-1 bg-sky-500 rounded-t-xl"></div>
-        <div class="flex items-center gap-3">
-          <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-sky-100 dark:bg-sky-900/30">
-            <DocumentTextIcon class="h-5 w-5 text-sky-600 dark:text-sky-400" />
-          </div>
-          <div>
-            <div class="text-2xl font-bold text-gray-900 dark:text-white">{{ totalQuestions }}</div>
-            <div class="text-sm text-gray-500 dark:text-gray-400">进展 {{ practicedQuestions }}题｜{{ practicedPercent }}%</div>
-          </div>
-        </div>
-        <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-700">
-          <div class="h-full rounded-full bg-sky-500" :style="{ width: practicedPercent + '%' }"></div>
-        </div>
-      </div>
-
-      <!-- 正确率 -->
-      <div class="relative overflow-hidden rounded-xl bg-white dark:bg-slate-800 shadow-card p-5">
-        <div class="absolute top-0 left-0 right-0 h-1 bg-emerald-500 rounded-t-xl"></div>
-        <div class="flex items-center gap-3">
-          <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-100 dark:bg-emerald-900/30">
-            <CheckBadgeIcon class="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
-          </div>
-          <div>
-            <div class="text-2xl font-bold text-gray-900 dark:text-white">{{ recentTotal > 0 ? recentAccuracy : 0 }}%</div>
-            <div class="text-sm text-gray-500 dark:text-gray-400">正确率<span v-if="recentTotal > 0" class="text-xs text-gray-400 dark:text-gray-500 ml-1">(近{{ recentTotal }}题)</span></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 待攻克错题 -->
-      <router-link :to="currentExamPath(route, 'wrong')" class="relative overflow-hidden rounded-xl bg-white dark:bg-slate-800 shadow-card p-5 hover:shadow-card-hover transition-shadow cursor-pointer">
-        <div class="absolute top-0 left-0 right-0 h-1 bg-rose-500 rounded-t-xl"></div>
-        <div class="flex items-center gap-3">
-          <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-rose-100 dark:bg-rose-900/30">
-            <ExclamationTriangleIcon class="h-5 w-5 text-rose-600 dark:text-rose-400" />
-          </div>
-          <div>
-            <div class="text-2xl font-bold text-gray-900 dark:text-white">{{ wrongStats.unresolved || 0 }}</div>
-            <div class="text-sm text-gray-500 dark:text-gray-400">待攻克</div>
-          </div>
-        </div>
-      </router-link>
-    </div>
-
-    <div class="mb-4 grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch">
-      <PracticeHeatmap
-        :days="heatmap.days"
-        :today="heatmap.today"
-        :current-streak="heatmap.current_streak"
-      />
-      <PracticeTrendChart
-        :days="trend.days"
-        :today="trend.today"
-      />
-    </div>
-
-    <!-- 题库列表 -->
+    <!-- 继续上次答题：核心任务优先 -->
     <div v-if="lastIncompleteSession" class="mb-4 rounded-xl bg-white dark:bg-slate-800 shadow-card p-6">
       <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div class="min-w-0">
@@ -121,23 +47,61 @@
           </div>
           <div class="flex gap-2 flex-wrap flex-shrink-0">
             <BaseButton v-if="incompleteSessionByBankId[bank.id]" variant="primary" size="sm" @click="continueSession(incompleteSessionByBankId[bank.id])">
-              ▶ 继续答题
+              继续答题
             </BaseButton>
             <BaseButton variant="secondary" size="sm" @click="startQuiz(bank, 'sequential')" :disabled="bank.question_count === 0">
-              ▶ 顺序练习
+              顺序练习
             </BaseButton>
             <BaseButton variant="secondary" size="sm" @click="startQuiz(bank, 'random')" :disabled="bank.question_count === 0">
-              🔀 随机练习
+              随机练习
             </BaseButton>
             <BaseButton variant="secondary" size="sm" @click="openTopicModal(bank)" :disabled="bank.question_count === 0">
-              🎯 专项练习
+              专项练习
             </BaseButton>
             <BaseButton variant="secondary" size="sm" @click="openExamModal(bank)" :disabled="bank.question_count === 0">
-              📝 模拟考试
+              模拟考试
             </BaseButton>
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- 学习概览：紧凑统计 + 趋势图表，次级展示 -->
+    <div class="mt-8 mb-4 rounded-xl bg-white dark:bg-slate-800 shadow-card p-4 md:p-5">
+      <h2 class="mb-3 text-sm font-semibold text-gray-500 dark:text-gray-400">学习概览</h2>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div>
+          <div class="text-xl font-semibold text-gray-900 dark:text-white">{{ banks.length }}</div>
+          <div class="text-xs text-gray-500 dark:text-gray-400">题库</div>
+        </div>
+        <div>
+          <div class="text-xl font-semibold text-gray-900 dark:text-white">{{ totalQuestions }}</div>
+          <div class="text-xs text-gray-500 dark:text-gray-400">题目 · 已刷 {{ practicedQuestions }}题（{{ practicedPercent }}%）</div>
+          <div class="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-700">
+            <div class="h-full rounded-full bg-primary-500" :style="{ width: practicedPercent + '%' }"></div>
+          </div>
+        </div>
+        <div>
+          <div class="text-xl font-semibold text-gray-900 dark:text-white">{{ recentTotal > 0 ? recentAccuracy : 0 }}%</div>
+          <div class="text-xs text-gray-500 dark:text-gray-400">正确率<template v-if="recentTotal > 0">（近{{ recentTotal }}题）</template></div>
+        </div>
+        <router-link :to="currentExamPath(route, 'wrong')" class="group">
+          <div class="text-xl font-semibold text-gray-900 dark:text-white group-hover:text-rose-600 dark:group-hover:text-rose-400 transition-colors">{{ wrongStats.unresolved || 0 }}</div>
+          <div class="text-xs text-gray-500 dark:text-gray-400 group-hover:text-rose-500 transition-colors">待攻克错题 →</div>
+        </router-link>
+      </div>
+    </div>
+
+    <div class="mb-4 grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch">
+      <PracticeHeatmap
+        :days="heatmap.days"
+        :today="heatmap.today"
+        :current-streak="heatmap.current_streak"
+      />
+      <PracticeTrendChart
+        :days="trend.days"
+        :today="trend.today"
+      />
     </div>
 
     <!-- 专项练习考点选择弹窗 -->
@@ -273,7 +237,7 @@ import BaseModal from '../components/BaseModal.vue'
 import PracticeHeatmap from '../components/PracticeHeatmap.vue'
 import PracticeTrendChart from '../components/PracticeTrendChart.vue'
 import SkeletonLoader from '../components/SkeletonLoader.vue'
-import { FolderIcon, DocumentTextIcon, CheckBadgeIcon, ExclamationTriangleIcon } from '@heroicons/vue/24/outline'
+import { FolderIcon } from '@heroicons/vue/24/outline'
 
 const bankStore = useBankStore()
 const quizStore = useQuizStore()

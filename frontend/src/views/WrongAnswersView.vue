@@ -29,12 +29,12 @@
       <div class="mt-4 flex items-center gap-3">
         <select
           v-model="selectedBankId"
-          class="flex-1 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+          class="min-h-11 flex-1 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
         >
           <option :value="null">全部题库</option>
           <option v-for="bank in banks" :key="bank.id" :value="bank.id">{{ bank.name }}</option>
         </select>
-        <BaseButton @click="practiceWrong" :disabled="wrongs.length === 0">
+        <BaseButton @click="practiceWrong" :disabled="wrongs.length === 0" class="min-h-11">
           错题练习
         </BaseButton>
       </div>
@@ -43,6 +43,13 @@
     <!-- 加载状态 -->
     <div v-if="loading" class="space-y-4">
       <SkeletonLoader type="card" :count="3" />
+    </div>
+
+    <!-- 加载失败：可重试，不冒充空态 -->
+    <div v-else-if="loadError" class="py-16 text-center">
+      <XCircleIcon class="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600" />
+      <p class="mt-4 text-gray-500 dark:text-gray-400">错题加载失败，请重试</p>
+      <BaseButton variant="primary" size="sm" class="mt-4" @click="fetchWrongs">重新加载</BaseButton>
     </div>
 
     <!-- 空状态 -->
@@ -59,25 +66,23 @@
         :key="w.id"
         class="rounded-xl bg-white dark:bg-slate-800 shadow-card overflow-hidden"
       >
-        <!-- 摘要行（可点击展开） -->
+        <!-- 摘要：题干全宽，操作独立成行 -->
         <div
-          class="flex items-start justify-between p-5 cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-750 transition-colors"
+          class="cursor-pointer p-4 md:p-5 hover:bg-gray-50 dark:hover:bg-slate-750 transition-colors"
           @click="toggle(w.id)"
         >
-          <div class="flex-1 min-w-0">
-            <p class="font-medium text-gray-900 dark:text-white leading-relaxed">{{ w.question.content }}</p>
-            <div class="mt-2 flex flex-wrap gap-3 text-xs text-gray-400 dark:text-gray-500">
-              <span class="inline-flex items-center gap-1">
-                <span class="inline-block h-1.5 w-1.5 rounded-full bg-rose-400"></span>
-                错误 {{ w.wrong_count }} 次
-              </span>
-              <span>正确答案: <span class="text-emerald-600 dark:text-emerald-400 font-medium">{{ w.question.correct_answer }}</span></span>
-              <span v-if="w.question.question_type === 'multiple'" class="rounded-full bg-amber-100 dark:bg-amber-900/30 px-2 py-0.5 text-amber-600 dark:text-amber-400">多选</span>
-              <span v-else-if="w.question.question_type === 'truefalse'" class="rounded-full bg-sky-100 dark:bg-sky-900/30 px-2 py-0.5 text-sky-600 dark:text-sky-400">判断</span>
-            </div>
+          <p class="whitespace-pre-line font-medium text-gray-900 dark:text-white leading-relaxed">{{ w.question.content }}</p>
+          <div class="mt-2 flex flex-wrap gap-3 text-xs text-gray-400 dark:text-gray-500">
+            <span class="inline-flex items-center gap-1">
+              <span class="inline-block h-1.5 w-1.5 rounded-full bg-rose-400"></span>
+              错误 {{ w.wrong_count }} 次
+            </span>
+            <span>正确答案: <span class="text-emerald-600 dark:text-emerald-400 font-medium">{{ w.question.correct_answer }}</span></span>
+            <span v-if="w.question.question_type === 'multiple'" class="rounded-full bg-amber-100 dark:bg-amber-900/30 px-2 py-0.5 text-amber-600 dark:text-amber-400">多选</span>
+            <span v-else-if="w.question.question_type === 'truefalse'" class="rounded-full bg-sky-100 dark:bg-sky-900/30 px-2 py-0.5 text-sky-600 dark:text-sky-400">判断</span>
           </div>
-          <div class="ml-4 flex items-center gap-2 flex-shrink-0">
-            <BaseButton variant="secondary" size="sm" @click.stop="resolveWrong(w.id)">
+          <div class="mt-3 flex items-center justify-between gap-2">
+            <BaseButton variant="secondary" size="sm" class="min-h-11" @click.stop="resolveWrong(w.id)">
               标记掌握
             </BaseButton>
             <ChevronDownIcon
@@ -97,30 +102,32 @@
           leave-to-class="max-h-0 opacity-0"
         >
           <div v-if="expandedId === w.id" class="overflow-hidden">
-            <div class="border-t border-gray-100 dark:border-slate-700 px-5 pb-5">
-              <!-- 中文翻译 -->
-              <p v-if="w.question.content_zh" class="mt-4 text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
+            <div class="border-t border-gray-100 dark:border-slate-700 px-4 md:px-5 pb-5">
+              <!-- 中文翻译：与按钮共用同一显隐状态 -->
+              <p v-if="w.question.content_zh && isTranslationVisible(w)"
+                class="mt-4 text-sm text-gray-600 dark:text-gray-400 leading-relaxed"
+              >
                 {{ w.question.content_zh }}
               </p>
 
-              <!-- 选项列表 -->
+              <!-- 选项列表：标号窄列悬挂对齐 -->
               <div class="mt-4 space-y-2">
                 <div
                   v-for="opt in w.question.options"
                   :key="opt.key"
-                  class="flex items-start gap-3 rounded-lg border p-3 transition-colors"
+                  class="flex items-start gap-2.5 rounded-lg border p-3 transition-colors"
                   :class="isCorrectOption(w.question, opt.key)
                     ? 'border-emerald-400 bg-emerald-50 dark:border-emerald-600 dark:bg-emerald-900/20'
                     : 'border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800'"
                 >
-                  <div class="flex-1">
-                    <span class="font-medium text-gray-900 dark:text-white">{{ opt.key }}.</span>
-                    <span class="text-gray-700 dark:text-gray-300"> {{ opt.text }}</span>
-                    <span v-if="opt.text_zh" class="block text-sm text-gray-500 dark:text-gray-400 mt-0.5">{{ opt.text_zh }}</span>
-                  </div>
+                  <span class="w-7 shrink-0 pt-0.5 text-right font-medium text-gray-900 dark:text-white">{{ opt.key }}.</span>
+                  <span class="min-w-0 flex-1 text-gray-700 dark:text-gray-300">
+                    {{ opt.text }}
+                    <span v-if="opt.text_zh && isTranslationVisible(w)" class="mt-0.5 block text-sm leading-relaxed text-gray-500 dark:text-gray-400">{{ opt.text_zh }}</span>
+                  </span>
                   <span
                     v-if="isCorrectOption(w.question, opt.key)"
-                    class="ml-auto text-xs font-medium text-emerald-600 dark:text-emerald-400 flex-shrink-0"
+                    class="shrink-0 text-xs font-medium text-emerald-600 dark:text-emerald-400"
                   >正确</span>
                 </div>
               </div>
@@ -129,10 +136,10 @@
               <div class="mt-4 flex flex-wrap items-center gap-2">
                 <TranslateButton
                   :question-id="w.question.id"
-                  :has-translation="!!w.question.content_zh"
-                  :show="translationVisible[w.id] ?? false"
+                  :has-translation="hasTranslation(w)"
+                  :show="isTranslationVisible(w)"
                   @translated="onTranslated(w, $event)"
-                  @toggle="translationVisible[w.id] = !translationVisible[w.id]"
+                  @toggle="translationVisible[w.id] = !isTranslationVisible(w)"
                 />
                 <ExplainButton
                   :question-id="w.question.id"
@@ -173,7 +180,7 @@ import AddVocabButton from '../components/AddVocabButton.vue'
 import BaseButton from '../components/BaseButton.vue'
 import SkeletonLoader from '../components/SkeletonLoader.vue'
 import { useToast } from '../composables/useToast'
-import { ChevronDownIcon, FaceSmileIcon } from '@heroicons/vue/24/outline'
+import { ChevronDownIcon, FaceSmileIcon, XCircleIcon } from '@heroicons/vue/24/outline'
 
 const bankStore = useBankStore()
 const quizStore = useQuizStore()
@@ -183,6 +190,7 @@ const toast = useToast()
 
 const wrongs = ref([])
 const loading = ref(false)
+const loadError = ref(false)
 const selectedBankId = ref(null)
 const banks = ref([])
 const expandedId = ref(null)
@@ -197,6 +205,15 @@ const masteryRate = computed(() => {
 
 function toggle(id) {
   expandedId.value = expandedId.value === id ? null : id
+}
+
+function isTranslationVisible(w) {
+  return translationVisible[w.id] ?? false
+}
+
+// 翻译是否存在与翻译是否显示是两件事（W3）
+function hasTranslation(w) {
+  return !!w.question.content_zh
 }
 
 function isCorrectOption(question, key) {
@@ -228,11 +245,14 @@ function onTranslated(w, data) {
 
 async function fetchWrongs() {
   loading.value = true
+  loadError.value = false
   expandedId.value = null
   try {
     const params = selectedBankId.value ? { bank_id: selectedBankId.value } : {}
     const res = await client.get('/wrong', { params })
     wrongs.value = res.data
+  } catch {
+    loadError.value = true
   } finally {
     loading.value = false
   }
@@ -246,9 +266,14 @@ async function fetchStats() {
 }
 
 async function resolveWrong(id) {
-  await client.put(`/wrong/${id}/resolve`)
-  wrongs.value = wrongs.value.filter(w => w.id !== id)
-  fetchStats()
+  try {
+    await client.put(`/wrong/${id}/resolve`)
+    wrongs.value = wrongs.value.filter(w => w.id !== id)
+    toast.success('已标记掌握')
+    fetchStats()
+  } catch (e) {
+    toast.error(e.response?.data?.detail || '标记掌握失败')
+  }
 }
 
 async function practiceWrong() {
