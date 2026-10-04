@@ -31,6 +31,8 @@ SECTION_ANSWER_ANALYSIS = "【知识点解析】"
 SECTION_DISTRACTORS = "【干扰项分析】"
 SECTION_ANSWER_CONFLICT = "【答案冲突】"
 
+_REASONING_EFFORT_UNSET = object()
+
 STEM_BREAKDOWN_LABELS = (
     ("qualifier", "限定词"),
     ("role", "角色"),
@@ -103,7 +105,25 @@ def sanitize_options_for_storage(options):
     return [{k: v for k, v in option.items() if k != "text_zh"} for option in options]
 
 
-def call_ai_api(messages, db, scene: str = "default", timeout: float = 60.0):
+def build_chat_completion_payload(
+    model: str,
+    messages: list[dict],
+    reasoning_effort: str | None = "xhigh",
+) -> dict:
+    """构造 Chat Completions 请求；显式传 None 时不启用推理强度。"""
+    payload = {"model": model, "messages": messages, "temperature": 0.3}
+    if reasoning_effort is not None:
+        payload["reasoning_effort"] = reasoning_effort
+    return payload
+
+
+def call_ai_api(
+    messages,
+    db,
+    scene: str = "default",
+    timeout: float = 60.0,
+    reasoning_effort=_REASONING_EFFORT_UNSET,
+):
     """调用 AI Chat Completion API（OpenAI 兼容协议）。
 
     参数:
@@ -114,6 +134,8 @@ def call_ai_api(messages, db, scene: str = "default", timeout: float = 60.0):
         timeout: HTTP 请求超时秒数。默认 60.0；smart_import 等异步重 chunk
             场景应显式传 120.0。该值直接透传给 httpx.post 的 timeout 参数
             （对连接 + 读 + 写都生效）。
+        reasoning_effort: 推理强度；未传时翻译场景不发送，其他场景默认
+            ``"xhigh"``。显式传 ``None`` 时不发送，其他值原样透传给上游服务。
 
     返回:
         str: LLM 响应中 ``choices[0].message.content`` 字段。
@@ -142,11 +164,9 @@ def call_ai_api(messages, db, scene: str = "default", timeout: float = 60.0):
         "Authorization": f'Bearer {ai["api_key"]}',
         "Content-Type": "application/json",
     }
-    payload = {
-        "model": ai["model"],
-        "messages": messages,
-        "temperature": 0.3,
-    }
+    if reasoning_effort is _REASONING_EFFORT_UNSET:
+        reasoning_effort = None if scene == "translate" else "xhigh"
+    payload = build_chat_completion_payload(ai["model"], messages, reasoning_effort)
 
     resp = httpx.post(api_url, json=payload, headers=headers, timeout=timeout, verify=True)
     if not resp.is_success:
@@ -162,7 +182,12 @@ def _exam_ai_profile(question: Question) -> dict:
     return {}
 
 
-def translate_question(db, question: Question) -> dict:
+def translate_question(
+    db,
+    question: Question,
+    *,
+    reasoning_effort: str | None = None,
+) -> dict:
     options = _load_options(question)
     options_text = "\n".join([f"{o['key']}. {o['text']}" for o in options])
     ai_profile = _exam_ai_profile(question)
@@ -178,7 +203,14 @@ def translate_question(db, question: Question) -> dict:
         },
     ]
 
-    result_text = strip_code_fence(call_ai_api(messages, db, scene="translate"))
+    result_text = strip_code_fence(
+        call_ai_api(
+            messages,
+            db,
+            scene="translate",
+            reasoning_effort=reasoning_effort,
+        )
+    )
     result = json.loads(result_text)
 
     question.content_zh = result["content_zh"]
@@ -194,7 +226,12 @@ def translate_question(db, question: Question) -> dict:
     return build_question_translation_payload(question)
 
 
-def translate_term(term: str, db=None) -> dict:
+def translate_term(
+    term: str,
+    db=None,
+    *,
+    reasoning_effort: str | None = None,
+) -> dict:
     """翻译单个术语"""
     if db:
         ai = get_effective_ai_settings(db, scene="translate")
@@ -240,7 +277,7 @@ def translate_term(term: str, db=None) -> dict:
         },
     ]
 
-    payload = {"model": model, "messages": messages, "temperature": 0.3}
+    payload = build_chat_completion_payload(model, messages, reasoning_effort)
     resp = httpx.post(api_url, json=payload, headers=headers, timeout=60.0, verify=True)
     if not resp.is_success:
         raise ValueError(f"AI API 错误: {resp.status_code}")
@@ -276,7 +313,12 @@ def batch_translate_vocab(db, vocab_list) -> int:
     return count
 
 
-def batch_translate_terms(terms_data, db=None) -> list:
+def batch_translate_terms(
+    terms_data,
+    db=None,
+    *,
+    reasoning_effort: str | None = None,
+) -> list:
     terms_json = json.dumps(terms_data, ensure_ascii=False)
     messages = [
         {
@@ -296,7 +338,12 @@ def batch_translate_terms(terms_data, db=None) -> list:
         },
     ]
 
-    result_text = call_ai_api(messages, db, scene="translate")
+    result_text = call_ai_api(
+        messages,
+        db,
+        scene="translate",
+        reasoning_effort=reasoning_effort,
+    )
     result_text = result_text.strip()
     if result_text.startswith("```"):
         result_text = result_text.split("\n", 1)[1]

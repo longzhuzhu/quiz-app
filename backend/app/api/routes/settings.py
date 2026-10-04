@@ -7,6 +7,7 @@ from app.api.deps import require_admin
 from app.core.database import get_db
 from app.models.user import User
 from app.schemas.settings import AISettingsUpdateRequest, AITestRequest, QuizSettingsUpdateRequest
+from app.services.ai_service import build_chat_completion_payload
 from app.services.settings_service import (
     QUIZ_AI_PREWARM_ENABLED_SETTING,
     get_effective_ai_settings,
@@ -138,14 +139,13 @@ def test_ai_connection(
         "Authorization": f'Bearer {ai_config["api_key"]}',
         "Content-Type": "application/json",
     }
-    payload = {
-        "model": ai_config["model"] or "gpt-4o-mini",
-        "messages": [
+    payload = build_chat_completion_payload(
+        ai_config["model"] or "gpt-4o-mini",
+        [
             {"role": "system", "content": "请将以下英文单词翻译为中文，只返回翻译结果。"},
             {"role": "user", "content": "apple"},
         ],
-        "temperature": 0.3,
-    }
+    )
 
     try:
         resp = httpx.post(api_url, json=payload, headers=headers, timeout=15.0, verify=True)
