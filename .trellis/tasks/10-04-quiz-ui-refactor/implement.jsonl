@@ -1,6 +1,0 @@
-{"file": ".trellis/tasks/10-04-quiz-ui-audit/audit.md", "reason": "审查报告：全部问题 ID、证据与建议，重构的需求来源"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "组件 Props/Emits 约定、QuestionCard 智能组件与同一对象引用约定、按钮组视觉一致性"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "Pinia setup store 与异步错误处理分层约定"}
-{"file": ".trellis/spec/frontend/type-safety.md", "reason": "纯 JS 类型约定、Ref 初始值类型暗示"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "API 调用组织与错误三级体系"}
-{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "目录组织约定"}

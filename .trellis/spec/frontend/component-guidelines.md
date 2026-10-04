@@ -124,20 +124,9 @@ async function handleClick() {
 
 `ExplainButton` 额外约定：未显示时文案“AI 解析”、可短路由中文缓存；已显示时文案“更新解析”，请求必须带 `force: true`。禁用只看 `loading`。FastAPI 错误读 `e.response?.data?.detail`。更新失败固定提示“更新失败，已保留原解析”。
 
-`QuestionCard` 答题面约定（2026-10 受控化重构后）：卡片是**受控展示组件**，答题状态归 `QuizView` 所有——草稿 `drafts[questionId]` 与已提交 `questionAnswerMap/questionResultMap` 都在视图层，卡片经 props 读取、经 emits 写回。props：`selectedAnswers`（当前草稿）、`submittedAnswer`（已提交答案字符串，已答展示锚点）、`result`（对错结果对象）、`editing`（重新作答中）、`submitting`、`showTranslation`（会话级翻译偏好，切题不重置）。emits：`update:selectedAnswers`、`update:showTranslation`、`start-editing`、`cancel-editing`、`translated`、`answer-corrected`。提交动作由 `QuizView` 的固定底栏触发，卡内不放操作按钮。要点：
+`QuestionCard` 答题面约定：复制是页眉「已答 n 次」旁的图标按钮（`aria-label="复制题目"`），不在翻译/解析按钮行；模拟考试也保留。`sessionId` 传给卡片。「更正答案」只出现在 `answered && !examMode` 的对错反馈里；更正态点选项只改待写入的正确答案，不得清掉对错反馈。写入走 `PUT /questions/{id}/correct-answer`，body 带 `correct_answer`、`session_id`、`local_date`（`formatLocalDate()`）。用 `correctionGeneration` 丢弃切题后的过期响应。确认框复用 `ConfirmDialog`。
 
-- 选项激活以原生 input 的 `change` 为唯一状态入口；选项行用 `<component :is="interactive ? 'label' : 'div'">`，已答锁定态渲染为 div（带 `question-option` class），input 加 `pointer-events-none`。键盘 A–Z/数字、Enter 由 `QuizView` 的 window keydown 处理，焦点在输入控件上时不拦截。
-- 已答展示：全部选项保持正常对比度（不降透明度），用边框 + 「你的选择 / 正确答案 / 你的答案 ✓」文本标签表达结果；examMode 只打「已选」标签。
-- 反馈区 `role="status" aria-live="polite"`，先给「你的答案 → 正确答案」对照；AI 解析可折叠、默认收起（`explainOpen`，切题重置）。
-- 更正答案流程保留在卡内：`correctionMode` 下点选项只改待写入的正确答案，不得清掉对错反馈；写入走 `PUT /questions/{id}/correct-answer`（body 带 `correct_answer`、`session_id`、`local_date`），用 `correctionGeneration` 丢弃切题后的过期响应；确认框复用 `ConfirmDialog`。复制是页眉图标按钮（`aria-label="复制题目"`），模拟考试也保留。
-
-父组件写回时，`QuestionCard` 的 `result` 必须与 `QuizView.questionResultMap[questionId]` 是**同一对象**。若提交时把 API 响应另存一份拷贝，更新解析后切题再切回会显示旧文案。`answer-corrected` 也必须就地改这份映射，不能另存拷贝。
-
-`QuizView` 答题页约定：路由 meta 带 `quizFocus: true`（`App.vue` 据此隐藏 `MobileNav`，避免双底栏）；底部固定操作条是唯一主操作区（上一题 / 位置与完成度摘要 / 主按钮），主按钮状态机为 未答→提交答案、已答→下一题、最后一题→完成答题、重新作答中→提交答案；进度条按已提交数计算，「第 n/N 题」只表达位置；未提交草稿按 questionId 存 `drafts`，不计入已答统计；自动下一题仅在答对且开启偏好时触发（1.5s，可取消），答错停留；手机题号网格收敛为按需展开面板（触摸目标 ≥44px），「结束答题」入口在桌面侧栏与手机面板底部，有未答题时弹确认。
-
-### 状态边界约定：空态 / 失败态
-
-列表页（QuizView、WrongAnswersView、HistoryView）加载失败必须显示可重试的内联错误态（`loadError` + 重新加载按钮），不允许把网络失败渲染成「暂无数据」空态；空态只在请求成功后展示。
+父组件写回时，`QuestionCard` 的 `result` 必须与 `QuizView.questionResultMap[questionId]` 是**同一对象**。若 submit 回调传入 API 响应、映射表另存一份拷贝，更新解析后切题再切回会显示旧文案。`answer-corrected` 也必须就地改这份映射，不能另存拷贝。
 
 ---
 

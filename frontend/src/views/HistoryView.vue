@@ -11,13 +11,6 @@
     <!-- 加载骨架屏 -->
     <SkeletonLoader v-if="loading" type="list" :count="3" />
 
-    <!-- 加载失败：可重试，不冒充空态 -->
-    <div v-else-if="loadError" class="py-16 text-center">
-      <XCircleIcon class="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600" />
-      <p class="mt-4 text-gray-500 dark:text-gray-400">历史记录加载失败，请重试</p>
-      <BaseButton variant="primary" size="sm" class="mt-4" @click="fetchHistory">重新加载</BaseButton>
-    </div>
-
     <!-- 空状态 -->
     <div v-else-if="sessions.length === 0" class="flex flex-col items-center justify-center py-20 text-gray-400 dark:text-gray-500">
       <ClockIcon class="h-16 w-16 mb-4" />
@@ -104,14 +97,13 @@ import BaseButton from '../components/BaseButton.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import SkeletonLoader from '../components/SkeletonLoader.vue'
 import { useToast } from '../composables/useToast'
-import { ClockIcon, XCircleIcon } from '@heroicons/vue/24/outline'
+import { ClockIcon } from '@heroicons/vue/24/outline'
 
 const route = useRoute()
 const toast = useToast()
 
 const sessions = ref([])
 const loading = ref(false)
-const loadError = ref(false)
 const page = ref(1)
 const totalPages = ref(1)
 const showConfirmClear = ref(false)
@@ -135,13 +127,10 @@ const pageList = computed(() => {
 
 async function fetchHistory() {
   loading.value = true
-  loadError.value = false
   try {
     const res = await client.get('/quiz/history', { params: { page: page.value, per_page: 10 } })
     sessions.value = res.data.items
     totalPages.value = res.data.pages
-  } catch {
-    loadError.value = true
   } finally {
     loading.value = false
   }

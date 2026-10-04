@@ -1,4 +1,0 @@
-{"file": ".trellis/tasks/10-04-quiz-ui-refactor/prd.md", "reason": "验收标准清单：E1/E2/F1/N1/P1/U2 与各页面验收点"}
-{"file": ".trellis/tasks/10-04-quiz-ui-refactor/design.md", "reason": "受控化数据流契约与验证方案，检查实现是否偏离设计"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "检查组件约定（同一对象引用、按钮组一致性）是否被破坏"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查错误处理三级体系与 API 组织"}
