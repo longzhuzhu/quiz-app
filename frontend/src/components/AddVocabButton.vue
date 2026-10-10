@@ -73,7 +73,7 @@ async function submit() {
       term: term.value.trim(),
       auto_translate: true,
     }, {
-      params: { scope: 'exam_personal' },
+      params: { scope: 'personal' },
     })
     const w = res.data
     messageOk.value = true

@@ -16,7 +16,7 @@
         @click="activeTab = 'personal'">
         <div class="text-sm text-gray-500 dark:text-gray-400">我的单词本</div>
         <div class="mt-1 text-2xl font-bold text-emerald-600 dark:text-emerald-400">{{ stats.personal || 0 }}</div>
-        <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">学习中收藏的单词</p>
+        <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">手动添加与答题中收藏的单词</p>
       </div>
       <div class="rounded-card-lg bg-white dark:bg-slate-800 p-5 shadow-card hover:shadow-card-hover transition-shadow cursor-pointer"
         :class="{ 'ring-2 ring-primary-500': activeTab === 'frequent' }"
@@ -163,6 +163,7 @@
 
       <!-- 添加表单 -->
       <div v-if="showAddForm" class="mb-4 rounded-card-lg bg-white dark:bg-slate-800 p-4 shadow-card">
+        <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">在此添加的单词属于跨项目个人词汇，在所有自己的考试项目中可见。</p>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <input v-model="newWord.term" placeholder="英文单词/短语" class="rounded-card border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" />
           <input v-model="newWord.term_zh" placeholder="中文翻译" class="rounded-card border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500" />
@@ -625,14 +626,21 @@ async function fetchExamPersonal() {
 async function fetchPersonal() {
   loadingPersonal.value = true
   try {
-    const res = await client.get('/vocab', {
-      params: {
-        scope: 'personal',
-        page_size: 100,
-        ...buildMasteredFilterParams(personalMasteredFilter.value),
-      },
-    })
-    personalWords.value = res.data.items || []
+    const params = {
+      scope: 'personal',
+      page_size: 100,
+      ...buildMasteredFilterParams(personalMasteredFilter.value),
+    }
+    const words = []
+    let page = 1
+    let totalPages = 1
+    do {
+      const res = await client.get('/vocab', { params: { ...params, page } })
+      words.push(...(res.data.items || []))
+      totalPages = res.data.pagination?.total_pages || 1
+      page += 1
+    } while (page <= totalPages)
+    personalWords.value = words
   } finally {
     loadingPersonal.value = false
   }
@@ -739,16 +747,13 @@ function setFrequentMasteredFilter(value) {
 
 async function addWord(type) {
   try {
-    const res = await client.post('/vocab', { ...newWord }, {
+    await client.post('/vocab', { ...newWord }, {
       params: { scope: type === 'exam_personal' ? 'exam_personal' : 'personal' },
     })
-    if (type === 'exam_personal') {
-      examPersonalWords.value.unshift(res.data)
-      examPersonalWords.value.sort((a, b) => a.term.localeCompare(b.term))
-    } else {
-      personalWords.value.unshift(res.data)
-    }
-    stats.value[type] = (stats.value[type] || 0) + 1
+    await Promise.all([
+      fetchStats(),
+      type === 'exam_personal' ? fetchExamPersonal() : fetchPersonal(),
+    ])
     resetForm()
     toast.success('词汇添加成功')
   } catch (e) {
@@ -780,12 +785,10 @@ async function doDeleteWord() {
       await fetchFrequent()
     } else {
       await client.delete(`/vocab/items/${id}`)
-      if (type === 'exam_personal') {
-        examPersonalWords.value = examPersonalWords.value.filter(w => w.id !== id)
-      } else {
-        personalWords.value = personalWords.value.filter(w => w.id !== id)
-      }
-      stats.value[type] = Math.max((stats.value[type] || 1) - 1, 0)
+      await Promise.all([
+        fetchStats(),
+        type === 'exam_personal' ? fetchExamPersonal() : fetchPersonal(),
+      ])
     }
     if (type !== 'frequent') {
       toast.success('词汇已删除')
