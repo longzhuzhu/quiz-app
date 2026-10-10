@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -56,6 +56,8 @@ class QuizAnswer(Base):
     )
     user_answer: Mapped[str] = mapped_column(String(20), nullable=False)
     is_correct: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    # 本次页面内首次成功提交的耗时；缺省/旧记录为未知，改答不覆盖。
+    answer_duration_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     answered_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=lambda: datetime.now(timezone.utc),
