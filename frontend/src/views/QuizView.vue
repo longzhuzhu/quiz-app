@@ -11,11 +11,6 @@
         <span class="rounded-full bg-primary-100 dark:bg-primary-900/30 px-2 py-0.5 text-xs font-medium text-primary-700 dark:text-primary-400 flex-shrink-0">
           {{ quizStore.currentIndex + 1 }} / {{ quizStore.questions.length }}
         </span>
-        <span v-if="currentQuestion" data-testid="question-timer" role="timer" aria-live="off"
-          aria-label="本题用时" title="仅统计本次页面内的可见作答时间，提交成功后停止"
-          class="flex-shrink-0 text-xs tabular-nums text-gray-500 dark:text-gray-400">
-          {{ timerLabel }}
-        </span>
       </div>
       <div class="flex items-center gap-2 flex-shrink-0">
         <span v-if="isExamMode" class="rounded-full bg-amber-100 dark:bg-amber-900/30 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400">模拟考试</span>
@@ -134,7 +129,15 @@
           @finish="handleFinish"
           @translated="handleTranslated"
           @answer-corrected="handleAnswerCorrected"
-        />
+        >
+          <template #question-timing>
+            <span v-if="currentQuestion" data-testid="question-timer" role="timer" aria-live="off"
+              aria-label="用时" title="仅统计本次页面内的可见作答时间，提交成功后停止"
+              class="whitespace-nowrap text-xs font-semibold tabular-nums text-slate-700 dark:text-slate-200">
+              {{ timerLabel }}
+            </span>
+          </template>
+        </QuestionCard>
       </div>
     </div>
   </div>
@@ -161,7 +164,7 @@ const questionTimer = createQuestionTimer()
 const timerElapsedMs = ref(null)
 const timerLabel = computed(() => timerElapsedMs.value === null
   ? '已提交'
-  : `本题 ${formatQuestionDuration(timerElapsedMs.value)}`)
+  : `用时 ${formatQuestionDuration(timerElapsedMs.value)}`)
 let sessionGeneration = 0
 let timerInterval
 const autoNextTimeouts = new Set()
