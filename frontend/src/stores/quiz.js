@@ -20,11 +20,12 @@ export const useQuizStore = defineStore('quiz', () => {
     currentIndex.value = 0
   }
 
-  async function submitAnswer(questionId, userAnswer) {
+  async function submitAnswer(questionId, userAnswer, answerDurationMs = null) {
     const res = await client.post('/quiz/answer', {
       session_id: session.value.id,
       question_id: questionId,
       user_answer: userAnswer,
+      answer_duration_ms: answerDurationMs,
       local_date: formatLocalDate(),
     })
     return res.data

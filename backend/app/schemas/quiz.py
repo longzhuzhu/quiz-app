@@ -19,6 +19,9 @@ class QuizAnswerRequest(BaseModel):
     session_id: int
     question_id: int
     user_answer: str
+    answer_duration_ms: int | None = Field(
+        default=None, ge=0, le=9_007_199_254_740_991, strict=True,
+    )
     local_date: date | None = None
 
     @field_validator("local_date", mode="before")
@@ -66,6 +69,7 @@ class QuizStartResponse(BaseModel):
 
 
 class QuizAnswerResponse(BaseModel):
+    answer_duration_ms: int | None = None
     is_correct: bool | None = None
     correct_answer: str | None = None
     explanation: str | None = None

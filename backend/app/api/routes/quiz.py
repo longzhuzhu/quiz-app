@@ -264,7 +264,9 @@ def submit_answer(
     question_id = data.question_id
     user_answer = data.user_answer
 
-    session = db.get(QuizSession, session_id)
+    # 同一会话的并发重试必须先看到首次答案，避免重复插入或覆盖首次耗时。
+    # 锁只保持到作答提交，不延长到随后独立写入的练习统计事务。
+    session = db.get(QuizSession, session_id, with_for_update=True)
     if not session:
         raise HTTPException(status_code=404, detail="答题会话不存在")
     _ensure_session_in_exam(session, exam)
@@ -312,6 +314,7 @@ def submit_answer(
             question_id=question_id,
             user_answer=user_answer,
             is_correct=is_correct,
+            answer_duration_ms=data.answer_duration_ms,
         )
         db.add(answer)
 
@@ -336,6 +339,7 @@ def submit_answer(
             db.add(wrong)
 
     session_mode = session.mode
+    answer_duration_ms = existing.answer_duration_ms if existing else answer.answer_duration_ms
     correct_answer = question.correct_answer
     explanation = question.explanation
     explanation_zh = question.explanation_zh
@@ -363,12 +367,14 @@ def submit_answer(
     if session_mode == "exam":
         return {
             "submitted": True,
+            "answer_duration_ms": answer_duration_ms,
             "user_answer_count": user_answer_count,
             "counted_as_new_attempt": counted_as_new_attempt,
         }
 
     return {
         "is_correct": is_correct,
+        "answer_duration_ms": answer_duration_ms,
         "correct_answer": correct_answer,
         "explanation": explanation,
         "explanation_zh": explanation_zh,
@@ -556,6 +562,7 @@ def session_detail(
             "question_type": q.question_type,
             "options": _load_options(q),
             "user_answer": a.user_answer,
+            "answer_duration_ms": a.answer_duration_ms,
         }
         if not is_exam:
             answer_data["is_correct"] = a.is_correct

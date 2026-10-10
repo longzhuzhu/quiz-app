@@ -1,6 +1,6 @@
 <template>
   <div>
-  <div v-if="!quizStore.session" class="text-center py-12 text-gray-500 dark:text-gray-400">加载中...</div>
+  <div v-if="!sessionReady || !quizStore.session" class="text-center py-12 text-gray-500 dark:text-gray-400">加载中...</div>
   <div v-else>
     <!-- 顶部信息栏 -->
     <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -113,6 +113,7 @@
       <!-- 右侧答题区 -->
       <div class="flex-1 min-w-0 pb-28 md:pb-0">
         <QuestionCard
+          :key="`${quizStore.session.id}:${currentQuestion?.id}`"
           :question="currentQuestion"
           :current-index="quizStore.currentIndex"
           :total="quizStore.questions.length"
@@ -128,7 +129,15 @@
           @finish="handleFinish"
           @translated="handleTranslated"
           @answer-corrected="handleAnswerCorrected"
-        />
+        >
+          <template #question-timing>
+            <span v-if="currentQuestion" data-testid="question-timer" role="timer" aria-live="off"
+              aria-label="用时" title="仅统计本次页面内的可见作答时间，提交成功后停止"
+              class="whitespace-nowrap text-xs font-semibold tabular-nums text-slate-700 dark:text-slate-200">
+              {{ timerLabel }}
+            </span>
+          </template>
+        </QuestionCard>
       </div>
     </div>
   </div>
@@ -136,11 +145,12 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref, onMounted, watch } from 'vue'
+import { computed, reactive, ref, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuizStore } from '../stores/quiz'
 import { currentExamPath } from '../utils/examRoutes'
 import { sessionModeLabel } from '../utils/quizMode'
+import { createQuestionTimer, formatQuestionDuration } from '../utils/questionTimer'
 import { useToast } from '../composables/useToast'
 import QuestionCard from '../components/QuestionCard.vue'
 import client from '../api/client'
@@ -149,6 +159,15 @@ const route = useRoute()
 const router = useRouter()
 const quizStore = useQuizStore()
 const toast = useToast()
+const sessionReady = ref(false)
+const questionTimer = createQuestionTimer()
+const timerElapsedMs = ref(null)
+const timerLabel = computed(() => timerElapsedMs.value === null
+  ? '已提交'
+  : `用时 ${formatQuestionDuration(timerElapsedMs.value)}`)
+let sessionGeneration = 0
+let timerInterval
+const autoNextTimeouts = new Set()
 
 const currentQuestion = computed(() => quizStore.questions[quizStore.currentIndex])
 
@@ -186,6 +205,7 @@ function clearReactiveMap(map) {
 }
 
 function triggerAiPrewarm() {
+  if (!sessionReady.value) return
   const sessionId = quizStore.session?.id
   if (!sessionId || !currentQuestion.value?.id) return
 
@@ -239,9 +259,15 @@ function restoreSessionState(sessionData) {
   quizStore.currentIndex = firstUnanswered >= 0 ? firstUnanswered : 0
 }
 
-onMounted(async () => {
+async function loadSession() {
+  const generation = ++sessionGeneration
+  sessionReady.value = false
+  questionTimer.reset()
+  refreshTimer()
+  prewarmKeys.clear()
   try {
     const res = await client.get(`/quiz/session/${route.params.sessionId}`)
+    if (generation !== sessionGeneration) return
     if (res.data.session.is_completed) {
       router.replace(currentExamPath(route, 'quizResult', { sessionId: route.params.sessionId }))
       return
@@ -251,13 +277,65 @@ onMounted(async () => {
       quizStore.session = res.data.session
       quizStore.questions = res.data.questions
       restoreSessionState(res.data)
+      sessionReady.value = true
       triggerAiPrewarm()
     } else {
       router.replace(currentExamPath(route, 'dashboard'))
     }
   } catch {
-    router.replace(currentExamPath(route, 'dashboard'))
+    if (generation === sessionGeneration) router.replace(currentExamPath(route, 'dashboard'))
   }
+}
+
+function refreshTimer() {
+  timerElapsedMs.value = questionTimer.elapsedMs()
+}
+
+function syncTimerQuestion() {
+  const questionId = sessionReady.value ? currentQuestion.value?.id ?? null : null
+  questionTimer.setQuestion(questionId, !!questionResultMap[questionId])
+  refreshTimer()
+}
+
+function syncVisibility() {
+  questionTimer.setVisible(document.visibilityState === 'visible')
+  refreshTimer()
+}
+
+function onPageHide() {
+  questionTimer.reset()
+  questionTimer.setVisible(false)
+  refreshTimer()
+}
+
+function onPageShow() {
+  syncVisibility()
+  syncTimerQuestion()
+}
+
+watch(() => [route.params.sessionId, route.params.examSlug], loadSession, { immediate: true })
+watch(
+  () => [sessionReady.value, currentQuestion.value?.id, currentInitialResult.value],
+  syncTimerQuestion,
+  { flush: 'sync' },
+)
+
+onMounted(() => {
+  syncVisibility()
+  document.addEventListener('visibilitychange', syncVisibility)
+  window.addEventListener('pagehide', onPageHide)
+  window.addEventListener('pageshow', onPageShow)
+  timerInterval = setInterval(refreshTimer, 250)
+})
+
+onUnmounted(() => {
+  sessionGeneration += 1
+  clearInterval(timerInterval)
+  autoNextTimeouts.forEach(clearTimeout)
+  document.removeEventListener('visibilitychange', syncVisibility)
+  window.removeEventListener('pagehide', onPageHide)
+  window.removeEventListener('pageshow', onPageShow)
+  questionTimer.reset()
 })
 
 watch(
@@ -285,14 +363,19 @@ function navBtnClass(index) {
 }
 
 async function handleSubmit(answer, callback) {
+  const generation = sessionGeneration
   try {
     // 冻结提交上下文，避免异步期间 currentIndex 变化导致回写错位
     const submitQuestionId = currentQuestion.value.id
     const submitIndex = quizStore.currentIndex
     const canAutoNext = autoNext.value
     const hasNext = submitIndex < quizStore.questions.length - 1
+    const submission = questionTimer.captureSubmission(submitQuestionId)
 
-    const res = await quizStore.submitAnswer(submitQuestionId, answer)
+    const res = await quizStore.submitAnswer(submitQuestionId, answer, submission.elapsedMs)
+    if (generation !== sessionGeneration) return
+    questionTimer.completeSubmission(submission, res.answer_duration_ms)
+    refreshTimer()
 
     if (typeof res.user_answer_count === 'number') {
       const targetQuestion = quizStore.questions.find(q => q.id === submitQuestionId)
@@ -310,11 +393,7 @@ async function handleSubmit(answer, callback) {
       callback(res)
 
       if (canAutoNext && hasNext) {
-        setTimeout(() => {
-          if (quizStore.currentIndex === submitIndex) {
-            quizStore.nextQuestion()
-          }
-        }, 300)
+        scheduleAutoNext(submitIndex, generation, 300)
       }
       return
     }
@@ -333,16 +412,23 @@ async function handleSubmit(answer, callback) {
     callback(resultPayload)
 
     if (canAutoNext && hasNext) {
-      setTimeout(() => {
-        if (quizStore.currentIndex === submitIndex) {
-          quizStore.nextQuestion()
-        }
-      }, 1500)
+      scheduleAutoNext(submitIndex, generation, 1500)
     }
   } catch (e) {
+    if (generation !== sessionGeneration) return
     toast.error(e.response?.data?.error || e.response?.data?.detail || '提交失败')
     callback()
   }
+}
+
+function scheduleAutoNext(submitIndex, generation, delay) {
+  const timeout = setTimeout(() => {
+    autoNextTimeouts.delete(timeout)
+    if (generation === sessionGeneration && quizStore.currentIndex === submitIndex) {
+      quizStore.nextQuestion()
+    }
+  }, delay)
+  autoNextTimeouts.add(timeout)
 }
 
 async function handleFinish() {
