@@ -16,7 +16,9 @@ const routes = [
   { path: '/exams/:examSlug/quiz/:sessionId/result', name: 'ExamQuizResult', component: () => import('../views/QuizResultView.vue'), meta: { auth: true, examScoped: true } },
   { path: '/exams/:examSlug/wrong', name: 'ExamWrongAnswers', component: () => import('../views/WrongAnswersView.vue'), meta: { auth: true, examScoped: true } },
   { path: '/exams/:examSlug/history', name: 'ExamHistory', component: () => import('../views/HistoryView.vue'), meta: { auth: true, examScoped: true } },
-  { path: '/exams/:examSlug/vocab', name: 'ExamVocabulary', component: () => import('../views/VocabularyView.vue'), meta: { auth: true, examScoped: true } },
+  { path: '/exams/:examSlug/vocab', name: 'ExamVocabulary', component: () => import.meta.env.DEV && import.meta.env.VITE_VOCAB_PROTOTYPE === '1'
+    ? import('../views/VocabularyLayoutPrototype.vue')
+    : import('../views/VocabularyView.vue'), meta: { auth: true, examScoped: true } },
   { path: '/exams/:examSlug/import-jobs', name: 'ExamImportJobs', component: () => import('../views/ImportJobsView.vue'), meta: { auth: true, admin: true, examScoped: true } },
   { path: '/exams/:examSlug/import-jobs/:jobId', name: 'ExamImportJobDetail', component: () => import('../views/ImportJobDetailView.vue'), meta: { auth: true, admin: true, examScoped: true } },
   { path: '/exams/:examSlug/import-jobs/:jobId/review', name: 'ExamImportReview', component: () => import('../views/ImportReviewView.vue'), meta: { auth: true, admin: true, examScoped: true } },

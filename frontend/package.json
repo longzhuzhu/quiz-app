@@ -7,7 +7,8 @@
     "dev": "vite",
     "test": "node --test",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "prototype:vocab": "VITE_VOCAB_PROTOTYPE=1 vite --host 127.0.0.1 --port 5108 --strictPort"
   },
   "dependencies": {
     "@headlessui/vue": "^1.7.23",
