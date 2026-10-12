@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -17,6 +17,8 @@ class BankWordFrequency(Base):
     )
     term: Mapped[str] = mapped_column(String(200), nullable=False)
     term_zh: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    definition: Mapped[str | None] = mapped_column(Text, nullable=True)
+    definition_zh: Mapped[str | None] = mapped_column(Text, nullable=True)
     frequency: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime,

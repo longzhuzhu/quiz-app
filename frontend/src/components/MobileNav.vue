@@ -90,12 +90,13 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useExamStore } from '../stores/exam'
 import { useDarkMode } from '../composables/useDarkMode'
 import { examPath } from '../utils/examRoutes'
+import { waitForStudySave } from '../features/vocabularyStudy/lifecycle.js'
 import {
   HomeIcon,
   ExclamationCircleIcon,
@@ -110,6 +111,7 @@ const authStore = useAuthStore()
 const examStore = useExamStore()
 const darkMode = useDarkMode()
 const showMore = ref(false)
+watch(() => route.fullPath, () => { showMore.value = false })
 
 function navPath(kind) {
   return examStore.current?.slug ? examPath(examStore.current.slug, kind) : '/onboarding'
@@ -130,8 +132,9 @@ function isActive(tab) {
   return route.path.startsWith(path)
 }
 
-function handleLogout() {
+async function handleLogout() {
   showMore.value = false
+  await waitForStudySave()
   authStore.logout()
   router.push('/login')
 }

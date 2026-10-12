@@ -48,7 +48,7 @@ async function startBrowser(t, { standalone = false, submitted = false } = {}) {
       : 'h(QuizView)'}}).use(pinia).use(router).mount('#app')
   `
   const server = await createServer({
-    root, configFile: false,
+    root, configFile: false, cacheDir: join(root, 'node_modules', '.vite-timer-tests', String(process.pid)),
     define: { 'import.meta.env.VITE_API_BASE_URL': 'undefined' },
     plugins: [vue(), tailwindcss(), {
       name: 'question-timer-presentation-fixture',

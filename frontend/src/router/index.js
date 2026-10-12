@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useExamStore } from '../stores/exam'
 import { examPath, routeKind } from '../utils/examRoutes'
+import { waitForStudySave } from '../features/vocabularyStudy/lifecycle.js'
 
 const routes = [
   { path: '/login', name: 'Login', component: () => import('../views/LoginView.vue'), meta: { guest: true } },
@@ -17,6 +18,7 @@ const routes = [
   { path: '/exams/:examSlug/wrong', name: 'ExamWrongAnswers', component: () => import('../views/WrongAnswersView.vue'), meta: { auth: true, examScoped: true } },
   { path: '/exams/:examSlug/history', name: 'ExamHistory', component: () => import('../views/HistoryView.vue'), meta: { auth: true, examScoped: true } },
   { path: '/exams/:examSlug/vocab', name: 'ExamVocabulary', component: () => import('../views/VocabularyView.vue'), meta: { auth: true, examScoped: true } },
+  { path: '/exams/:examSlug/vocab/study', name: 'ExamVocabularyStudy', component: () => import('../views/VocabularyStudyView.vue'), meta: { auth: true, examScoped: true, vocabularyStudy: true } },
   { path: '/exams/:examSlug/import-jobs', name: 'ExamImportJobs', component: () => import('../views/ImportJobsView.vue'), meta: { auth: true, admin: true, examScoped: true } },
   { path: '/exams/:examSlug/import-jobs/:jobId', name: 'ExamImportJobDetail', component: () => import('../views/ImportJobDetailView.vue'), meta: { auth: true, admin: true, examScoped: true } },
   { path: '/exams/:examSlug/import-jobs/:jobId/review', name: 'ExamImportReview', component: () => import('../views/ImportReviewView.vue'), meta: { auth: true, admin: true, examScoped: true } },
@@ -61,6 +63,7 @@ router.beforeEach(async (to) => {
   const urlSlug = to.params.examSlug
   if (urlSlug && urlSlug !== examStore.current?.slug) {
     try {
+      await waitForStudySave()
       await examStore.switchTo(urlSlug)
     } catch {
       return '/exams'

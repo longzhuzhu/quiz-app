@@ -23,6 +23,8 @@ export function routeKind(route) {
   if (name === 'ExamWrongAnswers') return 'wrong'
   if (name === 'ExamHistory') return 'history'
   if (name === 'ExamVocabulary') return 'vocab'
+  // 高频题库身份不能随项目切换复制；回到目标项目的来源概览。
+  if (name === 'ExamVocabularyStudy') return 'vocab'
   if (name === 'ExamImportJobs') return 'importJobs'
   if (name === 'ExamImportJobDetail') return 'importJobDetail'
   if (name === 'ExamImportReview') return 'importReview'

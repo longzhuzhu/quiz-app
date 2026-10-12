@@ -136,8 +136,11 @@ def get_owned_exam_or_404(db: Session, user: User, slug: str) -> Exam:
     return exam
 
 
-def get_bank_in_exam_or_404(db: Session, bank_id: int, exam: Exam) -> QuestionBank:
-    bank = db.query(QuestionBank).filter_by(id=bank_id, exam_id=exam.id).first()
+def get_bank_in_exam_or_404(db: Session, bank_id: int, exam: Exam, *, lock_for_read=False) -> QuestionBank:
+    query = db.query(QuestionBank).filter_by(id=bank_id, exam_id=exam.id)
+    if lock_for_read:
+        query = query.with_for_update(read=True)
+    bank = query.first()
     if bank is None:
         raise HTTPException(status_code=404, detail="题库不存在")
     return bank
@@ -210,6 +213,10 @@ def serialize_exam(exam: Exam, db: Session, include_ai_profile: bool = True) -> 
 
 
 def delete_bank_data(db: Session, bank: QuestionBank) -> None:
+    # 与词汇掌握写入的锁顺序一致，避免先清进度后等待词条造成孤立进度。
+    db.query(Exam.id).filter_by(id=bank.exam_id).with_for_update(read=True).first()
+    if db.query(QuestionBank.id).filter_by(id=bank.id).with_for_update().first() is None:
+        raise HTTPException(status_code=404, detail="题库不存在")
     question_ids_subquery = db.query(Question.id).filter(Question.bank_id == bank.id)
 
     db.query(QuizAnswer).filter(QuizAnswer.question_id.in_(question_ids_subquery)).delete(synchronize_session=False)
@@ -241,6 +248,8 @@ def delete_bank_data(db: Session, bank: QuestionBank) -> None:
 
 def delete_exam_data(db: Session, exam: Exam) -> None:
     try:
+        if db.query(Exam.id).filter_by(id=exam.id, owner_id=exam.owner_id).with_for_update().first() is None:
+            raise HTTPException(status_code=404, detail="考试项目不存在")
         for bank in db.query(QuestionBank).filter_by(exam_id=exam.id).all():
             delete_bank_data(db, bank)
         vocab_ids = db.query(Vocabulary.id).filter_by(user_id=exam.owner_id, exam_id=exam.id)

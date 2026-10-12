@@ -13,7 +13,7 @@ const exec = promisify(execFile)
 const root = fileURLToPath(new URL('../', import.meta.url))
 
 // 用真实 Vue 组件和浏览器测试交互，仅在 HTTP 边界替换外部服务。
-async function startFixture(initialPersonalWords = 0) {
+async function startFixture(initialPersonalWords = 0, initialProjectWords = 0) {
   let nextId = 4
   let words = [
     { id: 1, term: 'shared word', scope_label: 'personal', is_mastered: false },
@@ -23,12 +23,15 @@ async function startFixture(initialPersonalWords = 0) {
   for (let i = 0; i < initialPersonalWords; i++) {
     words.push({ id: nextId++, term: `personal word ${i}`, scope_label: 'personal', is_mastered: false })
   }
+  for (let i = 0; i < initialProjectWords; i++) {
+    words.push({ id: nextId++, term: `project word ${i}`, scope_label: 'exam_personal', exam: 'current', is_mastered: false })
+  }
   const entry = `
     import { createApp, h, ref } from 'vue'
     import { createPinia } from 'pinia'
     import { useExamStore } from '/src/stores/exam.js'
     import AddVocabButton from '/src/components/AddVocabButton.vue'
-    import VocabularyView from '/src/views/VocabularyView.vue'
+    import VocabularyView from '/src/views/VocabularyManageView.vue'
     localStorage.setItem('user', JSON.stringify({ is_admin: true }))
     const pinia = createPinia()
     const exam = useExamStore(pinia)
@@ -45,6 +48,7 @@ async function startFixture(initialPersonalWords = 0) {
   const server = await createServer({
     root,
     configFile: false,
+    cacheDir: join(root, 'node_modules', '.vite-vocabulary-tests', String(process.pid)),
     define: { 'import.meta.env.VITE_API_BASE_URL': 'undefined' },
     plugins: [vue(), {
       name: 'vocabulary-test-fixture',
@@ -113,7 +117,7 @@ async function startFixture(initialPersonalWords = 0) {
   return server
 }
 
-async function startBrowser(t, initialPersonalWords = 0) {
+async function startBrowser(t, initialPersonalWords = 0, initialProjectWords = 0) {
   try {
     await exec('agent-browser', ['--version'])
   } catch (error) {
@@ -121,7 +125,7 @@ async function startBrowser(t, initialPersonalWords = 0) {
     t.skip('浏览器回归测试需要安装 agent-browser 并运行 agent-browser install')
     return null
   }
-  const server = await startFixture(initialPersonalWords)
+  const server = await startFixture(initialPersonalWords, initialProjectWords)
   // Snap Chromium 的 /tmp 与宿主机隔离，独立 profile 放在可访问的用户目录。
   const profile = await mkdtemp(join(homedir(), 'vocab-browser-'))
   const session = `vocab-test-${process.pid}-${initialPersonalWords}`
@@ -136,8 +140,18 @@ async function startBrowser(t, initialPersonalWords = 0) {
     }
   })
   await browser('open', `http://127.0.0.1:${server.httpServer.address().port}/__vocab-test`)
+  await browser('wait', '--text', '收藏单词')
   return { browser, text }
 }
+
+test('project management retains words beyond the first 100 items', { timeout: 120000 }, async t => {
+  const context = await startBrowser(t, 0, 110)
+  if (!context) return
+  await context.browser('find', 'role', 'button', 'click', '--name', '打开单词本')
+  await context.browser('wait', '--text', 'project word 109')
+  assert.match(await context.text(), /project word 0\s/)
+  assert.match(await context.text(), /项目词汇\s+111/)
+})
 
 test('my wordbook contains quiz favorites but not project vocabulary', { timeout: 120000 }, async (t) => {
   const context = await startBrowser(t)

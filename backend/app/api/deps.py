@@ -79,13 +79,29 @@ def get_exam_context(
     db: Session = Depends(get_db),
     x_exam_slug: str | None = Header(None, alias="X-Exam-Slug"),
 ) -> Exam:
+    return _resolve_exam_context(current_user, db, x_exam_slug)
+
+
+def get_study_exam_context(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    x_exam_slug: str | None = Header(None, alias="X-Exam-Slug"),
+) -> Exam:
+    # 学习集合读取期间防止整个项目被删除后伪装成逐词不可用。
+    return _resolve_exam_context(current_user, db, x_exam_slug, lock_for_read=True)
+
+
+def _resolve_exam_context(current_user, db, x_exam_slug, *, lock_for_read=False) -> Exam:
     if x_exam_slug is None or not x_exam_slug.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="EXAM_REQUIRED")
 
-    exam = db.query(Exam).filter_by(
+    query = db.query(Exam).filter_by(
         owner_id=current_user.id,
         slug=x_exam_slug.strip(),
-    ).first()
+    )
+    if lock_for_read:
+        query = query.with_for_update(read=True)
+    exam = query.first()
     if exam is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="EXAM_NOT_FOUND")
     return exam

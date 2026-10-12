@@ -249,7 +249,8 @@ def test_migration_preserves_old_answers_without_inventing_duration(tmp_path):
         )
 
     migrate("stamp", "008")
-    migrate("upgrade", "head")
+    # 该夹具只建 quiz_answers，应验证目标迁移，而非未来涉及其他表的 head。
+    migrate("upgrade", "009")
     with engine.connect() as conn:
         answer = conn.execute(text("SELECT user_answer, answer_duration_ms FROM quiz_answers")).one()
         assert tuple(answer) == ("A", None)

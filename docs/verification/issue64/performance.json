@@ -1,0 +1,31 @@
+{
+  "note": "本地5000词HTTP fixture样例，不是生产或真机性能保证",
+  "domNodes": 41,
+  "firstCardMs": 458.8000011444092,
+  "resources": [
+    {
+      "bodyBytes": 114036,
+      "durationMs": 11,
+      "path": "/api/vocab/study/deck",
+      "transferBytes": 114336
+    },
+    {
+      "bodyBytes": 5576,
+      "durationMs": 8.399999618530273,
+      "path": "/api/vocab/study/items",
+      "transferBytes": 5876
+    }
+  ],
+  "responses": [
+    {
+      "path": "/api/vocab/study/deck",
+      "bytes": 114036,
+      "status": 200
+    },
+    {
+      "path": "/api/vocab/study/items",
+      "bytes": 5576,
+      "status": 200
+    }
+  ]
+}
