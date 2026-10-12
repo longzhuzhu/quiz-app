@@ -38,6 +38,24 @@ def _ok_payload(content: str = "ok") -> dict:
     return {"choices": [{"message": {"content": content}}]}
 
 
+def test_vocab_refresh_uses_configured_translation_model_and_single_bilingual_request(monkeypatch, patched_settings):
+    captured = {}
+    generated = {"term_zh": "隐私", "definition": "The ability to control personal information.", "definition_zh": "控制个人信息的能力。"}
+
+    def fake_post(url, **kwargs):
+        captured["url"] = url
+        captured.update(kwargs)
+        return FakeHttpxResponse(_ok_payload(json.dumps(generated)))
+
+    monkeypatch.setattr(ai_service.httpx, "post", fake_post)
+    result = ai_service.refresh_vocab_content("privacy", MagicMock(), definition="Previous context.")
+    assert result == generated
+    assert captured["json"]["model"] == "fake-model"
+    assert "reasoning_effort" not in captured["json"]
+    assert captured["timeout"] == 60.0
+    assert json.loads(captured["json"]["messages"][-1]["content"]) == {"term": "privacy", "previous_definition": "Previous context."}
+
+
 @pytest.fixture
 def patched_settings(monkeypatch):
     def fake_get_effective_ai_settings(db, *, scene="default", **kwargs):

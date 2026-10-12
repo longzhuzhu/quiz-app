@@ -39,3 +39,52 @@
 
 /* iOS 安全区域 */
 .safe-area-bottom { padding-bottom: env(safe-area-inset-bottom, 0); }
+
+/* 单词卡学习只影响带路由元信息的外壳；触控横屏也保留沉浸布局。 */
+.vocabulary-study-shell { height: 100dvh; min-height: 0; display: flex; flex-direction: column; transition: none; }
+.vocabulary-study-shell button, .vocabulary-study-shell a { transition-property: transform; }
+.dark .vocabulary-study-shell button.bg-primary-600 { background-color: var(--color-primary-600); }
+.vocabulary-study-shell .global-navigation { flex-shrink: 0; }
+.vocabulary-study-shell .global-navigation > .max-w-6xl { flex-wrap: wrap; gap: 8px; }
+.vocabulary-study-shell .global-navigation .md\:flex { flex-wrap: wrap; }
+.vocabulary-study-shell .app-main { width: 100%; flex: 1; min-height: 0; }
+.study-screen { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 720px; min-height: 0; height: 100%; margin: 0 auto; }
+.study-header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; flex-shrink: 0; }
+.study-touch { min-width: 48px; min-height: 48px; }
+.study-judge { min-height: 52px; min-width: 0; white-space: normal; }
+.study-progress { height: 4px; border: 0; border-radius: 2px; overflow: hidden; accent-color: var(--color-primary-600); }
+.study-progress::-webkit-progress-bar { background: var(--color-slate-200); }
+.study-progress::-webkit-progress-value { background: var(--color-primary-600); }
+.study-card { display: flex; flex-direction: column; flex: 1; min-height: 0; width: 100%; max-width: 640px; margin: 0 auto; border: 1px solid var(--color-gray-200); border-radius: var(--radius-card-lg); background: white; box-shadow: var(--shadow-card); overflow: hidden; touch-action: pan-y pinch-zoom; }
+.study-card-interactive { cursor: pointer; }
+.study-card-content { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.study-card:focus-visible { outline: 2px solid var(--color-primary-600); outline-offset: 3px; }
+.dark .study-card:focus-visible { outline-color: var(--color-primary-400); }
+.study-card-body { min-height: 0; flex: 1; padding: 24px; overflow-y: auto; overflow-wrap: anywhere; touch-action: pan-y pinch-zoom; color: var(--color-gray-600); scrollbar-gutter: stable; }
+.study-card-front { display: flex; flex-direction: column; align-items: center; justify-content: safe center; text-align: center; }
+.study-word { max-width: 100%; overflow-wrap: anywhere; font-size: clamp(2rem, 6vw, 3.5rem); font-weight: 700; line-height: 1.25; }
+.study-card-meta { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px 16px; flex-shrink: 0; min-height: 40px; padding: 8px 16px; }
+.study-actions { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
+.study-notices { flex-shrink: 0; max-height: 22dvh; overflow-y: auto; border-radius: var(--radius-button); padding: .75rem; font-size: .875rem; line-height: 1.5; color: var(--color-amber-800); background: var(--color-amber-50); }
+.study-notices p + p { margin-top: .5rem; }
+.study-message { margin: auto 0; max-height: 100%; overflow-y: auto; overflow-wrap: anywhere; color: var(--color-gray-600); }
+.dark .study-card { background: var(--color-slate-800); border-color: var(--color-slate-700); }
+.dark .study-notices { color: var(--color-amber-200); background: color-mix(in srgb, var(--color-amber-900) 25%, transparent); }
+.dark .study-card-body, .dark .study-message { color: var(--color-gray-300); }
+@media (max-width: 767px), (pointer: coarse) and (max-height: 600px) {
+  .vocabulary-study-shell .global-navigation { display: none; }
+  .vocabulary-study-shell .app-main { padding: 0; max-width: none; }
+  .study-screen { height: 100dvh; min-height: 0; gap: 8px; padding: max(8px, env(safe-area-inset-top, 0px)) max(12px, env(safe-area-inset-right, 0px)) max(12px, env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 0px)); }
+  .study-header { gap: 8px; }
+  .study-header svg { width: 24px; height: 24px; }
+  .study-card-body { padding: 20px; }
+  .study-actions { gap: 8px; }
+  .study-actions svg { width: 20px; height: 20px; flex-shrink: 0; }
+  .study-actions button { gap: 8px; padding: 8px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vocabulary-study-shell *, .vocabulary-study-shell *::before, .vocabulary-study-shell *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  /* 翻卡始终保留；其余学习区元素继续遵循原有减少动态效果设置。 */
+  .vocabulary-study-shell *:not(.study-card), .vocabulary-study-shell *::before, .vocabulary-study-shell *::after { transform: none !important; }
+  .fade-enter-active, .fade-leave-active { transition: none; }
+}

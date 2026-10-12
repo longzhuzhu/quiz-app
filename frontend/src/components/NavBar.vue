@@ -147,6 +147,7 @@ import { examPath } from '../utils/examRoutes'
 import ExamSwitcher from './ExamSwitcher.vue'
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/vue'
 import { SunIcon, MoonIcon, ChevronDownIcon } from '@heroicons/vue/24/outline'
+import { waitForStudySave } from '../features/vocabularyStudy/lifecycle.js'
 
 const authStore = useAuthStore()
 const examStore = useExamStore()
@@ -157,7 +158,8 @@ function navPath(kind) {
   return examStore.current?.slug ? examPath(examStore.current.slug, kind) : '/onboarding'
 }
 
-function handleLogout() {
+async function handleLogout() {
+  await waitForStudySave()
   authStore.logout()
   router.push('/login')
 }

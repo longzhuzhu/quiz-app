@@ -48,6 +48,7 @@ import { useExamStore } from '../stores/exam'
 import { useQuizStore } from '../stores/quiz'
 import { examPath, routeKind } from '../utils/examRoutes'
 import { useToast } from '../composables/useToast'
+import { prepareStudyContextChange, studyGeneration } from '../features/vocabularyStudy/lifecycle.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -57,11 +58,21 @@ const toast = useToast()
 
 async function switchExam(slug) {
   if (!slug || slug === examStore.current?.slug) return
+  const generation = studyGeneration()
+  let resume
   try {
+    resume = await prepareStudyContextChange()
+    if (generation !== studyGeneration()) return
     await examStore.switchTo(slug)
+    if (generation !== studyGeneration()) return
     quizStore.reset()
     router.push(examPath(slug, routeKind(route), route.params))
   } catch (e) {
+    if (generation !== studyGeneration()) return
+    if (examStore.current?.slug === slug) {
+      // 活跃项目已经得到服务端确认，仅后续列表刷新失败时仍同步 URL。
+      router.push(examPath(slug, routeKind(route), route.params))
+    } else await resume?.()
     toast.error(e.response?.data?.error || '切换项目失败')
   }
 }

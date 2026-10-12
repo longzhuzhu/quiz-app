@@ -1,0 +1,113 @@
+{
+  "note": "仅学习区axe自动规则，不是全站或真人读屏认证",
+  "reports": [
+    {
+      "dark": false,
+      "flipped": false,
+      "axeVersion": "4.12.1",
+      "counts": {
+        "inapplicable": 47,
+        "incomplete": 0,
+        "passes": 12,
+        "violations": 0
+      },
+      "incomplete": [],
+      "lifecycle": {
+        "effectiveLaunch": {
+          "browserLaunched": true,
+          "engine": "chrome",
+          "launchHash": 16160329721624950000
+        },
+        "launched": false,
+        "relaunchedBrowser": false,
+        "restartedBackground": false,
+        "restoreStatus": "not_configured",
+        "reused": true,
+        "saveStatus": "not_attempted"
+      },
+      "url": "http://127.0.0.1:5173/exams/current/vocab/study?scope=personal&round=288a8e34-8bc8-4de2-a776-aea8d60cafa4",
+      "violations": []
+    },
+    {
+      "dark": false,
+      "flipped": true,
+      "axeVersion": "4.12.1",
+      "counts": {
+        "inapplicable": 47,
+        "incomplete": 0,
+        "passes": 12,
+        "violations": 0
+      },
+      "incomplete": [],
+      "lifecycle": {
+        "effectiveLaunch": {
+          "browserLaunched": true,
+          "engine": "chrome",
+          "launchHash": 16160329721624950000
+        },
+        "launched": false,
+        "relaunchedBrowser": false,
+        "restartedBackground": false,
+        "restoreStatus": "not_configured",
+        "reused": true,
+        "saveStatus": "not_attempted"
+      },
+      "url": "http://127.0.0.1:5173/exams/current/vocab/study?scope=personal&round=288a8e34-8bc8-4de2-a776-aea8d60cafa4",
+      "violations": []
+    },
+    {
+      "dark": true,
+      "flipped": false,
+      "axeVersion": "4.12.1",
+      "counts": {
+        "inapplicable": 47,
+        "incomplete": 0,
+        "passes": 12,
+        "violations": 0
+      },
+      "incomplete": [],
+      "lifecycle": {
+        "effectiveLaunch": {
+          "browserLaunched": true,
+          "engine": "chrome",
+          "launchHash": 16160329721624950000
+        },
+        "launched": false,
+        "relaunchedBrowser": false,
+        "restartedBackground": false,
+        "restoreStatus": "not_configured",
+        "reused": true,
+        "saveStatus": "not_attempted"
+      },
+      "url": "http://127.0.0.1:5173/exams/current/vocab/study?scope=personal&round=288a8e34-8bc8-4de2-a776-aea8d60cafa4",
+      "violations": []
+    },
+    {
+      "dark": true,
+      "flipped": true,
+      "axeVersion": "4.12.1",
+      "counts": {
+        "inapplicable": 47,
+        "incomplete": 0,
+        "passes": 12,
+        "violations": 0
+      },
+      "incomplete": [],
+      "lifecycle": {
+        "effectiveLaunch": {
+          "browserLaunched": true,
+          "engine": "chrome",
+          "launchHash": 16160329721624950000
+        },
+        "launched": false,
+        "relaunchedBrowser": false,
+        "restartedBackground": false,
+        "restoreStatus": "not_configured",
+        "reused": true,
+        "saveStatus": "not_attempted"
+      },
+      "url": "http://127.0.0.1:5173/exams/current/vocab/study?scope=personal&round=288a8e34-8bc8-4de2-a776-aea8d60cafa4",
+      "violations": []
+    }
+  ]
+}
