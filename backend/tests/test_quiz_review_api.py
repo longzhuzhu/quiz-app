@@ -146,9 +146,9 @@ def test_completed_exam_session_releases_verdicts_in_original_order(quiz_api):
     assert [q["status"] for q in questions] == ["correct"] * 7 + ["wrong"] * 3
     assert [q["is_correct"] for q in questions] == [position < 7 for position in range(QUESTION_COUNT)]
     assert all(q["status_unknown"] is False for q in questions)
-    # `answers` 是既有结果页仍在消费的过渡字段，本任务不做单侧收紧；
-    # 复盘以 questions 为准，整改答案数组的下标编号由前端切换处理
-    assert len(detail["answers"]) == QUESTION_COUNT
+    # 完成态只给复盘结构：过渡字段 `answers` 按作答记录顺序排列，与 question_ids 顺序不一致，
+    # 同时输出会让消费方按数组下标编号而与原场题号错位
+    assert "answers" not in detail
 
 
 def test_in_progress_exam_session_keeps_answers_and_stats_hidden(quiz_api):
