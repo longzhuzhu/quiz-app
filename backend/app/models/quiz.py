@@ -29,6 +29,12 @@ class QuizSession(Base):
     correct_count: Mapped[int] = mapped_column(Integer, default=0)
     is_completed: Mapped[bool] = mapped_column(Boolean, default=False)
     question_ids: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON: 题目 ID 列表
+    # 本场题目快照，与 question_ids 同序；只含判分依据（题干/选项/题型/当场正确答案），
+    # 不含翻译与 AI 解析。为空表示迁移前的旧会话，不做回填。
+    question_snapshot: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # 完成时冻结的各题最终作答与判定，键为字符串题号；显式 null 表示该题未答。
+    # 未完成会话为 NULL；题目被删除后仍可读出该题判定。
+    final_answers: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=lambda: datetime.now(timezone.utc),

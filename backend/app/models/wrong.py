@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -24,6 +24,11 @@ class WrongAnswer(Base):
         default=lambda: datetime.now(timezone.utc),
     )
     is_resolved: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 最近一次错误答案：该题最近一次成功提交的错误选择，后来答对也不覆写；
+    # 为空表示没有可靠的错误作答证据（旧数据或仅由旧路径写入）。
+    last_wrong_answer: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # 产生上一次错误答案的答题会话，用于排除尚未结束的模拟考试证据
+    last_wrong_session_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # 关系
     user = relationship("User", back_populates="wrong_answers")
