@@ -12,9 +12,10 @@
           :id="tabId(index)" :aria-controls="panelId(index)" :aria-selected="isMobile ? model.model_id === activeModel : undefined"
           :aria-pressed="!isMobile ? model.model_id === activeModel : undefined"
           :tabindex="isMobile && model.model_id !== activeModel ? -1 : 0"
-          :title="model.model_id" class="max-w-60 shrink-0 truncate rounded-t-lg border-b-2 px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-300"
-          :class="[modelTheme(model.model_id).accent,
-            model.model_id === activeModel ? [modelTheme(model.model_id).surface, 'font-semibold'] : 'border-transparent opacity-75 hover:opacity-100']"
+          :title="model.model_id" class="max-w-60 shrink-0 truncate rounded-lg border px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-300"
+          :class="model.model_id === activeModel
+            ? [modelTheme(model.model_id).surface, modelTheme(model.model_id).accent, 'font-semibold']
+            : ['border-gray-200 bg-white opacity-80 hover:opacity-100 dark:border-slate-700 dark:bg-slate-800', modelTheme(model.model_id).accent]"
           @click="selectModel(model.model_id)" @keydown="tabKey($event, index)">{{ model.model_id }}</button>
       </div>
       <div class="explanation-grid mt-3">
@@ -22,7 +23,7 @@
           :id="panelId(models.findIndex(m => m.model_id === model.model_id))" :role="isMobile ? 'tabpanel' : undefined"
           :aria-labelledby="isMobile ? tabId(models.findIndex(m => m.model_id === model.model_id)) : undefined"
           class="min-w-0 rounded-xl border p-4 text-sm" :class="modelTheme(model.model_id).surface">
-          <div class="flex items-start justify-between gap-3">
+          <div class="flex items-center justify-between gap-3">
             <h3 class="min-w-0 flex-1 break-all font-semibold" :class="modelTheme(model.model_id).accent">{{ model.model_id }}</h3>
             <button type="button" :disabled="isModelUpdating(model) || dispatching || reading"
               :aria-label="modelActionLabel(model)" :title="modelActionLabel(model)" :aria-busy="isModelUpdating(model)"

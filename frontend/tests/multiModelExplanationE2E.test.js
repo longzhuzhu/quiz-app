@@ -36,24 +36,27 @@ test('多模型解析：真实登录、预热、独立答案、移动Tab、更�
   const selectionStyle = async () => JSON.parse(await browser('eval', `(() => {
     const selected = document.querySelector('[aria-label="解析模型"] [aria-selected=true], [aria-label="解析模型"] [aria-pressed=true]');
     const style = getComputedStyle(selected);
-    return { borderTop: style.borderTopWidth, borderRight: style.borderRightWidth, borderBottom: style.borderBottomWidth,
-      shadow: style.boxShadow, background: style.backgroundColor, color: style.color, fontWeight: style.fontWeight };
+    return { borderWidth: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth],
+      radius: style.borderTopLeftRadius, shadow: style.boxShadow, background: style.backgroundColor, color: style.color, fontWeight: style.fontWeight };
   })()`))
   const desktopSelectionStyle = await selectionStyle()
-  assert.equal(desktopSelectionStyle.borderTop, '0px')
-  assert.equal(desktopSelectionStyle.borderRight, '0px')
-  assert.equal(desktopSelectionStyle.borderBottom, '2px')
+  assert.deepEqual(desktopSelectionStyle.borderWidth, ['1px', '1px', '1px', '1px'], '选中模型应显示完整边框而不是仅下划线')
+  assert.notEqual(desktopSelectionStyle.radius, '0px', '选中模型应是圆角框')
   assert.equal(desktopSelectionStyle.shadow, 'none', '选中模型不应出现深色粗外框')
   assert.equal(JSON.parse(await browser('eval', 'document.querySelectorAll("[data-model-id]").length')), 5, '桌面选择模型后仍保留并排比较')
   const refreshControl = JSON.parse(await browser('eval', `(() => {
     const card = document.querySelector('[data-model-id="model-b"]');
     const button = card.querySelector('button');
+    const heading = card.querySelector('h3');
     const reader = card.querySelector('[data-reader]');
-    return { inHeading: button.parentElement !== card && button.parentElement.contains(card.querySelector('h3')), aboveBody: button.getBoundingClientRect().top < reader.getBoundingClientRect().top,
-      icon: Boolean(button.querySelector('svg')), text: button.textContent.trim(), busy: button.getAttribute('aria-busy'),
-      animation: button.querySelector('svg') ? getComputedStyle(button.querySelector('svg')).animationName : 'none' };
+    const icon = button.querySelector('svg');
+    const buttonRect = button.getBoundingClientRect(), headingRect = heading.getBoundingClientRect(), iconRect = icon.getBoundingClientRect();
+    return { inHeading: button.parentElement !== card && button.parentElement.contains(heading), aboveBody: buttonRect.top < reader.getBoundingClientRect().top,
+      centeredWithHeading: Math.abs((iconRect.top + iconRect.bottom) / 2 - (headingRect.top + headingRect.bottom) / 2) <= 2,
+      icon: Boolean(icon), text: button.textContent.trim(), busy: button.getAttribute('aria-busy'),
+      animation: getComputedStyle(icon).animationName };
   })()`))
-  assert.deepEqual(refreshControl, { inHeading: true, aboveBody: true, icon: true, text: '', busy: 'false', animation: 'none' }, '更新图标应在标题右侧，空闲时保持静态')
+  assert.deepEqual(refreshControl, { inHeading: true, aboveBody: true, centeredWithHeading: true, icon: true, text: '', busy: 'false', animation: 'none' }, '更新图标应与模型 ID 垂直居中，空闲时保持静态')
   assert.equal(JSON.parse(await browser('eval', 'Array.from(document.querySelectorAll("button")).some(b=>b.textContent.trim()==="更新全部解析")')), true)
   const cardColors = async () => JSON.parse(await browser('eval', `Array.from(document.querySelectorAll('[data-model-id]')).map(card => ({
     model: card.dataset.modelId, background: getComputedStyle(card).backgroundColor, border: getComputedStyle(card).borderTopColor,
