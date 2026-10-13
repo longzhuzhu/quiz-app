@@ -1,0 +1,7 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端规范索引：目录结构、数据库、错误处理、日志、质量约定总入口"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "连接池、会话与查询风格约定；本任务调整 pool_size/max_overflow 与 advisory lock 连接"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "服务层风格与配置方式约定；本任务新增配置项并透传参数"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "httpx 超时异常处理契约；本任务延长超时需保持异常语义"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "composable generation 防竞态模式；本任务删改 useQuestionExplanations"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "组件 Props/绑定约定；本任务删改 QuestionExplanation 模板与解构"}
