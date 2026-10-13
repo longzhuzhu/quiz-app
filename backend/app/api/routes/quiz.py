@@ -31,6 +31,7 @@ from app.services.practice_service import (
     trend_for,
 )
 from app.services.quiz_snapshot_service import freeze_final_answers, snapshot_entries
+from app.services.quiz_stats import session_stats
 from app.services.topic_service import (
     list_question_ids_for_competency,
     list_question_ids_for_domain,
@@ -151,6 +152,98 @@ def _resolve_topic_scope(
     if topic.level == TOPIC_LEVEL_COMPETENCY:
         return topic, list_question_ids_for_competency(db, bank.id, topic.id)
     raise HTTPException(status_code=404, detail="考点不存在")
+
+
+def _snapshot_entries_by_question_id(session: QuizSession) -> dict[int, dict]:
+    """本场快照按题号索引；旧会话（无快照）与非 dict 条目一并跳过。"""
+    entries: dict[int, dict] = {}
+    if isinstance(session.question_snapshot, list):
+        for entry in session.question_snapshot:
+            if not isinstance(entry, dict):
+                continue
+            question_id = entry.get("question_id")
+            if isinstance(question_id, int) and question_id not in entries:
+                entries[question_id] = entry
+    return entries
+
+
+def _review_verdict(
+    answer: QuizAnswer | None,
+    frozen_answers: dict | None,
+    question_id: int,
+    snapshot_present: bool,
+) -> tuple[str | None, bool | None, str, bool]:
+    """复盘单题状态：`status` 只由保存的 `is_correct` 决定。
+
+    返回 `(user_answer, is_correct, status, status_unknown)`。缺失判定不得用布尔兜底
+    当作错误（Issue #63 根因）；旧会话没有快照也没有作答记录时无法核实是未答还是记录
+    已缺失，标为不可核实而不推断成错误或未答。
+    """
+    key = str(question_id)
+    # 整列损坏（非 dict）时不把「键不存在」与「无法核实」混为一谈，统一走不可核实分支
+    frozen_present = isinstance(frozen_answers, dict) and key in frozen_answers
+    frozen = frozen_answers.get(key) if frozen_present else None
+
+    if isinstance(frozen, dict):
+        # 完成冻结副本优先：题目与作答记录都被删除后仍可读出当时判定。
+        # 只有真正的 bool 才构成判定，缺失或非 bool 一律不推断成错误。
+        if isinstance(frozen.get("is_correct"), bool):
+            is_correct = frozen["is_correct"]
+            return frozen.get("user_answer"), is_correct, ("correct" if is_correct else "wrong"), False
+        # 冻结副本缺少可核实判定：保留已保存的选择，不推断成错误或未答
+        return frozen.get("user_answer"), None, "unanswered", True
+    if frozen_present:
+        if frozen is None:
+            # 显式 null 表示该题未答，与「键不存在」区分
+            return None, None, "unanswered", False
+        # 冻结副本条目损坏（既非 dict 也非显式 null）：不推断成任何状态
+        return None, None, "unanswered", True
+    if answer is not None:
+        # QuizAnswer.is_correct 非空，只认保存值，不用布尔兜底把缺失当错误
+        is_correct = bool(answer.is_correct)
+        return answer.user_answer, is_correct, ("correct" if is_correct else "wrong"), False
+    if snapshot_present:
+        # 本场有快照且没有作答记录：确实是未答题
+        return None, None, "unanswered", False
+    return None, None, "unanswered", True
+
+
+def _review_question_out(
+    *,
+    question_id: int,
+    index: int,
+    snapshot_entry: dict | None,
+    question: Question | None,
+    answer: QuizAnswer | None,
+    frozen_answers: dict | None,
+) -> dict:
+    """构造复盘态单题：内容优先取本场快照，无快照时退回当前题库数据。"""
+    if snapshot_entry is not None:
+        question_type = snapshot_entry.get("question_type")
+        content = snapshot_entry.get("content")
+        options = snapshot_entry.get("options")
+        correct_answer = snapshot_entry.get("correct_answer")
+    else:
+        question_type = question.question_type if question else None
+        content = question.content if question else None
+        options = _load_options(question) if question else None
+        correct_answer = question.correct_answer if question else None
+
+    user_answer, is_correct, status, status_unknown = _review_verdict(
+        answer, frozen_answers, question_id, snapshot_entry is not None
+    )
+    return {
+        "id": question_id,
+        "index": index,
+        "question_type": question_type,
+        "content": content,
+        "options": options,
+        "user_answer": user_answer,
+        "is_correct": is_correct,
+        "correct_answer": correct_answer,
+        "status": status,
+        "status_unknown": status_unknown,
+    }
 
 
 def _compute_resume_index(question_ids: list[int], answers: list[QuizAnswer]) -> int:
@@ -423,6 +516,12 @@ def finish_quiz(
             session.final_answers = freeze_final_answers(session_question_ids, answers)
         db.commit()
 
+    stats = session_stats(
+        total=session.total_questions,
+        answered=session.answered_count,
+        correct=session.correct_count,
+        mode=session.mode,
+    )
     return {
         "session": {
             "id": session.id,
@@ -430,7 +529,7 @@ def finish_quiz(
             "answered_count": session.answered_count,
             "correct_count": session.correct_count,
             "is_completed": True,
-            "accuracy": round(session.correct_count / max(session.answered_count, 1) * 100, 1),
+            **stats,
         }
     }
 
@@ -472,6 +571,12 @@ def history(
     result = []
     for s in sessions:
         bank_name = s.bank.name if s.bank else ""
+        stats = session_stats(
+            total=s.total_questions,
+            answered=s.answered_count,
+            correct=s.correct_count,
+            mode=s.mode,
+        )
         result.append({
             "id": s.id,
             "bank_id": s.bank_id,
@@ -482,7 +587,7 @@ def history(
             "answered_count": s.answered_count,
             "correct_count": s.correct_count,
             "is_completed": s.is_completed,
-            "accuracy": round(s.correct_count / max(s.answered_count, 1) * 100, 1),
+            **stats,
             "created_at": s.created_at.isoformat(),
             "completed_at": s.completed_at.isoformat() if s.completed_at else None,
         })
@@ -569,11 +674,18 @@ def session_detail(
     if session.user_id != user_id:
         raise HTTPException(status_code=403, detail="无权限")
     is_exam = session.mode == "exam"
+    # 完成态才释放答案与对错：模拟考试结束前继续隐藏，复盘解锁以服务端完成态为准
+    released = session.is_completed
+    has_snapshot = bool(session.question_snapshot)
 
     answers = db.query(QuizAnswer).filter_by(session_id=session_id).all()
     session_question_ids = json.loads(session.question_ids) if session.question_ids else []
     resume_index = _compute_resume_index(session_question_ids, answers)
+
     answers_out = []
+    # `answers` 是过渡字段：既有结果页（QuizResultView）仍按它渲染详情列表。本任务只新增
+    # 复盘契约（`questions`），不在这里单侧收紧，否则前端结果页的详情会立即消失；
+    # 等结果页切换到 `questions` 后由前端子任务删除该字段。
     for a in answers:
         q = a.question
         answer_data = {
@@ -592,9 +704,28 @@ def session_detail(
             answer_data["explanation_zh"] = q.explanation_zh
         answers_out.append(answer_data)
 
-    # 未完成的会话返回完整题目列表，用于页面刷新后恢复答题
     questions_out = []
-    if not session.is_completed and session_question_ids:
+    if released:
+        # 复盘态：按 question_ids 原场顺序返回完整题目，含始终未答的题；
+        # 内容优先取本场快照，无快照的旧会话才退回当前题库数据
+        snapshot_by_id = _snapshot_entries_by_question_id(session)
+        answer_by_question_id = {a.question_id: a for a in answers}
+        existing_questions = (
+            {q.id: q for q in db.query(Question).filter(Question.id.in_(session_question_ids)).all()}
+            if session_question_ids
+            else {}
+        )
+        for index, question_id in enumerate(session_question_ids):
+            questions_out.append(_review_question_out(
+                question_id=question_id,
+                index=index + 1,
+                snapshot_entry=snapshot_by_id.get(question_id),
+                question=existing_questions.get(question_id),
+                answer=answer_by_question_id.get(question_id),
+                frozen_answers=session.final_answers,
+            ))
+    elif session_question_ids:
+        # 未完成的会话返回完整题目列表，用于页面刷新后恢复答题
         q_ids = session_question_ids
         counts = _get_user_question_counts(user_id, q_ids, db)
         answered_ids = {a.question_id for a in answers}
@@ -620,24 +751,42 @@ def session_detail(
                     question_data["explanation_zh"] = q.explanation_zh
                 questions_out.append(question_data)
 
-    result = {
-        "session": {
-            "id": session.id,
-            "bank_id": session.bank_id,
-            "bank_name": session.bank.name if session.bank else "",
-            "mode": session.mode,
-            "topic_short_name": session.topic.short_name_zh if session.topic else None,
-            "total_questions": session.total_questions,
-            "answered_count": session.answered_count,
-            "correct_count": session.correct_count,
-            "is_completed": session.is_completed,
-            "accuracy": round(session.correct_count / max(session.answered_count, 1) * 100, 1),
-            "resume_index": resume_index,
-            "created_at": session.created_at.isoformat(),
-            "completed_at": session.completed_at.isoformat() if session.completed_at else None,
-        },
-        "answers": answers_out,
+    session_out = {
+        "id": session.id,
+        "bank_id": session.bank_id,
+        "bank_name": session.bank.name if session.bank else "",
+        "mode": session.mode,
+        "topic_short_name": session.topic.short_name_zh if session.topic else None,
+        "total_questions": session.total_questions,
+        "answered_count": session.answered_count,
+        "correct_count": session.correct_count,
+        "is_completed": session.is_completed,
+        "resume_index": resume_index,
+        "created_at": session.created_at.isoformat(),
+        "completed_at": session.completed_at.isoformat() if session.completed_at else None,
     }
-    if questions_out:
+    if released:
+        # 完成态按快照统计，不受题库后续编辑影响
+        session_out.update(
+            session_stats(
+                total=session.total_questions,
+                answered=session.answered_count,
+                correct=session.correct_count,
+                mode=session.mode,
+            )
+        )
+        session_out["has_snapshot"] = has_snapshot
+    else:
+        # 进行中的模拟考试不得暴露可推导成绩的统计
+        if not is_exam:
+            session_out["accuracy"] = session_stats(
+                total=session.total_questions,
+                answered=session.answered_count,
+                correct=session.correct_count,
+                mode=session.mode,
+            )["accuracy"]
+
+    result = {"session": session_out, "answers": answers_out}
+    if released or questions_out:
         result["questions"] = questions_out
     return result
