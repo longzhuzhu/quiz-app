@@ -15,6 +15,31 @@ grep -n 'ExamQuizReview' frontend/src/router/index.js
 
 `retry-api` 的失败响应会列出不可用题目，先确认其 `detail` 形态再写错误提示。
 
+### `POST /quiz/retry` 契约（已由 `10-13-retry-api` 冻结）
+
+成功 200：
+
+```json
+{"session": {"id", "bank_id", "mode", "topic_short_name" | null, "total_questions"},
+ "questions": [ ... ]}   // 形态与 /quiz/start 一致
+```
+
+失败 `detail` **均为中文字符串**（不是 dict，不要尝试解析结构）：
+
+| 状态 | `detail` |
+| --- | --- |
+| 404 | `答题会话不存在` |
+| 403 | `无权限` |
+| 400 | `答题会话尚未结束，不能重新开始` |
+| 400 | `原会话缺少题目列表，无法重新开始` |
+| 400 | `部分原题已不可用，无法重新开始（题目 ID: 12、15）` |
+
+不可用题目 ID 内嵌在这段文案里。**直接整串展示即可**，不要正则解析——现有前端模式就是
+`toast.error(e.response?.data?.detail || ...)`。
+
+**不要**实现「原考点已不可用」提示：该信号在当前模型下取不到（见 `10-13-retry-api/prd.md` 已知限制），
+响应中不存在 `topic_unavailable` 字段。
+
 ## 1. 统计与详情
 
 `frontend/src/views/QuizResultView.vue`：

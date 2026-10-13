@@ -35,6 +35,11 @@ class QuizFinishRequest(BaseModel):
     session_id: int
 
 
+class QuizRetryRequest(BaseModel):
+    # 只接受原会话 ID：原题成员与顺序由服务端从会话读取，客户端不能自带题目列表
+    session_id: int
+
+
 class QuizQuestionOut(BaseModel):
     id: int
     question_type: str

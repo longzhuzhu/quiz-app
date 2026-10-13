@@ -288,6 +288,45 @@ def _compile_jsonb_for_sqlite(type_, compiler, **kw):
 
 ---
 
+## SQLite 测试必须显式开启外键强制
+
+SQLite **默认不强制外键**（`PRAGMA foreign_keys` 默认为 OFF）。`ForeignKey(..., ondelete="...")` 声明在
+SQLite 上完全不生效——级联删除不发生，`SET NULL` 也不置空。测试于是会在一个生产上不可能出现的
+状态下断言通过。
+
+比「约束不生效」更危险的是**语义反转**：以 `ondelete="SET NULL"` 为例，SQLite 下外键列会**保留悬空 id**，
+而 PostgreSQL 下会**变成 NULL**。任何以「该列是否为空」判断业务状态的代码，在两种引擎下结论相反。
+
+```python
+# backend/tests/test_quiz_retry.py —— 依赖 quiz_sessions.topic_id 的 SET NULL 语义
+from sqlalchemy import event
+
+@pytest.fixture
+def quiz_api(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'retry.db'}")
+
+    @event.listens_for(engine, "connect")
+    def _enable_foreign_keys(dbapi_connection, _record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    Base.metadata.create_all(engine)
+    ...
+```
+
+约定：
+
+- 测试文件若依赖任何 `ondelete` 行为（`CASCADE` / `SET NULL` / `RESTRICT`），夹具必须开这个 PRAGMA。
+- 只在 `connect` 事件里设置，不要写进生产代码。**注意 PRAGMA 是每连接生效的**，
+  必须挂在 engine 的 `connect` 事件上而不是建库后执行一次。
+- 建议留一条**金丝雀用例**断言真实 PG 语义（如 `topic_id is None`）。把 PRAGMA 改回 OFF 时该用例
+  应当立即失败——这是验证「PRAGMA 真的在把关」而非摆设的唯一办法。
+- 无法用 PRAGMA 覆盖的差异（如 PG 独有类型、`DISTINCT ON`、时区）仍需连真实 PostgreSQL，
+  参考 `backend/tests/test_job_claim_datetime_compare.py` 与 `test_quiz_snapshot.py` 的迁移测试。
+
+---
+
 ## ORM UPDATE 的时间比较：必须禁用 Python 端求值同步
 
 无时区列（`DateTime`，PG 中为 `timestamp without time zone`）参与 WHERE 条件时，如果条件值来自 `datetime.now(timezone.utc)`（aware），ORM 的 `update()` 默认走 `evaluate` 同步策略，会在 session 中已有该表对象时对条件做 **Python 端求值**，把数据库读回的 naive 值与 aware 值相比：

@@ -720,6 +720,10 @@ apply_session_regrade(session, quiz_answer, formatted)
   还会覆盖 `completed_at`。
 - 旧会话 `question_snapshot IS NULL` 表示迁移前的场次，**不回填**——回填等于伪造历史。
 - `sync_snapshot_correct_answer` 只作用于传入的当前会话；其他会话的快照按原样冻结。
+- **快照与题库答案允许分叉，这是设计意图不是缺陷。** 不传 `session_id` 改题库答案时
+  （`session is None`，整个重判分支跳过），已完成会话的快照仍记着当时那个答案，
+  复盘页显示的「当场正确答案」与题库当前值不同是正确的——「当场」二字就是这个意思。
+  不要为了「对齐」去回填历史会话的快照。
 - JSONB 整字段重新赋值，不就地 mutate（见数据库规范）。
 
 ### 4. Validation & Error Matrix
@@ -768,6 +772,93 @@ if not session.is_completed:
     db.commit()
 
 if isinstance(entry, dict) and entry.get("question_id") == question_id:
+```
+
+---
+
+## Scenario: 复盘详情响应契约（`GET /quiz/session/{id}`）
+
+### 1. Scope / Trigger
+
+- Trigger: 修改 `session_detail`，或改动消费该接口的答题页与结果页。
+- 范围：按 `is_completed` 分「进行中」与「已完成（复盘）」两态。
+
+### 2. Signatures
+
+- `GET /api/quiz/session/{session_id}`
+- 完成态 `questions[]`：`{id, index, question_type, content, options, user_answer, is_correct, correct_answer, status, status_unknown}`
+- 完成态 `session`：额外含 `wrong_count`、`unanswered_count`、`accuracy_basis`、`has_snapshot`
+- `session_stats(total, answered, correct, mode)` — `backend/app/services/quiz_stats.py`
+
+### 3. Contracts
+
+- **`released = session.is_completed` 是唯一释放依据**，不是 `mode`。完成态无论模式都释放
+  `is_correct` 与 `correct_answer`（这是 Issue #63「模拟结果全部显示错误」的根因修复）。
+- **`index` 按 `session.question_ids` 顺序枚举**，不得依赖 `db.query(QuizAnswer)` 的返回顺序
+  （无 `order_by`，跳题/改答/随机模式会错位）。筛选后不重编号。
+- **隐藏字段在分支内构造，不是构造后删除**：进行中的模拟会话响应中不得出现
+  `is_correct`、`correct_answer`、解析、`accuracy`、`wrong_count`、`unanswered_count`、
+  `accuracy_basis`、`has_snapshot`。提前 return 路径只有 404/403，早于任何数据组装。
+- **`status` 只由保存的 `is_correct` 决定**，不得用布尔兜底把缺失当 `False`。
+- 内容优先取 `question_snapshot`；无快照的旧会话退回题库当前值并置 `has_snapshot=false`。
+- `C + E + U = T` 守恒：`wrong = answered - correct`，`unanswered = total - answered`。
+
+### 4. Validation & Error Matrix
+
+| 冻结条目形态 | `(status, status_unknown)` |
+|---|---|
+| dict 且 `is_correct` 为 bool | `(correct/wrong, false)` |
+| dict 但判定缺失/非 bool | `(unanswered, true)`，保留已保存选择 |
+| 显式 `null` | `(unanswered, false)` — 确实是未答 |
+| 键不存在 + 有作答记录 | 按 `bool(answer.is_correct)` 判 |
+| 键不存在 + 无作答 + 有快照 | `(unanswered, false)` |
+| 键不存在 + 无作答 + 无快照 | `(unanswered, true)` — 旧会话不可核实 |
+| `final_answers` 整列损坏（非 dict） | `(unanswered, true)`，不崩 |
+
+`status_unknown=true` 时前端**必须先看该位再看 `status`**——`(unanswered, true)` 的组合里
+`status` 只是占位，不代表「确实未答」。
+
+### 5. Good/Base/Bad Cases
+
+- Good: 模拟 10 题 7 对 3 错结束 → `accuracy=70.0`、`basis="total"`、`wrong_count=3`。
+- Base: 10 题答 2 题全对 → 普通 `100.0`/`answered`、模拟 `20.0`/`total`。
+- Bad: 用 `bool(frozen.get("is_correct"))` 判错——`None` 会变成 `False`，把「不可核实」显示成「答错」。
+- Bad: 完成态把 `answers` 单侧置空。既有结果页读它渲染详情列表，置空会让**所有用户**的列表消失。
+  这是跨层契约变更，必须与前端消费方同批改（见 `guides/cross-layer-thinking-guide.md`）。
+
+### 6. Tests Required
+
+- `backend/tests/test_quiz_review_api.py`：完成态释放与原场顺序、进行中六字段逐键隐藏、
+  两模式分母对照、零作答不抛异常、旧会话不重判、只读拒绝、`history` 同口径、
+  随机模式题号、冻结整列损坏不崩。
+- 回归门禁：未完成会话的 `resume_index` 与 `questions` 结构未变（答题页刷新恢复）。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+for a in answers:                       # 依赖查询顺序 → 题号错位
+    questions_out.append(...)
+
+if not is_exam:                         # 用 mode 而非完成态做释放依据
+    answer_data["is_correct"] = a.is_correct
+
+is_correct = bool(frozen.get("is_correct"))   # 缺失变 False，Issue #63 根因
+```
+
+#### Correct
+
+```python
+for index, question_id in enumerate(session_question_ids):
+    questions_out.append(_review_question_out(question_id=question_id, index=index + 1, ...))
+
+released = session.is_completed         # 完成态是唯一释放依据
+if released:
+    ...                                 # 复盘键只在分支内构造
+
+if isinstance(frozen.get("is_correct"), bool):
+    is_correct = frozen["is_correct"]
 ```
 
 ---
