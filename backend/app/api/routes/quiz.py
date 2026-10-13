@@ -18,7 +18,12 @@ from app.models.question_bank import QuestionBank
 from app.models.quiz import QuizSession, QuizAnswer
 from app.models.wrong import WrongAnswer, UserQuestionStat
 from app.models.user import User
-from app.schemas.quiz import QuizStartRequest, QuizAnswerRequest, QuizFinishRequest
+from app.schemas.quiz import (
+    QuizAnswerRequest,
+    QuizFinishRequest,
+    QuizRetryRequest,
+    QuizStartRequest,
+)
 from app.services.exam_service import get_bank_in_exam_or_404
 from app.services.explanation_service import input_fingerprint, summaries_for_questions
 from app.services.practice_service import (
@@ -127,6 +132,38 @@ def _load_options(question: Question) -> list | dict:
     if isinstance(options, str):
         return json.loads(options)
     return options
+
+
+def _question_payloads(
+    db: Session,
+    questions: list[Question],
+    exam_id: int,
+    *,
+    is_exam: bool,
+    counts: dict,
+) -> list[dict]:
+    """构造答题页题目 payload，供 /start、/retry 等入口共用。
+
+    模拟考试不返回解析、缓存指纹与题面辅助字段。
+    """
+    summaries = summaries_for_questions(db, questions, exam_id) if not is_exam else {}
+    payloads = []
+    for q in questions:
+        question_data = {
+            "id": q.id,
+            "question_type": q.question_type,
+            "content": q.content,
+            "content_zh": q.content_zh,
+            "options": _load_options(q),
+            "user_answer_count": counts.get(q.id, 0),
+        }
+        if not is_exam:
+            question_data["ai_explanations"] = summaries.get(q.id, [])
+            question_data["ai_input_fingerprint"] = input_fingerprint(q)
+            question_data["explanation"] = q.explanation
+            question_data["explanation_zh"] = q.explanation_zh
+        payloads.append(question_data)
+    return payloads
 
 
 def _ensure_session_in_exam(session: QuizSession, exam: Exam) -> None:
@@ -320,24 +357,7 @@ def start_quiz(
 
     question_ids = [q.id for q in questions]
     counts = _get_user_question_counts(user_id, question_ids, db)
-
-    questions_out = []
-    summaries = summaries_for_questions(db, questions, exam.id) if not is_exam else {}
-    for q in questions:
-        question_data = {
-            "id": q.id,
-            "question_type": q.question_type,
-            "content": q.content,
-            "content_zh": q.content_zh,
-            "options": _load_options(q),
-            "user_answer_count": counts.get(q.id, 0),
-        }
-        if not is_exam:
-            question_data["ai_explanations"] = summaries.get(q.id, [])
-            question_data["ai_input_fingerprint"] = input_fingerprint(q)
-            question_data["explanation"] = q.explanation
-            question_data["explanation_zh"] = q.explanation_zh
-        questions_out.append(question_data)
+    questions_out = _question_payloads(db, questions, exam.id, is_exam=is_exam, counts=counts)
 
     return {
         "session": {
@@ -346,6 +366,99 @@ def start_quiz(
             "mode": session.mode,
             "topic_short_name": topic.short_name_zh if topic else None,
             "total_questions": session.total_questions,
+        },
+        "questions": questions_out,
+    }
+
+
+@router.post("/retry")
+def retry_quiz(
+    data: QuizRetryRequest,
+    current_user: User = Depends(get_current_user),
+    exam: Exam = Depends(get_exam_context),
+    db: Session = Depends(get_db),
+):
+    """从已完成的原会话按原题原序另开一场练习。
+
+    复用全部原题 ID 与原顺序（含原场未答题），保留原模式与题数；「原题」指成员与顺序，
+    不是恢复题库旧版本，新会话使用这些原题**当前**内容并建立自己的快照。任一原题不可用
+    则整场失败，不创建部分会话。
+    """
+    user_id = current_user.id
+    session = db.get(QuizSession, data.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="答题会话不存在")
+    _ensure_session_in_exam(session, exam)
+    if session.user_id != user_id:
+        raise HTTPException(status_code=403, detail="无权限")
+    if not session.is_completed:
+        raise HTTPException(status_code=400, detail="答题会话尚未结束，不能重新开始")
+
+    try:
+        source_question_ids = json.loads(session.question_ids) if session.question_ids else []
+    except (TypeError, ValueError):
+        source_question_ids = []
+    if (
+        not isinstance(source_question_ids, list)
+        or not source_question_ids
+        # 列表里混入非整数时不能直接进 SQL，否则查询报错变成 500
+        or not all(isinstance(qid, int) and not isinstance(qid, bool) for qid in source_question_ids)
+    ):
+        # 旧会话列表缺失或损坏时拒绝，不通过查询题库猜原范围
+        raise HTTPException(status_code=400, detail="原会话缺少题目列表，无法重新开始")
+
+    counts = _get_user_question_counts(user_id, source_question_ids, db)
+    # 跨题库错题会话的题目分属不同题库，只限定考试项目，不能加 bank_id 过滤；
+    # 查询返回顺序不可依赖，按原 question_ids 重建
+    rows = (
+        db.query(Question)
+        .join(QuestionBank, Question.bank_id == QuestionBank.id)
+        .filter(Question.id.in_(source_question_ids), QuestionBank.exam_id == exam.id)
+        .all()
+    )
+    question_map = {q.id: q for q in rows}
+    missing = [qid for qid in source_question_ids if qid not in question_map]
+    if missing:
+        # 整场失败：先全部校验再创建，不跳过、不补抽，也不留下部分会话
+        listed = "、".join(str(qid) for qid in missing)
+        raise HTTPException(
+            status_code=400,
+            detail=f"部分原题已不可用，无法重新开始（题目 ID: {listed}）",
+        )
+    questions = [question_map[qid] for qid in source_question_ids]
+
+    # 保留仍有效的考点上下文。考点被删除时外键 ondelete="SET NULL"（models/quiz.py）
+    # 已把原会话的 topic_id 置空，这里读到的是 None，**无法**反推「原考点已删除」——
+    # 它与「练未分类题目」同形。所以不输出 topic_unavailable 这类标记：生产上恒为
+    # False 的假信号比没有信号更糟。原题集合与顺序不受影响，照常创建。
+    topic = db.get(ExamTopic, session.topic_id) if session.topic_id else None
+    if topic is not None and topic.exam_id != exam.id:
+        topic = None
+    mode = session.mode
+    is_exam = mode == "exam"
+
+    new_session = QuizSession(
+        user_id=user_id,
+        bank_id=session.bank_id,  # 跨题库错题会话沿用原值，这里只是首个题库
+        mode=mode,
+        topic_id=topic.id if topic else None,
+        total_questions=len(questions),
+        question_ids=json.dumps(source_question_ids),
+        question_snapshot=snapshot_entries(questions),
+    )
+    db.add(new_session)
+    db.commit()
+    db.refresh(new_session)
+
+    questions_out = _question_payloads(db, questions, exam.id, is_exam=is_exam, counts=counts)
+
+    return {
+        "session": {
+            "id": new_session.id,
+            "bank_id": new_session.bank_id,
+            "mode": new_session.mode,
+            "topic_short_name": topic.short_name_zh if topic else None,
+            "total_questions": new_session.total_questions,
         },
         "questions": questions_out,
     }
