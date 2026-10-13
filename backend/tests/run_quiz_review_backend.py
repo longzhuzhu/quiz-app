@@ -1,7 +1,8 @@
 """复盘页浏览器闭环专用后端：真实应用、真实认证、真实 worker 与临时 PostgreSQL。
 
 只替换外部 AI 边界（上游 HTTP），翻译与解析仍经过真实路由、任务队列和数据库事务。
-固定数据：考试项目 current（另有 other 用于跨项目边界）、题库 1 共 10 道单选，正确答案 A。
+固定数据：考试项目 current（另有 other 用于跨项目边界）、主库 10 道单选（正确答案 A）、
+1 道长英文题干单选、1 道多选（正确答案 A,C），以及第二题库 1 道单选（供跨题库场景）。
 """
 
 import argparse
@@ -83,6 +84,24 @@ def main():
                 bank_id=bank.id, question_type="single", content=LONG_STEM,
                 options=[{"key": key, "text": f"Long option {key} " * 12} for key in "ABCD"],
                 correct_answer="A", order_index=QUESTION_COUNT + 1,
+            ))
+            # 第二个题库：跨题库错题练习的成员分属两个题库，重开必须逐题复用而非只取首个。
+            # 多选题也放这里，不混进主库——主库被既有 E2E 按「答 A 即正确」的假设抽题，
+            # 混入正确答案为 A,C 的题会让那些断言随抽题结果漂移。
+            second_bank = QuestionBank(exam_id=current.id, name="Second Bank", question_count=2)
+            db.add(second_bank)
+            db.flush()
+            db.add(Question(
+                bank_id=second_bank.id, question_type="single",
+                content="Cross-bank question from the second bank",
+                options=[{"key": key, "text": f"Second bank option {key}"} for key in "ABCD"],
+                correct_answer="B", order_index=1,
+            ))
+            db.add(Question(
+                bank_id=second_bank.id, question_type="multiple",
+                content="Which TWO controls are required? (choose two)",
+                options=[{"key": key, "text": f"Multi option {key}"} for key in "ABCD"],
+                correct_answer="A,C", order_index=2,
             ))
             bank.question_count = QUESTION_COUNT + 1
             set_key(db, "ai_api_base_url", "https://8.8.8.8")
