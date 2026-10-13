@@ -518,3 +518,48 @@ router.beforeEach((to, from, next) => {
 ```
 
 真实示例：`frontend/src/router/index.js` 行4-20
+
+---
+
+## 测试断言：验证「没有发生某事」必须带阳性对照
+
+断言「点击选项不发起请求」「不写 localStorage」这类**否定命题**时，断言自身极易恒真——一旦观测通道失效，
+「没观察到」和「确实没发生」无法区分，测试永远是绿的。
+
+### 陷阱：替换 `window.fetch` 抓不到 axios 的请求
+
+axios 浏览器的默认适配器顺序是 `['xhr', 'http', 'fetch']`（`axios/lib/defaults/index.js`），
+**XHR 优先**。只对 `window.fetch` 打桩，应用请求全部走 XHR 而绕过桩：
+
+```javascript
+// Wrong：axios 走 XHR，这个桩从未被调用，「无请求」断言恒真
+await browser('eval', `window.fetch = () => { calls.push(1); return Promise.resolve() }`)
+// ...点击...
+assert.equal(calls.length, 0)   // 永远通过，防线是空的
+```
+
+```javascript
+// Correct：用 CDP 层网络记录覆盖所有传输方式
+await browser('network', 'requests', '--clear')
+// 阳性对照：先发一次真实请求，证明通道确实抓得到流量
+await browser('eval', `(async () => { await fetch('/api/quiz/history').then(() => true, () => true); return true })()`)
+let controlCaptured = false
+for (let attempt = 0; attempt < 20 && !controlCaptured; attempt++) {
+  const logged = JSON.parse(await browser('network', 'requests', '--json')).data.requests
+  controlCaptured = logged.some(r => String(r.url || '').includes('/api/quiz/history'))
+  if (!controlCaptured) await new Promise(resolve => setTimeout(resolve, 50))
+}
+assert.ok(controlCaptured, '网络记录通道必须能抓到请求，否则「无请求」断言恒真')
+```
+
+参考 `frontend/tests/quizReviewE2E.test.js` 的「只读回归防线」一节。
+
+### 约定
+
+- 否定命题断言必须配**阳性对照**：先用同一通道观测一件确定会发生的事，证明通道有效，再断言目标事件未发生。
+- 验证断言有效性的唯一办法是**反向金丝雀**：故意注入违规行为，确认测试**确实失败**。通过了但没试过失败路径的断言，不能算防线。
+- 断言前先 `--clear`，避免把上一段操作留下的请求计入。
+- 比对 DOM 状态时，**不要把异步渲染的内容算进差异**（如 AI 解析卡片）。用 `data-testid` 精确圈定要比较的元素，
+  而不是整卡 `outerHTML` 全等——后者会因渲染时序产生间歇性失败。
+
+---
