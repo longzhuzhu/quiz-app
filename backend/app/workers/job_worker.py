@@ -15,7 +15,7 @@ from app.services.job_handlers import run_job
 
 DEFAULT_WORKER_ID = "job-worker"
 DEFAULT_POLL_INTERVAL = 2.0
-DEFAULT_CONCURRENCY = 2
+DEFAULT_CONCURRENCY = 10
 
 
 def process_one_job(worker_id: str = DEFAULT_WORKER_ID) -> bool:

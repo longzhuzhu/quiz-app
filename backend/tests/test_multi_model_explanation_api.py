@@ -272,7 +272,8 @@ def test_correct_answer_keeps_models_and_model_reconfiguration_does_not_recomput
     assert after['judged_answer'] == 'D'
     assert after['generation_id'] == before['generation_id']
     assert after['is_conflict'] is True
-    assert c.get('/api/ai/explanations', params={"question_id": qid}).json()['has_legacy_explanation'] is False
+    with api.sessions() as db:
+        assert db.get(Question, qid).explanation_zh is None
     c.put('/api/settings/ai', json={"ai_explain_models": [{"model_id": "new"}, {"model_id": "model-a", "reasoning_effort": None}]})
     summary = c.get('/api/ai/explanations', params={"question_id": qid}).json()['models']
     assert [m['model_id'] for m in summary] == ['new', 'model-a']

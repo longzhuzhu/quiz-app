@@ -13,7 +13,6 @@ export function useQuestionExplanations(question, autoReveal) {
   const stale = ref(false)
   let inputStamp = null
   let correctAnswer = null
-  const legacyAvailable = ref(false)
   let epoch = 0, sequence = 0, timer = null, disposed = false
   const current = generation => !disposed && generation === epoch
   const busy = computed(() => dispatching.value || reading.value || models.value.some(isGenerating))
@@ -78,7 +77,6 @@ export function useQuestionExplanations(question, autoReveal) {
       inputStamp = data.input_fingerprint
       correctAnswer = data.correct_answer
       models.value = data.models
-      legacyAvailable.value = data.has_legacy_explanation
       for (const id of bodies.keys()) {
         if (!data.models.some(m => m.model_id === id && m.result)) bodies.delete(id)
       }
@@ -170,7 +168,6 @@ export function useQuestionExplanations(question, autoReveal) {
     stale.value = false
     inputStamp = question()?.ai_input_fingerprint || null
     correctAnswer = question()?.correct_answer || null
-    legacyAvailable.value = !!(question()?.explanation_zh || question()?.explanation)
     if (opened.value) refresh(epoch)
   }, { immediate: true })
 
@@ -179,5 +176,5 @@ export function useQuestionExplanations(question, autoReveal) {
   })
 
   onBeforeUnmount(() => { disposed = true; epoch += 1; stopPolling() })
-  return { models, bodies, opened, busy, dispatching, reading, updatingModelId, error, stale, legacyAvailable, act, updateModel, refresh }
+  return { models, bodies, opened, busy, dispatching, reading, updatingModelId, error, stale, act, updateModel, refresh }
 }

@@ -610,14 +610,21 @@ def build_explanation_user_message(question: Question) -> str:
     return f"题型：{getattr(question, 'question_type', 'single')}\n题目：{question.content}\n\n选项：\n{options_text}"
 
 
-def generate_structured_explanation(question, *, persona: str, ai_config: dict, reasoning_effort: str | None) -> dict:
-    """不可变题目输入生成结构化解析，不访问或写入数据库。"""
+def generate_structured_explanation(
+    question, *, persona: str, ai_config: dict, reasoning_effort: str | None, timeout: float,
+) -> dict:
+    """不可变题目输入生成结构化解析，不访问或写入数据库。
+
+    ``timeout`` 是单次模型调用的超时秒数，两次调用（含输出格式纠正重试）共用。
+    """
     messages = [
         {"role": "system", "content": build_explanation_system_prompt(persona)},
         {"role": "user", "content": build_explanation_user_message(question)},
     ]
     for attempt in range(2):
-        text = call_ai_api(messages, None, scene="explain", ai_config=ai_config, reasoning_effort=reasoning_effort)
+        text = call_ai_api(
+            messages, None, scene="explain", timeout=timeout, ai_config=ai_config, reasoning_effort=reasoning_effort,
+        )
         result, errors = _parse_explanation_payload(strip_code_fence(text), question)
         if not errors:
             result["judged_answer"] = format_answer_keys(resolve_answer_keys(result["judged_answer"], _option_keys(question))[0])

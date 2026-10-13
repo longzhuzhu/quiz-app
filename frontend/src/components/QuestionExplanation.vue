@@ -1,6 +1,6 @@
 <template>
   <section ref="root" class="mt-4 min-w-0" aria-label="AI 解析">
-    <ExplainButton :displayed="opened && (models.some(m => m.result) || legacyAvailable)" :loading="busy" :disabled="stale" @explain="act" />
+    <ExplainButton :displayed="opened && models.some(m => m.result)" :loading="busy" :disabled="stale" @explain="act" />
     <ExplanationSummary v-if="showSummary && opened && !stale" :models="models" @select="selectModel" />
     <p v-if="error" role="alert" class="mt-2 text-sm text-rose-700 dark:text-rose-300">
       {{ error }}
@@ -45,10 +45,6 @@
           <p v-else-if="model.result" class="mt-3 text-gray-500">正在加载正文…</p>
         </article>
       </div>
-      <details v-if="legacyAvailable && (question.explanation_zh || question.explanation)" class="mt-4 rounded-lg border border-gray-200 p-3 text-sm dark:border-slate-700">
-        <summary class="cursor-pointer text-gray-600 dark:text-gray-400">历史解析（模型来源未知）</summary>
-        <p class="mt-2 whitespace-pre-wrap text-gray-700 dark:text-gray-300">{{ question.explanation_zh || question.explanation }}</p>
-      </details>
     </template>
   </section>
 </template>
@@ -66,7 +62,7 @@ const props = defineProps({
   showSummary: { type: Boolean, default: true },
 })
 const emit = defineEmits(['summary'])
-const { models, bodies, opened, busy, dispatching, reading, updatingModelId, error, stale, legacyAvailable, act, updateModel, refresh } =
+const { models, bodies, opened, busy, dispatching, reading, updatingModelId, error, stale, act, updateModel, refresh } =
   useQuestionExplanations(() => props.question, () => props.autoReveal)
 const activeModel = ref('')
 const positions = new Map()

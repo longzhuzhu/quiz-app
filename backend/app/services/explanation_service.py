@@ -11,6 +11,7 @@ import httpx
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, defer
 
+from app.core.config import settings
 from app.models.background_job import BackgroundJob
 from app.models.question import Question
 from app.models.question_explanation import QuestionExplanation
@@ -109,7 +110,6 @@ def read_explanations(db: Session, question: Question, exam_id: int) -> dict:
         "correct_answer": question.correct_answer,
         "input_fingerprint": input_fingerprint(question),
         "models": summaries_for_questions(db, [question], exam_id)[question.id],
-        "has_legacy_explanation": bool(question.explanation_zh or question.explanation),
     }
 
 
@@ -187,6 +187,7 @@ def execute_explanation(db: Session, job: BackgroundJob) -> str:
         db.commit()
         analysis = generate_structured_explanation(
             snapshot, persona=persona, ai_config=config, reasoning_effort=payload["reasoning_effort"],
+            timeout=settings.AI_EXPLANATION_TIMEOUT_SECONDS,
         )
         question = db.query(Question).filter_by(id=payload["question_id"]).with_for_update().populate_existing().first()
         current = db.query(BackgroundJob).filter_by(id=job_id).with_for_update().populate_existing().first()
