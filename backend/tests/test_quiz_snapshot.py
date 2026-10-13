@@ -276,6 +276,58 @@ def test_deleted_question_keeps_frozen_verdict_readable(quiz_api):
     assert session.final_answers[str(first)] == {"user_answer": "B", "is_correct": False}
 
 
+def test_clear_history_removes_snapshots_for_that_exam_only(quiz_api):
+    """清空历史删除对应会话与快照；其他考试项目的快照不受影响（ADR-0008）。
+
+    快照是会话级 JSONB 列，删会话即随之删除。这里断言它确实被删——列存在但指向
+    已删会话的快照若残留，会让「已清空」与「仍可复盘」并存。
+    """
+    session_id = _start(quiz_api, mode="sequential").json()["session"]["id"]
+    first = quiz_api.ids.questions[0]
+    assert _answer(quiz_api, session_id, first, "B").status_code == 200
+    _finish_and_read(quiz_api, session_id)
+    assert _load_session(quiz_api, session_id).question_snapshot
+
+    # 另一个考试项目里也有一场已完成会话，清空本项目不应触及它
+    other_exam = Exam(owner_id=quiz_api.ids.user, slug="other", name="Other", short_name="Other")
+    with quiz_api.sessions() as db:
+        db.add(other_exam)
+        db.flush()
+        other_bank = QuestionBank(exam_id=other_exam.id, name="Other Bank")
+        db.add(other_bank)
+        db.flush()
+        other_question = Question(
+            bank_id=other_bank.id, question_type="single", content="Other Q",
+            options=[{"key": "A", "text": "甲"}, {"key": "B", "text": "乙"}],
+            correct_answer="A", order_index=0,
+        )
+        db.add(other_question)
+        db.flush()
+        other_session = QuizSession(
+            user_id=quiz_api.ids.user, bank_id=other_bank.id, mode="sequential",
+            total_questions=1, question_ids=json.dumps([other_question.id]),
+            question_snapshot=[{
+                "question_id": other_question.id, "question_type": "single",
+                "content": "Other Q",
+                "options": [{"key": "A", "text": "甲"}, {"key": "B", "text": "乙"}],
+                "correct_answer": "A",
+            }],
+            final_answers={str(other_question.id): None}, is_completed=True,
+        )
+        db.add(other_session)
+        db.commit()
+        other_session_id = other_session.id
+
+    assert quiz_api.client.delete("/api/quiz/history").status_code == 200
+
+    with quiz_api.sessions() as db:
+        assert db.get(QuizSession, session_id) is None, "本项目的会话应被删除"
+        survivor = db.get(QuizSession, other_session_id)
+        assert survivor is not None, "其他考试项目的会话不得被删除"
+        assert survivor.question_snapshot, "其他项目的快照必须原样保留"
+        assert survivor.final_answers is not None
+
+
 def test_repeated_finish_keeps_frozen_answers(quiz_api):
     """重复结束（双击或重试）不得重算冻结：删题后重算会把判定改写成未答。"""
     session_id = _start(quiz_api, mode="sequential").json()["session"]["id"]
