@@ -16,6 +16,7 @@ from app.services.answer_keys import (
     resolve_answer_keys,
 )
 from app.services.practice_service import record_accuracy_snapshot
+from app.services.quiz_snapshot_service import sync_snapshot_correct_answer
 
 
 def validate_correct_answer_keys(correct_answer: str, question: Question) -> str:
@@ -85,6 +86,9 @@ def update_question_correct_answer(
     """
     formatted = validate_correct_answer_keys(correct_answer, question)
     session = _session_in_exam_or_404(db, session_id, exam) if session_id is not None else None
+    if session is not None and session.is_completed:
+        # 已完成会话的复盘按本场快照与冻结判定展示，不改判、不改快照
+        raise ValueError("已完成答题会话不支持更正答案")
 
     if answers_equivalent(question.correct_answer, formatted):
         return {
@@ -99,6 +103,8 @@ def update_question_correct_answer(
 
     is_correct: bool | None = None
     if session is not None:
+        # 当前会话快照同步新答案；其他会话的快照按原样冻结，不回填
+        sync_snapshot_correct_answer(session, question.id, formatted)
         existing = (
             db.query(QuizAnswer)
             .filter_by(session_id=session.id, question_id=question.id)
