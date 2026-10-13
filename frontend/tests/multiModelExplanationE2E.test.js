@@ -28,6 +28,20 @@ test('多模型解析：真实登录、预热、独立答案、移动Tab、更�
     conflict: document.querySelector('[data-model-id="model-b"]').textContent.includes('与题库答案不同')
   })`))
   assert.deepEqual(desktop, { count: 5, columns: 2, overflow: false, failed: true, conflict: true })
+  await browser('wait', '--fn', 'Boolean(document.querySelector("[data-reader=model-b]"))')
+  const cardColors = async () => JSON.parse(await browser('eval', `Array.from(document.querySelectorAll('[data-model-id]')).map(card => ({
+    model: card.dataset.modelId, background: getComputedStyle(card).backgroundColor, border: getComputedStyle(card).borderTopColor,
+  }))`))
+  const lightColors = await cardColors()
+  assert.equal(new Set(lightColors.map(card => card.background)).size, 5, '每个模型的卡片底色应不同')
+  assert.equal(new Set(lightColors.map(card => card.border)).size, 5, '每个模型的卡片边框应不同')
+  assert.equal(JSON.parse(await browser('eval', `getComputedStyle(document.querySelector('[data-reader="model-b"]')).overflowY`)), 'auto', '桌面保留正文内部滚动')
+  await browser('eval', 'document.documentElement.classList.add("dark"); true')
+  const darkColors = await cardColors()
+  assert.equal(new Set(darkColors.map(card => card.background)).size, 5, '深色模式也应区分各模型')
+  assert.equal(new Set(darkColors.map(card => card.border)).size, 5)
+  assert.ok(darkColors.every((card, i) => card.background !== lightColors[i].background), '卡片应适配深色模式')
+  await browser('eval', 'document.documentElement.classList.remove("dark"); true')
   const state = async () => JSON.parse(await browser('eval', '(async()=>await(await fetch("/api/__test/ai-state")).json())()'))
   assert.ok((await state()).peak <= 3)
   await browser('wait', '--fn', '(async()=>{const s=await(await fetch("/api/__test/ai-state")).json();return s.calls.length===10 && s.active===0})()')
@@ -67,9 +81,34 @@ test('多模型解析：真实登录、预热、独立答案、移动Tab、更�
   await browser('wait', '--fn', 'document.querySelector("[data-model-id]")?.dataset.modelId === "model-b"')
   assert.equal(JSON.parse(await browser('eval', 'document.querySelectorAll("[data-model-id]").length')), 1)
   assert.equal(JSON.parse(await browser('eval', 'document.documentElement.scrollWidth > innerWidth')), false)
+  const mobileReader = JSON.parse(await browser('eval', `(() => {
+    const reader = document.querySelector('[data-reader="model-b"]');
+    const style = getComputedStyle(reader);
+    return { maxHeight: style.maxHeight, overflowY: style.overflowY, nestedScroll: reader.scrollHeight > reader.clientHeight + 1 };
+  })()`))
+  assert.deepEqual(mobileReader, { maxHeight: 'none', overflowY: 'visible', nestedScroll: false })
+  const selectedColors = async () => JSON.parse(await browser('eval', `(() => {
+    const card = document.querySelector('[data-model-id]');
+    const tab = document.querySelector('[role=tab][aria-selected=true]');
+    return { model: card.dataset.modelId, card: getComputedStyle(card).backgroundColor, tab: getComputedStyle(tab).backgroundColor };
+  })()`))
+  assert.deepEqual(await selectedColors(), { model: 'model-b', card: lightColors[1].background, tab: lightColors[1].background })
+  await browser('eval', 'document.documentElement.classList.add("dark"); true')
+  assert.deepEqual(await selectedColors(), { model: 'model-b', card: darkColors[1].background, tab: darkColors[1].background })
+  await browser('eval', 'document.documentElement.classList.remove("dark"); true')
+  await browser('eval', `document.querySelector('[data-reader="model-b"]').scrollIntoView({block:'start'}); true`)
+  const pageScroll = JSON.parse(await browser('eval', 'window.scrollY'))
+  await browser('scroll', 'down', '300')
+  assert.ok(JSON.parse(await browser('eval', 'window.scrollY')) > pageScroll, '移动端长正文应随页面滚动')
+  await browser('find', 'role', 'tab', 'click', '--name', 'model-b', '--exact')
   await browser('press', 'ArrowRight')
   await browser('wait', '--fn', 'document.querySelector("[data-model-id]")?.dataset.modelId === "model-c"')
+  assert.deepEqual(await selectedColors(), { model: 'model-c', card: lightColors[2].background, tab: lightColors[2].background })
   assert.equal((await state()).calls.length, initialCalls)
+  assert.deepEqual(JSON.parse(await browser('eval', `(() => {
+    const reader = document.querySelector('[data-reader="model-c"]');
+    return { overflowY: getComputedStyle(reader).overflowY, nestedScroll: reader.scrollHeight > reader.clientHeight + 1 };
+  })()`)), { overflowY: 'visible', nestedScroll: false })
   await browser('scroll', 'up', '10000')
   await browser('click', 'label:has(input[type=radio]):first-of-type')
   await browser('find', 'role', 'button', 'click', '--name', '提交答案', '--exact')
