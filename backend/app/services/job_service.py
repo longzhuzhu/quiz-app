@@ -30,6 +30,10 @@ ACTIVE_STATUSES = {"queued", "running"}
 DEFAULT_JOB_LEASE_SECONDS = 180
 DEFAULT_REQUEUE_DELAY_SECONDS = 15
 EXPLANATION_SLOT_NAMESPACE = 540066
+# 解析任务执行期间不续约，租约须覆盖「单次调用超时 × 2（含格式纠正重试）」的最坏耗时：
+# 默认 120s × 2 = 240s，取 360s 留余量。否则租约先过期，recover_stale_jobs 会把
+# 仍在进行的解析判为「执行已中断」。
+EXPLANATION_JOB_LEASE_SECONDS = 360
 
 
 def _acquire_explanation_slot(db: Session):
@@ -341,14 +345,18 @@ def try_claim_job_by_id(
 ) -> BackgroundJob | None:
     now = now or utc_now()
     candidate = db.get(BackgroundJob, job_id)
+    is_explanation = candidate is not None and candidate.job_type == JOB_TYPE_AI_EXPLANATION
     reservation = None
-    if candidate is not None and candidate.job_type == JOB_TYPE_AI_EXPLANATION:
+    if is_explanation:
         reservation = _acquire_explanation_slot(db)
         if reservation is None:
             db.rollback()
             return None
     if reservation is not None:
         setattr(candidate, "_explanation_slot", reservation)
+    if is_explanation:
+        # 解析任务执行期间不续约，租约须覆盖两次模型调用的最坏耗时。
+        lease_seconds = max(lease_seconds, EXPLANATION_JOB_LEASE_SECONDS)
     try:
         lease_until = now + timedelta(seconds=lease_seconds)
         result = db.execute(
@@ -367,7 +375,8 @@ def try_claim_job_by_id(
                 lease_until=lease_until,
                 next_run_at=None,
                 status_message=f"worker {worker_id} 已接手任务",
-            )
+            ),
+            execution_options={"synchronize_session": False},
         )
         if result.rowcount != 1:
             db.rollback()

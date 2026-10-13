@@ -285,3 +285,52 @@ def _compile_jsonb_for_sqlite(type_, compiler, **kw):
 - **不适用于** Alembic 迁移文件（迁移必须在真实 PG 上跑 `upgrade head`）
 
 不要把这段写到生产代码或 `app/models/*.py`；写到具体测试文件顶部即可。
+
+---
+
+## ORM UPDATE 的时间比较：必须禁用 Python 端求值同步
+
+无时区列（`DateTime`，PG 中为 `timestamp without time zone`）参与 WHERE 条件时，如果条件值来自 `datetime.now(timezone.utc)`（aware），ORM 的 `update()` 默认走 `evaluate` 同步策略，会在 session 中已有该表对象时对条件做 **Python 端求值**，把数据库读回的 naive 值与 aware 值相比：
+
+```
+TypeError: can't compare offset-naive and offset-aware datetimes
+```
+
+### 触发条件
+
+同时满足三条才触发：
+
+1. 该行对象已加载进当前 session（`db.get(...)` 之后紧接 `update()` 就会）
+2. WHERE 条件包含时间列与 aware datetime 的比较
+3. 时间列在该行有**非 NULL 值**（`IS NULL` 会短路求值，掩盖问题）
+
+第 3 条最容易骗过测试：新插入的行往往是 `NULL`，一旦有值（如重试任务写入 `next_run_at`）就开始崩。`background_jobs.next_run_at` 曾因此让 worker 反复崩溃重启。
+
+### 处理
+
+对这类 UPDATE 显式关闭会话同步；后续需要最新状态就重新查一次：
+
+```python
+# backend/app/services/job_service.py（try_claim_job_by_id）
+result = db.execute(
+    update(BackgroundJob).where(
+        BackgroundJob.id == job_id,
+        BackgroundJob.status == "queued",
+        or_(BackgroundJob.next_run_at.is_(None), BackgroundJob.next_run_at <= now),
+    ).values(...),
+    execution_options={"synchronize_session": False},
+)
+...
+db.commit()
+claimed = db.get(BackgroundJob, job_id)  # 重新读取，不依赖同步
+```
+
+`connection.exec_driver_sql()` 与 `update(...).execution_options()` 都**不是**正确写法：前者绕过 ORM，后者不是 `Update` 构造的合法参数。
+
+### 纯 SELECT 不受影响
+
+只读 `select()` 不做 Python 端求值，比较在数据库端完成，aware 值由驱动转换处理，无需改动。
+
+### 测试要求
+
+naive/aware 比较是**驱动层行为**，SQLite 会掩盖（SQLite 无时区概念）。该缺陷的回归测试必须连真实 PostgreSQL，参考 `backend/tests/test_job_claim_datetime_compare.py`。
