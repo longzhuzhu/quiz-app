@@ -4,6 +4,7 @@ import os
 from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 
 
 class Settings(BaseSettings):
@@ -41,6 +42,9 @@ class Settings(BaseSettings):
     # Worker 配置
     WORKER_LEASE_SECONDS: int = 600
     WORKER_POLL_INTERVAL_SECONDS: int = 3
+    AI_EXPLANATION_CONCURRENCY: int = Field(default=10, ge=1, le=64)
+    # 解析单次模型调用超时；输出格式不合格时会再调用一次，最坏耗时为此值的两倍。
+    AI_EXPLANATION_TIMEOUT_SECONDS: float = Field(default=120.0, gt=0)
 
     # 加密密钥（用于 SystemSetting 加密）
     SECRET_KEY: str = "dev-secret-key-change-in-production"

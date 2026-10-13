@@ -123,6 +123,8 @@ def call_ai_api(
     scene: str = "default",
     timeout: float = 60.0,
     reasoning_effort=_REASONING_EFFORT_UNSET,
+    *,
+    ai_config: dict | None = None,
 ):
     """调用 AI Chat Completion API（OpenAI 兼容协议）。
 
@@ -147,7 +149,7 @@ def call_ai_api(
             ``except httpx.TimeoutException`` 精准捕获并按需重试。
         httpx.HTTPError: 其它 httpx 层错误（连接拒绝、SSL 等）。
     """
-    ai = get_effective_ai_settings(db, scene=scene)
+    ai = ai_config if ai_config is not None else get_effective_ai_settings(db, scene=scene)
     if not ai["api_key"]:
         raise ValueError("AI API Key 未配置，请在管理后台设置")
 
@@ -479,6 +481,8 @@ def _judged_answer_keys(result: dict, option_keys: list[str]) -> tuple[set[str],
     raw = result.get("judged_answer")
     if raw is None or (isinstance(raw, str) and not raw.strip()):
         return set(), ["judged_answer 不能为空"]
+    if not isinstance(raw, str):
+        return set(), ["judged_answer 必须为字符串"]
     resolved, unknown = resolve_answer_keys(raw, option_keys)
     errors: list[str] = []
     if unknown:
@@ -533,6 +537,8 @@ def validate_structured_explanation(result: dict, question: Question) -> list[st
     option_keys = _option_keys(question)
     judged_keys, judged_errors = _judged_answer_keys(result, option_keys)
     errors.extend(judged_errors)
+    if getattr(question, "question_type", None) in ("single", "truefalse") and len(judged_keys) != 1:
+        errors.append("单选题和判断题的 judged_answer 必须恰好有一个选项")
 
     distractors = result.get("distractors")
     if not isinstance(distractors, list):
@@ -601,7 +607,31 @@ def build_explanation_user_message(question: Question) -> str:
     """User 消息只含题干和选项，禁止写入库内正确答案。"""
     options = _load_options(question)
     options_text = "\n".join([f"{o['key']}. {o['text']}" for o in options])
-    return f"题目：{question.content}\n\n选项：\n{options_text}"
+    return f"题型：{getattr(question, 'question_type', 'single')}\n题目：{question.content}\n\n选项：\n{options_text}"
+
+
+def generate_structured_explanation(
+    question, *, persona: str, ai_config: dict, reasoning_effort: str | None, timeout: float,
+) -> dict:
+    """不可变题目输入生成结构化解析，不访问或写入数据库。
+
+    ``timeout`` 是单次模型调用的超时秒数，两次调用（含输出格式纠正重试）共用。
+    """
+    messages = [
+        {"role": "system", "content": build_explanation_system_prompt(persona)},
+        {"role": "user", "content": build_explanation_user_message(question)},
+    ]
+    for attempt in range(2):
+        text = call_ai_api(
+            messages, None, scene="explain", timeout=timeout, ai_config=ai_config, reasoning_effort=reasoning_effort,
+        )
+        result, errors = _parse_explanation_payload(strip_code_fence(text), question)
+        if not errors:
+            result["judged_answer"] = format_answer_keys(resolve_answer_keys(result["judged_answer"], _option_keys(question))[0])
+            return result
+        if attempt == 0:
+            messages = [*messages, {"role": "user", "content": _format_correction_message(errors)}]
+    raise ValueError("模型返回的解析不符合题型或输出格式")
 
 
 def explain_question(db, question: Question, *, force: bool = False) -> dict:

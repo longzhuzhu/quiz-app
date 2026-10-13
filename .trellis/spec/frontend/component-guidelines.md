@@ -122,7 +122,7 @@ async function handleClick() {
 - `frontend/src/components/ExplainButton.vue` 行14-79
 - `frontend/src/components/AddVocabButton.vue` 行40-90
 
-`ExplainButton` 额外约定：未显示时文案“AI 解析”、可短路由中文缓存；已显示时文案“更新解析”，请求必须带 `force: true`。禁用只看 `loading`。FastAPI 错误读 `e.response?.data?.detail`。更新失败固定提示“更新失败，已保留原解析”。
+`ExplainButton` 额外约定：未显示时文案“AI 解析”、可短路由中文缓存；已显示时文案“更新全部解析”，请求必须带 `force: true`。禁用看 `loading || disabled`（`disabled` 由父组件按解析是否已失效传入）。FastAPI 错误读 `e.response?.data?.detail`。更新失败固定提示“更新失败，已保留原解析”。多模型解析下，每张模型卡片标题行右侧另有单模型更新图标，更新中旋转、结束恢复静态。
 
 `QuestionCard` 答题面约定：复制是页眉「已答 n 次」旁的图标按钮（`aria-label="复制题目"`），不在翻译/解析按钮行；模拟考试也保留。`sessionId` 传给卡片。「更正答案」只出现在 `answered && !examMode` 的对错反馈里；更正态点选项只改待写入的正确答案，不得清掉对错反馈。写入走 `PUT /questions/{id}/correct-answer`，body 带 `correct_answer`、`session_id`、`local_date`（`formatLocalDate()`）。用 `correctionGeneration` 丢弃切题后的过期响应。确认框复用 `ConfirmDialog`。
 

@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import ipaddress
+import json
 import socket
 from urllib.parse import urlparse
 
@@ -11,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.system_setting import SystemSetting
+from app.schemas.settings import ExplanationModelSettings
 
 AI_API_KEY_SETTING = "ai_api_key"
 ENCRYPTED_VALUE_PREFIX = "enc:"
@@ -19,6 +21,18 @@ SCENE_MODEL_SETTING_KEYS = {
     "explain": "ai_explain_model",
 }
 QUIZ_AI_PREWARM_ENABLED_SETTING = "quiz_ai_prewarm_enabled"
+EXPLANATION_MODELS_SETTING = "ai_explain_models"
+
+
+def get_explanation_models(db: Session) -> list[ExplanationModelSettings]:
+    stored = get_key(db, EXPLANATION_MODELS_SETTING)
+    if stored:
+        from app.schemas.settings import AISettingsUpdateRequest
+        models = AISettingsUpdateRequest(ai_explain_models=json.loads(stored)).ai_explain_models
+        assert models is not None
+        return models
+    model = get_key(db, "ai_explain_model").strip() or get_key(db, "ai_model").strip() or settings.AI_MODEL.strip() or "gpt-4o-mini"
+    return [ExplanationModelSettings(model_id=model)]
 
 
 def parse_bool_setting(value: str | None, default: bool = False) -> bool:

@@ -14,6 +14,10 @@ class BackgroundJob(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     job_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    subject_question_id: Mapped[int | None] = mapped_column(
+        ForeignKey("questions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     scope_key: Mapped[str] = mapped_column(String(255), nullable=False)
     active_scope_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     payload_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")

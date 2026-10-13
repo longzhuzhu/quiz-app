@@ -58,12 +58,38 @@
             class="mt-1 w-full rounded-card border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-gray-900 dark:text-white focus:border-primary-500 focus:ring-1 focus:ring-primary-500 focus:outline-none" />
           <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">用于题目翻译、词汇翻译等场景；留空时默认使用“默认模型”</p>
         </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">AI 解析模型</label>
-          <input v-model="form.ai_explain_model" type="text" placeholder="gpt-5.4"
-            class="mt-1 w-full rounded-card border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-gray-900 dark:text-white focus:border-primary-500 focus:ring-1 focus:ring-primary-500 focus:outline-none" />
-          <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">用于题目 AI 解析场景；留空时默认使用“默认模型”</p>
-        </div>
+        <section aria-label="AI 解析模型配置">
+          <div class="flex items-center justify-between gap-2">
+            <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">AI 解析模型</h3>
+            <button type="button" :disabled="form.ai_explain_models.length >= 5" @click="addModel"
+              class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 disabled:opacity-40 dark:border-slate-600 dark:text-gray-300">添加模型</button>
+          </div>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">配置 1～5 个不重复模型，共用上方接入地址和密钥；展示顺序与列表一致。</p>
+          <div v-for="(model, index) in form.ai_explain_models" :key="index" :data-model-row="index"
+            class="mt-3 rounded-lg border border-gray-200 p-3 dark:border-slate-600">
+            <label :for="'explain-model-' + index" class="text-sm text-gray-700 dark:text-gray-300">模型 {{ index + 1 }} ID</label>
+            <input :id="'explain-model-' + index" v-model="model.model_id" type="text" maxlength="255" placeholder="填写网关支持的模型 ID"
+              class="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-gray-900 dark:border-slate-600 dark:bg-slate-700 dark:text-white" />
+            <div class="mt-2 flex gap-3 text-sm">
+              <button type="button" :disabled="index === 0" :aria-label="'上移模型 ' + (index + 1)" @click="moveModel(index, -1)" class="text-primary-700 disabled:opacity-40 dark:text-primary-300">上移</button>
+              <button type="button" :disabled="index === form.ai_explain_models.length - 1" :aria-label="'下移模型 ' + (index + 1)" @click="moveModel(index, 1)" class="text-primary-700 disabled:opacity-40 dark:text-primary-300">下移</button>
+              <button type="button" :disabled="form.ai_explain_models.length <= 1" :aria-label="'移除模型 ' + (index + 1)" @click="form.ai_explain_models.splice(index, 1)" class="text-rose-700 disabled:opacity-40 dark:text-rose-300">移除</button>
+            </div>
+            <details class="mt-3 text-sm text-gray-600 dark:text-gray-400">
+              <summary class="cursor-pointer">高级推理设置</summary>
+              <label class="mt-2 flex items-center gap-2">
+                <input type="checkbox" :checked="model.reasoning_effort === null"
+                  @change="model.reasoning_effort = $event.target.checked ? null : 'xhigh'" />
+                不发送 reasoning_effort
+              </label>
+              <label :for="'explain-effort-' + index" class="mt-2 block">推理强度（默认 xhigh）</label>
+              <input :id="'explain-effort-' + index" v-model="model.reasoning_effort" :disabled="model.reasoning_effort === null"
+                type="text" maxlength="32" placeholder="xhigh"
+                class="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-gray-900 disabled:opacity-40 dark:border-slate-600 dark:bg-slate-700 dark:text-white" />
+              <p class="mt-1 text-xs">填写该模型支持的强度；不支持时调用会失败，不自动降级。修改不会重算已有解析。</p>
+            </details>
+          </div>
+        </section>
         <div class="flex gap-3 pt-2">
           <BaseButton @click="save" :loading="saving" :disabled="saving">
             {{ saving ? '保存中...' : '保存设置' }}
@@ -96,7 +122,7 @@
           <span>
             <span class="block text-sm font-medium text-gray-700 dark:text-gray-300">是否启用答题预热</span>
             <span class="mt-1 block text-xs text-gray-400 dark:text-gray-500">
-              开启后，答题时会静默预先生成当前题和下一题的翻译与 AI 解析，以提升点击响应速度，可能增加 AI 调用成本。
+              开启后，答题时会静默预先生成当前题和下一题的翻译与 AI 解析，以提升点击响应速度，全部已配置解析模型都参与预热，可能增加 AI 调用成本。
             </span>
           </span>
         </label>
@@ -109,6 +135,7 @@
 import { ref, onMounted } from 'vue'
 import { useToast } from '../composables/useToast'
 import client from '../api/client'
+import { responseError } from '../utils/explanationPresentation'
 import BaseButton from '../components/BaseButton.vue'
 import SkeletonLoader from '../components/SkeletonLoader.vue'
 import { ArrowLeftIcon, CpuChipIcon, EyeIcon, EyeSlashIcon } from '@heroicons/vue/24/outline'
@@ -125,7 +152,7 @@ const form = ref({
   ai_api_key: '',
   ai_model: '',
   ai_translate_model: '',
-  ai_explain_model: '',
+  ai_explain_models: [],
   quiz_ai_prewarm_enabled: true,
 })
 
@@ -140,7 +167,7 @@ onMounted(async () => {
       ai_api_key: '',
       ai_model: aiRes.data.ai_model || '',
       ai_translate_model: aiRes.data.ai_translate_model || '',
-      ai_explain_model: aiRes.data.ai_explain_model || '',
+      ai_explain_models: aiRes.data.ai_explain_models || [{ model_id: aiRes.data.ai_explain_model || aiRes.data.ai_model || '', reasoning_effort: 'xhigh' }],
       quiz_ai_prewarm_enabled: quizRes.data.quiz_ai_prewarm_enabled !== false,
     }
     storedKeyMask.value = aiRes.data.ai_api_key || ''
@@ -152,6 +179,17 @@ onMounted(async () => {
   }
 })
 
+function addModel() {
+  if (form.value.ai_explain_models.length < 5) form.value.ai_explain_models.push({ model_id: '', reasoning_effort: 'xhigh' })
+}
+
+function moveModel(index, direction) {
+  const target = index + direction
+  if (target < 0 || target >= form.value.ai_explain_models.length) return
+  const models = form.value.ai_explain_models
+  ;[models[index], models[target]] = [models[target], models[index]]
+}
+
 async function save() {
   saving.value = true
   try {
@@ -160,7 +198,7 @@ async function save() {
       ai_api_key: form.value.ai_api_key,
       ai_model: form.value.ai_model,
       ai_translate_model: form.value.ai_translate_model,
-      ai_explain_model: form.value.ai_explain_model,
+      ai_explain_models: form.value.ai_explain_models,
     })
     await client.put('/settings/quiz', {
       quiz_ai_prewarm_enabled: form.value.quiz_ai_prewarm_enabled,
@@ -176,7 +214,7 @@ async function save() {
     }
     toast.success('设置已保存')
   } catch (e) {
-    toast.error(e.response?.data?.error || '保存失败')
+    toast.error(responseError(e, '保存失败，请检查模型列表'))
   } finally {
     saving.value = false
   }

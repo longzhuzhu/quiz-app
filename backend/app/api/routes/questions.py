@@ -21,6 +21,7 @@ from app.services.ai_service import (
 from app.services.exam_service import get_bank_in_exam_or_404, get_question_in_exam_or_404
 from app.services.question_service import update_question_correct_answer
 from app.services.topic_service import set_question_topics_manually, topics_for_questions
+from app.services.explanation_service import input_fingerprint, invalidate_explanations
 
 router = APIRouter()
 
@@ -106,7 +107,8 @@ def update_question(
     exam: Exam = Depends(get_exam_context),
     db: Session = Depends(get_db),
 ):
-    q = get_question_in_exam_or_404(db, question_id, exam)
+    q = get_question_in_exam_or_404(db, question_id, exam, lock_for_update=True)
+    original_input = input_fingerprint(q)
 
     if data.content is not None:
         if data.content != q.content:
@@ -136,6 +138,8 @@ def update_question(
         q.question_type = data.question_type
 
     # 考点不随题干和选项变动失效：它比翻译和解析稳定，清掉只会白白触发重打标
+    if input_fingerprint(q) != original_input:
+        invalidate_explanations(db, q)
     if data.topic_ids is not None:
         try:
             set_question_topics_manually(db, q, data.topic_ids)
@@ -155,7 +159,7 @@ def update_correct_answer(
     exam: Exam = Depends(get_exam_context),
     db: Session = Depends(get_db),
 ):
-    q = get_question_in_exam_or_404(db, question_id, exam)
+    q = get_question_in_exam_or_404(db, question_id, exam, lock_for_update=True)
     try:
         return update_question_correct_answer(
             db,
@@ -176,7 +180,8 @@ def delete_question(
     exam: Exam = Depends(get_exam_context),
     db: Session = Depends(get_db),
 ):
-    q = get_question_in_exam_or_404(db, question_id, exam)
+    q = get_question_in_exam_or_404(db, question_id, exam, lock_for_update=True)
+    invalidate_explanations(db, q)
     bank = db.get(QuestionBank, q.bank_id)
     db.query(QuizAnswer).filter_by(question_id=q.id).delete(synchronize_session=False)
     db.query(WrongAnswer).filter_by(question_id=q.id).delete(synchronize_session=False)

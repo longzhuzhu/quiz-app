@@ -11,8 +11,9 @@ engine = create_engine(
     settings.DATABASE_URL,
     echo=False,
     pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=10,
+    # 解析任务同时持有会话连接与 advisory lock 连接，池上限需覆盖 worker 线程数加解析槽位数。
+    pool_size=10,
+    max_overflow=20,
 )
 
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)

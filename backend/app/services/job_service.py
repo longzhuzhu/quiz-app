@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import case, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from app.core.config import settings
 
 from app.models.background_job import BackgroundJob
 from app.models.bank_word import BankWordExclusion, BankWordFrequency
@@ -20,6 +21,7 @@ from app.services.import_service import TOP_FREQUENT_TERMS_LIMIT
 from app.services.topic_tagging_service import list_untagged_question_ids
 
 JOB_TYPE_AI_PREWARM = "ai_prewarm"
+JOB_TYPE_AI_EXPLANATION = "ai_explanation"
 JOB_TYPE_BANK_FREQUENT_TRANSLATE = "bank_frequent_translate"
 JOB_TYPE_QUESTION_IMPORT_LLM = "question_import_llm"
 JOB_TYPE_QUESTION_IMPORT_LLM_REPARSE = "question_import_llm_reparse"
@@ -27,6 +29,40 @@ JOB_TYPE_QUESTION_TOPIC_TAG = "question_topic_tag"
 ACTIVE_STATUSES = {"queued", "running"}
 DEFAULT_JOB_LEASE_SECONDS = 180
 DEFAULT_REQUEUE_DELAY_SECONDS = 15
+EXPLANATION_SLOT_NAMESPACE = 540066
+# 解析任务执行期间不续约，租约须覆盖「单次调用超时 × 2（含格式纠正重试）」的最坏耗时：
+# 默认 120s × 2 = 240s，取 360s 留余量。否则租约先过期，recover_stale_jobs 会把
+# 仍在进行的解析判为「执行已中断」。
+EXPLANATION_JOB_LEASE_SECONDS = 360
+
+
+def _acquire_explanation_slot(db: Session):
+    # 自动提交连接持有 session lock，不跨网络持有数据库事务。
+    connection = db.get_bind().engine.connect().execution_options(isolation_level="AUTOCOMMIT")
+    try:
+        for slot in range(settings.AI_EXPLANATION_CONCURRENCY):
+            if connection.exec_driver_sql("SELECT pg_try_advisory_lock(%s, %s)", (EXPLANATION_SLOT_NAMESPACE, slot)).scalar():
+                return connection, slot
+    except Exception:
+        connection.invalidate()
+        connection.close()
+        raise
+    connection.close()
+    return None
+
+
+def release_explanation_slot(job: BackgroundJob | None) -> None:
+    reservation = getattr(job, "_explanation_slot", None)
+    if reservation is None:
+        return
+    connection, slot = reservation
+    try:
+        connection.exec_driver_sql("SELECT pg_advisory_unlock(%s, %s)", (EXPLANATION_SLOT_NAMESPACE, slot))
+    except Exception:
+        connection.invalidate()
+    finally:
+        connection.close()
+        setattr(job, "_explanation_slot", None)
 
 
 class JobServiceError(Exception):
@@ -53,6 +89,9 @@ def vocabulary_needs_translation(word) -> bool:
 
 
 def build_scope_key(job_type: str, payload: dict) -> str:
+    if job_type == JOB_TYPE_AI_EXPLANATION:
+        from app.services.explanation_service import explanation_scope
+        return explanation_scope(payload["exam_id"], payload["question_id"], payload["model_id"], payload["input_fingerprint"])
     if job_type == JOB_TYPE_AI_PREWARM:
         return f"ai_prewarm:{payload['exam_id']}:{payload['question_id']}:{payload['artifact_type']}"
     if job_type == JOB_TYPE_BANK_FREQUENT_TRANSLATE:
@@ -82,6 +121,8 @@ def list_bank_frequent_terms(db: Session, bank_id: int) -> list:
 
 
 def count_pending_items(db: Session, job_type: str, payload: dict) -> int:
+    if job_type == JOB_TYPE_AI_EXPLANATION:
+        return 1
     if job_type == JOB_TYPE_AI_PREWARM:
         question = db.get(Question, payload["question_id"])
         if not question:
@@ -181,6 +222,9 @@ def create_or_reuse_job(
         status="queued",
         progress_total=pending_total,
         status_message="等待后台 worker 执行",
+        priority=payload.get("priority", 0) if job_type == JOB_TYPE_AI_EXPLANATION else 0,
+        subject_question_id=payload["question_id"] if job_type == JOB_TYPE_AI_EXPLANATION else None,
+        max_attempts=1 if job_type == JOB_TYPE_AI_EXPLANATION else 3,
         created_by=created_by,
     )
     db.add(job)
@@ -236,13 +280,31 @@ def invalidate_active_scope(
 def recover_stale_jobs(db: Session, now: datetime | None = None) -> int:
     now = now or utc_now()
     recovered = 0
-    running_jobs = db.query(BackgroundJob).filter_by(status="running").all()
-    for job in running_jobs:
+    candidate_ids = db.execute(
+        select(BackgroundJob.id).where(
+            BackgroundJob.status == "running", BackgroundJob.lease_until < now,
+        )
+    ).scalars().all()
+    for job_id in candidate_ids:
+        # fail_job 会提交，因此逐项锁定并刷新；不能依赖一次性批量锁的旧快照。
+        job = (
+            db.query(BackgroundJob)
+            .filter(BackgroundJob.id == job_id, BackgroundJob.status == "running", BackgroundJob.lease_until < now)
+            .with_for_update(skip_locked=True)
+            .populate_existing()
+            .first()
+        )
+        if job is None:
+            continue
         if not job.lease_until:
             continue
         normalized_lease = _normalize_utc(job.lease_until)
         normalized_now = _normalize_utc(now)
         if normalized_lease is not None and normalized_now is not None and normalized_lease >= normalized_now:
+            continue
+        if job.job_type == JOB_TYPE_AI_EXPLANATION:
+            fail_job(db, job, "执行已中断，请手动重试")
+            recovered += 1
             continue
         job.status = "queued"
         job.lease_until = None
@@ -264,7 +326,7 @@ def claim_next_job(
         select(BackgroundJob.id).where(
             BackgroundJob.status == "queued",
             or_(BackgroundJob.next_run_at.is_(None), BackgroundJob.next_run_at <= now),
-        ).order_by(BackgroundJob.created_at.asc(), BackgroundJob.id.asc())
+    ).order_by(BackgroundJob.priority.desc(), BackgroundJob.created_at.asc(), BackgroundJob.id.asc())
     ).scalars().all()
 
     for job_id in candidate_ids:
@@ -282,30 +344,55 @@ def try_claim_job_by_id(
     now: datetime | None = None,
 ) -> BackgroundJob | None:
     now = now or utc_now()
-    lease_until = now + timedelta(seconds=lease_seconds)
-    result = db.execute(
-        update(BackgroundJob).where(
-            BackgroundJob.id == job_id,
-            BackgroundJob.status == "queued",
-            or_(BackgroundJob.next_run_at.is_(None), BackgroundJob.next_run_at <= now),
-        ).values(
-            status="running",
-            attempt_count=BackgroundJob.attempt_count + 1,
-            started_at=case(
-                (BackgroundJob.started_at.is_(None), now),
-                else_=BackgroundJob.started_at,
+    candidate = db.get(BackgroundJob, job_id)
+    is_explanation = candidate is not None and candidate.job_type == JOB_TYPE_AI_EXPLANATION
+    reservation = None
+    if is_explanation:
+        reservation = _acquire_explanation_slot(db)
+        if reservation is None:
+            db.rollback()
+            return None
+    if reservation is not None:
+        setattr(candidate, "_explanation_slot", reservation)
+    if is_explanation:
+        # 解析任务执行期间不续约，租约须覆盖两次模型调用的最坏耗时。
+        lease_seconds = max(lease_seconds, EXPLANATION_JOB_LEASE_SECONDS)
+    try:
+        lease_until = now + timedelta(seconds=lease_seconds)
+        result = db.execute(
+            update(BackgroundJob).where(
+                BackgroundJob.id == job_id,
+                BackgroundJob.status == "queued",
+                or_(BackgroundJob.next_run_at.is_(None), BackgroundJob.next_run_at <= now),
+            ).values(
+                status="running",
+                attempt_count=BackgroundJob.attempt_count + 1,
+                started_at=case(
+                    (BackgroundJob.started_at.is_(None), now),
+                    else_=BackgroundJob.started_at,
+                ),
+                heartbeat_at=now,
+                lease_until=lease_until,
+                next_run_at=None,
+                status_message=f"worker {worker_id} 已接手任务",
             ),
-            heartbeat_at=now,
-            lease_until=lease_until,
-            next_run_at=None,
-            status_message=f"worker {worker_id} 已接手任务",
+            execution_options={"synchronize_session": False},
         )
-    )
-    if result.rowcount != 1:
+        if result.rowcount != 1:
+            db.rollback()
+            if reservation is not None:
+                setattr(candidate, "_explanation_slot", reservation)
+                release_explanation_slot(candidate)
+            return None
+        db.commit()
+        claimed = db.get(BackgroundJob, job_id)
+        if reservation is not None:
+            setattr(claimed, "_explanation_slot", reservation)
+        return claimed
+    except Exception:
         db.rollback()
-        return None
-    db.commit()
-    return db.get(BackgroundJob, job_id)
+        release_explanation_slot(candidate)
+        raise
 
 
 def heartbeat_job(
@@ -397,7 +484,7 @@ def fail_job(
     current.progress_done = (current.success_count or 0) + (current.skipped_count or 0)
     current.progress_total = max(current.progress_total or 0, current.progress_done)
     current.last_error = str(error_message)
-    current.status_message = f"任务已自动执行 {current.max_attempts} 次仍失败"
+    current.status_message = "解析失败，可手动重试" if current.job_type == JOB_TYPE_AI_EXPLANATION else f"任务已自动执行 {current.max_attempts} 次仍失败"
     current.finished_at = now
     current.next_run_at = None
     current.lease_until = None

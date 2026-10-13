@@ -11,13 +11,12 @@ from app.models.question import Question
 from app.models.quiz import QuizSession
 from app.services.ai_service import (
     batch_translate_terms,
-    explain_question,
-    has_question_explanation,
     has_question_translation,
     translate_question,
 )
 from app.services.job_service import (
     JOB_TYPE_AI_PREWARM,
+    JOB_TYPE_AI_EXPLANATION,
     JOB_TYPE_BANK_FREQUENT_TRANSLATE,
     JOB_TYPE_QUESTION_IMPORT_LLM,
     JOB_TYPE_QUESTION_IMPORT_LLM_REPARSE,
@@ -42,8 +41,11 @@ logger = logging.getLogger(__name__)
 BANK_FREQUENT_BATCH_SIZE = 100
 
 
-def run_job(db: Session, job) -> None:
+def run_job(db: Session, job) -> str | None:
     """根据 job_type 分派任务"""
+    if job.job_type == JOB_TYPE_AI_EXPLANATION:
+        from app.services.explanation_service import execute_explanation
+        return execute_explanation(db, job)
     if job.job_type == JOB_TYPE_AI_PREWARM:
         return handle_ai_prewarm(db, job)
     if job.job_type == JOB_TYPE_BANK_FREQUENT_TRANSLATE:
@@ -92,11 +94,12 @@ def handle_ai_prewarm(db: Session, job) -> None:
         heartbeat_job(db, job, success_increment=1, status_message="题目翻译预热完成")
         return
 
-    if has_question_explanation(question):
-        heartbeat_job(db, job, skipped_increment=1, status_message="AI 解析缓存已存在，跳过任务")
-        return
-    explain_question(db, question)
-    heartbeat_job(db, job, success_increment=1, status_message="题目 AI 解析预热完成")
+    # 升级前仍留在队列中的解析任务只转换，不写未知来源的旧文本字段。
+    from app.services.explanation_service import request_explanation
+    from app.services.settings_service import get_explanation_models
+    for model in get_explanation_models(db):
+        request_explanation(db, question, exam_id, session.user_id, model_id=model.model_id, prewarm=True)
+    heartbeat_job(db, job, skipped_increment=1, status_message="已转换为逐模型解析任务")
 
 
 def handle_bank_frequent_translate(db: Session, job) -> None:

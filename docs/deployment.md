@@ -76,7 +76,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/path/to/quiz-app
 Environment=PYTHONUNBUFFERED=1
-Environment=JOB_WORKER_CONCURRENCY=2
+Environment=JOB_WORKER_CONCURRENCY=10
 EnvironmentFile=-/path/to/quiz-app/backend/.env
 ExecStart=/bin/bash -lc 'exec scripts/start-worker.sh'
 Restart=always
@@ -86,7 +86,7 @@ RestartSec=5
 WantedBy=default.target
 ```
 
-> `JOB_WORKER_CONCURRENCY=2` 是当前推荐值：不同任务作用域可以并行执行，同一作用域仍保持互斥。
+> `JOB_WORKER_CONCURRENCY=10` 是当前推荐值：它与解析槽位数配套，不同任务作用域可以并行执行，同一作用域仍保持互斥。
 
 ### 1.4 启动服务
 
@@ -177,3 +177,15 @@ bash scripts/start-worker.sh
 ```
 
 不建议长期依赖手动前台/后台 shell 进程，因为终端退出或会话回收时，服务可能被带掉。
+
+## 多模型 AI 解析（迁移 011）
+
+升级必须安排维护窗口：停止 API 与全部旧 worker，备份数据库，在后端虚拟环境执行 `python -m alembic upgrade head`，构建前端后再启动配套版本。迁移保留来源未知的旧解析，终结旧单解析预热任务；不能代替停止仍在运行的旧进程。
+
+解析由 worker 执行，不再由 API 同步直调。所有 worker 的 `AI_EXPLANATION_CONCURRENCY` 必须一致，默认全站十个在途解析调用；`JOB_WORKER_CONCURRENCY` 决定该实例能运行多少后台任务，默认十个，低于槽位数时并发受线程数限制。额度不足排队，手动请求优先于静默预热，不影响其他 AI 场景的重试策略。
+
+解析单次模型调用超时由 `AI_EXPLANATION_TIMEOUT_SECONDS` 控制（默认 120s）。输出格式不合格时会追加纠正消息再调用一次，单题最坏耗时约为超时值的两倍；解析任务租约固定为 360s 以覆盖该最坏路径，因此调大超时须同步确认租约仍有余量，否则 `recover_stale_jobs` 会把仍在执行的解析判为中断。
+
+解析任务同时持有会话连接与 advisory lock 连接，满载并发需要两倍于槽位数的数据库连接。连接池容量（`pool_size + max_overflow`）必须覆盖「worker 线程数 + 解析槽位数」，否则任务会在获取连接处阻塞。
+
+本次解析的网络、超时和上游失败不自动重试；失败后的静默预热也不重开同一输入任务。只有一次输出格式修复，或用户明确更新/重试。旧成功结果仍可读。worker 中断时不能保证上游停止计费，重新生成前应先核实任务终态。回滚须先停止新任务和新 worker，再核实新结果表与旧文本字段兼容；不要把任一模型结果冒充全部解析。

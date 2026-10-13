@@ -13,6 +13,8 @@ class AITranslateBatchRequest(BaseModel):
 
 class AIExplainRequest(BaseModel):
     question_id: int
+    model_id: str | None = Field(default=None, min_length=1, max_length=255)
+    input_fingerprint: str | None = Field(default=None, pattern="^[a-f0-9]{64}$")
     force: bool = False
 
 

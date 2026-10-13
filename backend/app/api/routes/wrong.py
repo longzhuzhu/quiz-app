@@ -3,7 +3,7 @@
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_current_user, get_exam_context
 from app.core.database import get_db
@@ -15,6 +15,7 @@ from app.models.user import User
 from app.models.wrong import UserQuestionStat, WrongAnswer
 from app.schemas.wrong import WrongPracticeRequest
 from app.services.exam_service import get_bank_in_exam_or_404
+from app.services.explanation_service import input_fingerprint, summaries_for_questions
 
 router = APIRouter()
 
@@ -58,7 +59,8 @@ def list_wrong(
         get_bank_in_exam_or_404(db, bank_id, exam)
         query = query.filter(Question.bank_id == bank_id)
 
-    wrongs = query.order_by(WrongAnswer.last_wrong_at.desc()).all()
+    wrongs = query.options(joinedload(WrongAnswer.question)).order_by(WrongAnswer.last_wrong_at.desc()).all()
+    summaries = summaries_for_questions(db, [w.question for w in wrongs], exam.id)
     result = []
     for w in wrongs:
         q = w.question
@@ -75,6 +77,8 @@ def list_wrong(
                 "content_zh": q.content_zh,
                 "options": _load_options(q),
                 "correct_answer": q.correct_answer,
+                "ai_explanations": summaries.get(q.id, []),
+                "ai_input_fingerprint": input_fingerprint(q),
                 "explanation": q.explanation,
                 "explanation_zh": q.explanation_zh,
             }
@@ -120,6 +124,7 @@ def practice_wrong(
     db.refresh(session)
 
     questions_out = []
+    summaries = summaries_for_questions(db, ordered_questions, exam.id)
     for q in ordered_questions:
         questions_out.append({
             "id": q.id,
@@ -130,6 +135,8 @@ def practice_wrong(
             "explanation": q.explanation,
             "explanation_zh": q.explanation_zh,
             "user_answer_count": counts.get(q.id, 0),
+            "ai_explanations": summaries.get(q.id, []),
+            "ai_input_fingerprint": input_fingerprint(q),
         })
 
     return {
