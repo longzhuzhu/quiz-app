@@ -11,6 +11,10 @@ export function examPath(slug, kind = 'dashboard', params = {}) {
   }
   if (kind === 'quiz' && params.sessionId) return `/exams/${encoded}/quiz/${params.sessionId}`
   if (kind === 'quizResult' && params.sessionId) return `/exams/${encoded}/quiz/${params.sessionId}/result`
+  if (kind === 'quizReview' && params.sessionId) {
+    const query = params.filter ? `?filter=${encodeURIComponent(params.filter)}` : ''
+    return `/exams/${encoded}/quiz/${params.sessionId}/review${query}`
+  }
   if (kind === 'importJobDetail' && params.jobId) return `/exams/${encoded}/import-jobs/${params.jobId}`
   if (kind === 'importReview' && params.jobId) return `/exams/${encoded}/import-jobs/${params.jobId}/review`
   if (kind === 'importAutoHandled' && params.jobId) return `/exams/${encoded}/import-jobs/${params.jobId}/auto-handled`
@@ -29,7 +33,8 @@ export function routeKind(route) {
   if (name === 'ExamImportJobDetail') return 'importJobDetail'
   if (name === 'ExamImportReview') return 'importReview'
   if (name === 'ExamImportAutoHandled') return 'importAutoHandled'
-  if (name === 'ExamQuiz' || name === 'ExamQuizResult') return 'dashboard'
+  // 会话类页面在切换考试项目后回到目标项目概览：目标项目里这些 sessionId 不存在
+  if (name === 'ExamQuiz' || name === 'ExamQuizResult' || name === 'ExamQuizReview') return 'dashboard'
   return 'dashboard'
 }
 

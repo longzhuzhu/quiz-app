@@ -9,6 +9,9 @@ dist/
 .agents/
 .codex/
 .superpowers/
+.cursor/
+.trellis/
+.cc-connect/
 logs/
 plugins/
 .venv/

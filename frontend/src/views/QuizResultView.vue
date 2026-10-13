@@ -33,50 +33,32 @@
             style="transition: stroke-dashoffset 1s ease-out" />
         </svg>
         <div class="absolute inset-0 flex items-center justify-center">
-          <span class="text-3xl font-bold" :class="scoreColor">{{ session.accuracy }}%</span>
+          <span data-testid="result-accuracy" class="text-3xl font-bold" :class="scoreColor">{{ session.accuracy }}%</span>
         </div>
       </div>
 
-      <!-- 三列统计 -->
+      <!-- 三列统计：正确 / 错误 / 未答，数值与分母口径均由后端给出 -->
       <div class="mb-8 grid grid-cols-3 gap-4">
-        <div class="rounded-xl bg-gray-50 dark:bg-slate-700/50 p-4">
-          <div class="text-2xl font-bold text-gray-900 dark:text-white">{{ session.total_questions }}</div>
-          <div class="text-sm text-gray-500 dark:text-gray-400">总题数</div>
-        </div>
         <div class="rounded-xl bg-emerald-50 dark:bg-emerald-900/20 p-4">
-          <div class="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{{ session.correct_count }}</div>
+          <div data-testid="result-correct" class="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{{ session.correct_count }}</div>
           <div class="text-sm text-gray-500 dark:text-gray-400">正确</div>
         </div>
         <div class="rounded-xl bg-rose-50 dark:bg-rose-900/20 p-4">
-          <div class="text-2xl font-bold text-rose-600 dark:text-rose-400">{{ session.answered_count - session.correct_count }}</div>
+          <div data-testid="result-wrong" class="text-2xl font-bold text-rose-600 dark:text-rose-400">{{ session.wrong_count }}</div>
           <div class="text-sm text-gray-500 dark:text-gray-400">错误</div>
         </div>
-      </div>
-
-      <!-- 答题详情 -->
-      <div v-if="answers.length" class="mb-6 text-left">
-        <h2 class="mb-3 font-semibold text-gray-700 dark:text-gray-300">答题详情</h2>
-        <div class="space-y-2 max-h-64 overflow-y-auto">
-          <div v-for="(a, i) in answers" :key="i"
-            class="flex items-start gap-2 rounded-lg p-3 text-sm"
-            :class="a.is_correct ? 'bg-emerald-50 dark:bg-emerald-900/10' : 'bg-rose-50 dark:bg-rose-900/10'">
-            <CheckCircleIcon v-if="a.is_correct" class="h-5 w-5 flex-shrink-0 text-emerald-500" />
-            <XCircleIcon v-else class="h-5 w-5 flex-shrink-0 text-rose-500" />
-            <div class="min-w-0">
-              <p class="truncate text-gray-800 dark:text-gray-200">{{ i + 1 }}. {{ a.question_content }}</p>
-              <p class="text-xs text-gray-500 dark:text-gray-400">
-                你的答案: {{ a.user_answer }} | 正确答案: {{ a.correct_answer }}
-              </p>
-            </div>
-          </div>
+        <div class="rounded-xl bg-gray-50 dark:bg-slate-700/50 p-4">
+          <div data-testid="result-unanswered" class="text-2xl font-bold text-gray-500 dark:text-gray-400">{{ session.unanswered_count }}</div>
+          <div class="text-sm text-gray-500 dark:text-gray-400">未答</div>
         </div>
       </div>
 
       <!-- 底部按钮 -->
       <div class="flex justify-center gap-3 flex-wrap">
         <BaseButton variant="secondary" @click="router.push(currentExamPath(route, 'dashboard'))">返回首页</BaseButton>
-        <BaseButton variant="primary" @click="router.push(currentExamPath(route, 'wrong'))">查看错题</BaseButton>
-        <BaseButton variant="secondary" @click="retryQuiz">再来一次</BaseButton>
+        <BaseButton variant="secondary" data-testid="result-review" @click="goReview()">查看详情</BaseButton>
+        <BaseButton variant="secondary" data-testid="result-review-wrong" @click="goReview('wrong')">本次错题</BaseButton>
+        <BaseButton variant="primary" data-testid="result-retry" :disabled="retrying" @click="retryQuiz">再来一次</BaseButton>
       </div>
     </div>
   </div>
@@ -92,14 +74,14 @@ import { useToast } from '../composables/useToast'
 import client from '../api/client'
 import BaseButton from '../components/BaseButton.vue'
 import SkeletonLoader from '../components/SkeletonLoader.vue'
-import { CheckCircleIcon, XCircleIcon } from '@heroicons/vue/24/outline'
+import { XCircleIcon } from '@heroicons/vue/24/outline'
 
 const route = useRoute()
 const router = useRouter()
 const quizStore = useQuizStore()
 const toast = useToast()
 const session = ref(null)
-const answers = ref([])
+const retrying = ref(false)
 
 const ringColor = computed(() => {
   if (!session.value) return 'stroke-gray-300'
@@ -118,23 +100,36 @@ const scoreColor = computed(() => {
 onMounted(async () => {
   try {
     const res = await client.get(`/quiz/session/${route.params.sessionId}`)
+    if (res.data.session?.is_completed !== true) {
+      // 完成页只服务已完成会话：错误／未答数与正确率分母只在完成态由后端给出，
+      // 进行中的会话必须继续回答题页，不能借结果页提前查看答案或成绩。
+      router.replace(currentExamPath(route, 'quiz', { sessionId: route.params.sessionId }))
+      return
+    }
     session.value = res.data.session
-    answers.value = res.data.answers
   } catch {
     session.value = { error: true }
   }
 })
 
+function goReview(filter = null) {
+  router.push(currentExamPath(route, 'quizReview', {
+    sessionId: route.params.sessionId,
+    ...(filter ? { filter } : {}),
+  }))
+}
+
 async function retryQuiz() {
-  if (!session.value?.bank_id) {
-    router.push(currentExamPath(route, 'dashboard'))
-    return
-  }
+  if (retrying.value) return
+  retrying.value = true
   try {
-    await quizStore.startQuiz(session.value.bank_id, session.value.mode || 'random')
+    await quizStore.retryQuiz(route.params.sessionId)
     router.push(currentExamPath(route, 'quiz', { sessionId: quizStore.session.id }))
   } catch (e) {
-    toast.error(e.response?.data?.error || '开始答题失败')
+    // 原题不可用时后端在 detail 里列出题目 ID；失败留在本页，不清空已有结果
+    toast.error(e.response?.data?.detail || '重新开始失败')
+  } finally {
+    retrying.value = false
   }
 }
 </script>

@@ -799,26 +799,27 @@ def session_detail(
     resume_index = _compute_resume_index(session_question_ids, answers)
 
     answers_out = []
-    # `answers` 是过渡字段：既有结果页（QuizResultView）仍按它渲染详情列表。本任务只新增
-    # 复盘契约（`questions`），不在这里单侧收紧，否则前端结果页的详情会立即消失；
-    # 等结果页切换到 `questions` 后由前端子任务删除该字段。
-    for a in answers:
-        q = a.question
-        answer_data = {
-            "question_id": a.question_id,
-            "question_content": q.content,
-            "question_content_zh": q.content_zh,
-            "question_type": q.question_type,
-            "options": _load_options(q),
-            "user_answer": a.user_answer,
-            "answer_duration_ms": a.answer_duration_ms,
-        }
-        if not is_exam:
-            answer_data["is_correct"] = a.is_correct
-            answer_data["correct_answer"] = q.correct_answer
-            answer_data["explanation"] = q.explanation
-            answer_data["explanation_zh"] = q.explanation_zh
-        answers_out.append(answer_data)
+    if not released:
+        # `answers` 只服务未完成会话的续答恢复（答题页刷新依赖它，见 QuizView.restoreSessionState）。
+        # 已完成会话的复盘以 `questions` 为准：两套列表的题号口径不一致，同时输出会让消费方
+        # 按数组下标编号而与原场题号错位，因此完成态不再输出这个过渡字段。
+        for a in answers:
+            q = a.question
+            answer_data = {
+                "question_id": a.question_id,
+                "question_content": q.content,
+                "question_content_zh": q.content_zh,
+                "question_type": q.question_type,
+                "options": _load_options(q),
+                "user_answer": a.user_answer,
+                "answer_duration_ms": a.answer_duration_ms,
+            }
+            if not is_exam:
+                answer_data["is_correct"] = a.is_correct
+                answer_data["correct_answer"] = q.correct_answer
+                answer_data["explanation"] = q.explanation
+                answer_data["explanation_zh"] = q.explanation_zh
+            answers_out.append(answer_data)
 
     questions_out = []
     if released:
@@ -902,7 +903,8 @@ def session_detail(
                 mode=session.mode,
             )["accuracy"]
 
-    result = {"session": session_out, "answers": answers_out}
+    # 已完成会话只给复盘结构：不再附带按作答记录顺序排列的 `answers`
+    result = {"session": session_out} if released else {"session": session_out, "answers": answers_out}
     if released or questions_out:
         result["questions"] = questions_out
     return result

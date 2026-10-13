@@ -188,7 +188,11 @@ def test_completed_session_does_not_accept_duration(quiz_api):
     response = quiz_api.client.post("/api/quiz/finish", json={"session_id": quiz_api.ids.session})
     assert response.status_code == 200
     assert _submit(quiz_api, answer_duration_ms=1000).status_code == 400
-    assert _answers(quiz_api) == []
+    # 完成态不再返回过渡字段 `answers`，改由复盘结构 `questions` 证明提交被拒、记录未被改写
+    detail = quiz_api.client.get(f"/api/quiz/session/{quiz_api.ids.session}").json()
+    assert "answers" not in detail
+    assert detail["session"]["answered_count"] == 0
+    assert [q["status"] for q in detail["questions"]] == ["unanswered"]
 
 
 def test_other_exam_cannot_submit_duration(quiz_api):
