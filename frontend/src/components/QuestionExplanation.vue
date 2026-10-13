@@ -32,7 +32,7 @@
           <div v-if="bodies.get(model.model_id)" :data-reader="model.model_id" class="explanation-body mt-3 whitespace-pre-wrap leading-relaxed text-gray-700 dark:text-gray-300"
             @scroll="positions.set(model.model_id, $event.target.scrollTop)">{{ bodies.get(model.model_id).explanation_zh }}</div>
           <p v-else-if="model.result" class="mt-3 text-gray-500">正在加载正文…</p>
-          <button type="button" :disabled="isGenerating(model) || dispatching"
+          <button type="button" :disabled="isGenerating(model) || dispatching || reading"
             :aria-label="(model.generation?.status === 'failed' ? '重试 ' : model.result ? '更新 ' : '生成 ') + model.model_id"
             class="mt-4 rounded-lg border border-sky-300 px-3 py-2 font-medium text-sky-800 hover:bg-sky-100 disabled:opacity-50 dark:border-sky-700 dark:text-sky-200 dark:hover:bg-sky-900/50"
             @click="updateModel(model.model_id)">{{ model.generation?.status === 'failed' ? '重试' : model.result ? '更新解析' : '生成解析' }}</button>
@@ -58,7 +58,7 @@ const props = defineProps({
   showSummary: { type: Boolean, default: true },
 })
 const emit = defineEmits(['summary'])
-const { models, bodies, opened, busy, dispatching, error, stale, legacyAvailable, act, updateModel, refresh } =
+const { models, bodies, opened, busy, dispatching, reading, error, stale, legacyAvailable, act, updateModel, refresh } =
   useQuestionExplanations(() => props.question, () => props.autoReveal)
 const activeModel = ref('')
 const positions = new Map()

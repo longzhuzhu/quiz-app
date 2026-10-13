@@ -276,8 +276,22 @@ def invalidate_active_scope(
 def recover_stale_jobs(db: Session, now: datetime | None = None) -> int:
     now = now or utc_now()
     recovered = 0
-    running_jobs = db.query(BackgroundJob).filter_by(status="running").all()
-    for job in running_jobs:
+    candidate_ids = db.execute(
+        select(BackgroundJob.id).where(
+            BackgroundJob.status == "running", BackgroundJob.lease_until < now,
+        )
+    ).scalars().all()
+    for job_id in candidate_ids:
+        # fail_job 会提交，因此逐项锁定并刷新；不能依赖一次性批量锁的旧快照。
+        job = (
+            db.query(BackgroundJob)
+            .filter(BackgroundJob.id == job_id, BackgroundJob.status == "running", BackgroundJob.lease_until < now)
+            .with_for_update(skip_locked=True)
+            .populate_existing()
+            .first()
+        )
+        if job is None:
+            continue
         if not job.lease_until:
             continue
         normalized_lease = _normalize_utc(job.lease_until)

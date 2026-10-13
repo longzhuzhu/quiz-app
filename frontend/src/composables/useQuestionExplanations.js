@@ -23,10 +23,18 @@ export function useQuestionExplanations(question, autoReveal) {
   }
 
   function schedule(generation) {
+    if (!current(generation)) return
     stopPolling()
-    if (current(generation) && opened.value && models.value.some(isGenerating)) {
+    if (opened.value && models.value.some(isGenerating)) {
       timer = setTimeout(() => refresh(generation), 2000)
     }
+  }
+
+  function markStale(message = '题目已变化，请刷新页面后重新解析') {
+    stale.value = true
+    models.value = []
+    bodies.clear()
+    error.value = message
   }
 
   async function loadBodies(generation) {
@@ -37,10 +45,7 @@ export function useQuestionExplanations(question, autoReveal) {
         if (!current(generation)) return
         const latest = models.value.find(m => m.model_id === model.model_id)
         if (data.input_fingerprint !== inputStamp) {
-          stale.value = true
-          models.value = []
-          bodies.clear()
-          error.value = '题目已变化，请刷新页面后重新解析'
+          markStale()
           return
         }
         if (data.correct_answer !== correctAnswer) {
@@ -66,10 +71,7 @@ export function useQuestionExplanations(question, autoReveal) {
       const { data } = await client.get('/ai/explanations', { params: { question_id: question().id } })
       if (!current(generation) || readSequence !== sequence) return
       if (inputStamp && data.input_fingerprint !== inputStamp) {
-        stale.value = true
-        models.value = []
-        bodies.clear()
-        error.value = '题目已变化，请刷新页面后重新解析'
+        markStale()
         return
       }
       inputStamp = data.input_fingerprint
@@ -105,10 +107,7 @@ export function useQuestionExplanations(question, autoReveal) {
         } catch (e) {
           if (!current(generation)) return
           if (e.response?.status === 409) {
-            stale.value = true
-            models.value = []
-            bodies.clear()
-            error.value = responseError(e, '题目已变化，请刷新页面后重新解析')
+            markStale(responseError(e, '题目已变化，请刷新页面后重新解析'))
             return
           }
           const model = models.value.find(m => m.model_id === id)
@@ -127,6 +126,7 @@ export function useQuestionExplanations(question, autoReveal) {
   }
 
   async function act() {
+    if (reading.value || dispatching.value || stale.value) return
     const generation = epoch
     const force = opened.value
     opened.value = true
@@ -140,7 +140,7 @@ export function useQuestionExplanations(question, autoReveal) {
   }
 
   async function updateModel(id) {
-    if (dispatching.value || isGenerating(models.value.find(m => m.model_id === id) || {})) return
+    if (reading.value || dispatching.value || stale.value || isGenerating(models.value.find(m => m.model_id === id) || {})) return
     const generation = epoch
     reading.value = true
     try {
@@ -173,5 +173,5 @@ export function useQuestionExplanations(question, autoReveal) {
   })
 
   onBeforeUnmount(() => { disposed = true; epoch += 1; stopPolling() })
-  return { models, bodies, opened, busy, dispatching, error, stale, legacyAvailable, act, updateModel, refresh }
+  return { models, bodies, opened, busy, dispatching, reading, error, stale, legacyAvailable, act, updateModel, refresh }
 }

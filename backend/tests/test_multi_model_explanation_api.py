@@ -428,3 +428,58 @@ def test_outdated_input_receipt_rejects_generation_without_provider_call(api, mo
     assert response.status_code == 409
     assert not job_worker.process_one_job()
     assert calls == []
+
+
+def test_stale_recovery_cannot_overwrite_worker_success(api, postgres, monkeypatch):
+    """租约到期与成功提交交错，公开状态仍必须为成功且不再调用模型。"""
+    from concurrent.futures import ThreadPoolExecutor
+    from datetime import datetime, timedelta, timezone
+    from threading import Event, current_thread
+    from sqlalchemy import event
+
+    c, qid = api.client, api.ids[0]
+    calls = upstream(monkeypatch)
+    response = c.post('/api/ai/explain', json={"question_id": qid, "model_id": "model-a"})
+    job_id = response.json()['generation']['id']
+    locked, release, recovery_read = Event(), Event(), Event()
+
+    # 只编排真实 PostgreSQL 的时序，不替换 worker 或任务服务。
+    def after_sql(connection, cursor, statement, parameters, context, many):
+        if 'SELECT' not in statement or 'background_jobs' not in statement:
+            return
+        if current_thread().name.startswith('finishing') and 'FOR UPDATE' in statement and 'background_jobs.id =' in statement:
+            locked.set()
+            assert release.wait(10)
+        elif current_thread().name.startswith('recovering'):
+            recovery_read.set()
+
+    original_post = httpx.post
+    def expire_during_upstream(*args, **kwargs):
+        with api.sessions() as db:
+            db.execute(text('UPDATE background_jobs SET lease_until=:expired WHERE id=:id'), {"expired": datetime.now(timezone.utc) - timedelta(seconds=1), "id": job_id})
+            db.commit()
+        return original_post(*args, **kwargs)
+    monkeypatch.setattr(httpx, 'post', expire_during_upstream)
+    event.listen(postgres, 'after_cursor_execute', after_sql)
+    try:
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix='finishing') as finishing, ThreadPoolExecutor(max_workers=1, thread_name_prefix='recovering') as recovering:
+            completed = finishing.submit(job_worker.process_one_job)
+            try:
+                assert locked.wait(5)
+                recovered = recovering.submit(job_worker.process_one_job)
+                assert recovery_read.wait(5)
+                # 完成事务仍持锁；旧回收路径在陈旧 UPDATE 上阻塞。
+                import time
+                time.sleep(.15)
+            finally:
+                release.set()
+            assert completed.result(5)
+            assert not recovered.result(5)
+    finally:
+        release.set()
+        event.remove(postgres, 'after_cursor_execute', after_sql)
+    state = c.get('/api/ai/explanation', params={"question_id": qid, "model_id": "model-a"}).json()
+    assert state['result']['judged_answer'] == 'D'
+    assert state['generation']['status'] == 'completed'
+    assert c.post('/api/ai/explain', json={"question_id": qid, "model_id": "model-a"}).status_code == 200
+    assert len(calls) == 1

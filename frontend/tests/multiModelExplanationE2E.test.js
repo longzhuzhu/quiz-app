@@ -31,8 +31,36 @@ test('多模型解析：真实登录、预热、独立答案、移动Tab、更�
   const state = async () => JSON.parse(await browser('eval', '(async()=>await(await fetch("/api/__test/ai-state")).json())()'))
   assert.ok((await state()).peak <= 3)
   await browser('wait', '--fn', '(async()=>{const s=await(await fetch("/api/__test/ai-state")).json();return s.calls.length===10 && s.active===0})()')
-  const initialCalls = (await state()).calls.length
+  let initialCalls = (await state()).calls.length
   assert.equal(initialCalls, 10)
+  // 只延迟真实 XHR 的发出；所有业务请求仍走真实 API、worker 和 PostgreSQL。
+  await browser('eval', `(() => {
+    const proto = XMLHttpRequest.prototype;
+    const open = proto.open, send = proto.send;
+    const probe = window.aiRequestProbe = { active: 0, peak: 0, posts: 0 };
+    proto.open = function(method, url, ...args) {
+      this.aiProbePath = String(url); this.aiProbeMethod = method;
+      return open.call(this, method, url, ...args);
+    };
+    proto.send = function(...args) {
+      if (this.aiProbePath.includes('/ai/explanations')) {
+        setTimeout(() => send.apply(this, args), 350);
+      } else if (this.aiProbePath.includes('/ai/explain') && this.aiProbeMethod.toUpperCase() === 'POST') {
+        probe.active++; probe.posts++; probe.peak = Math.max(probe.peak, probe.active);
+        this.addEventListener('loadend', () => probe.active--, { once: true });
+        setTimeout(() => send.apply(this, args), 500);
+      } else send.apply(this, args);
+    };
+    probe.restore = () => { proto.open = open; proto.send = send; };
+    document.querySelectorAll('[data-model-id] button').forEach(button => button.click());
+  })()`)
+  await browser('wait', '--fn', 'window.aiRequestProbe.posts > 0 && window.aiRequestProbe.active === 0 && !Array.from(document.querySelectorAll("button")).some(b=>/解析中|更新中/.test(b.textContent))')
+  const requests = JSON.parse(await browser('eval', '({peak: window.aiRequestProbe.peak, posts: window.aiRequestProbe.posts})'))
+  assert.ok(requests.peak <= 3, JSON.stringify(requests))
+  assert.equal(requests.posts, 1, '状态读取期间重复单卡操作不能进入另一条生成队列')
+  await browser('eval', 'window.aiRequestProbe.restore()')
+  initialCalls += 1
+  assert.equal((await state()).calls.length, initialCalls)
   await browser('set', 'viewport', '375', '812')
   await browser('wait', '--fn', 'document.querySelectorAll("[role=tab]").length === 5')
   await browser('find', 'role', 'tab', 'click', '--name', 'model-b', '--exact')
