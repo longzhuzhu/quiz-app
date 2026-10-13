@@ -15,6 +15,7 @@ const routes = [
   { path: '/exams/:examSlug/banks/:bankId', name: 'ExamBankQuestions', component: () => import('../views/AdminQuestionsView.vue'), meta: { auth: true, examScoped: true } },
   { path: '/exams/:examSlug/quiz/:sessionId', name: 'ExamQuiz', component: () => import('../views/QuizView.vue'), meta: { auth: true, examScoped: true } },
   { path: '/exams/:examSlug/quiz/:sessionId/result', name: 'ExamQuizResult', component: () => import('../views/QuizResultView.vue'), meta: { auth: true, examScoped: true } },
+  { path: '/exams/:examSlug/quiz/:sessionId/review', name: 'ExamQuizReview', component: () => import('../views/QuizReviewView.vue'), meta: { auth: true, examScoped: true } },
   { path: '/exams/:examSlug/wrong', name: 'ExamWrongAnswers', component: () => import('../views/WrongAnswersView.vue'), meta: { auth: true, examScoped: true } },
   { path: '/exams/:examSlug/history', name: 'ExamHistory', component: () => import('../views/HistoryView.vue'), meta: { auth: true, examScoped: true } },
   { path: '/exams/:examSlug/vocab', name: 'ExamVocabulary', component: () => import('../views/VocabularyView.vue'), meta: { auth: true, examScoped: true } },
