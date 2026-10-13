@@ -1,0 +1,9 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"组件结构、Props/Emits 约定与只读组件的边界。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"异步错误处理分层：store 抛错、view catch 后 toast。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Axios 调用组织、考试项目上下文契约与路由 meta。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"纯 JS 类型约定与可选链防护。"}
+{"file":".trellis/spec/frontend/directory-structure.md","reason":"新增 view 与 component 的放置位置。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/research/current-implementation.md","reason":"现状调查：QuestionCard 无只读模式、错题本内联只读展示、答题页题号导航结构的行号。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/design.md","reason":"第 5.1、5.2 节定义只读组件抽取与复盘页结构。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/prd.md","reason":"父任务 R5、R7 与验收清单中的复盘体验要求。"}
+{"file":"CONTEXT.md","reason":"答题复盘、未答题、当场正确答案的领域定义与 Avoid 约定。"}

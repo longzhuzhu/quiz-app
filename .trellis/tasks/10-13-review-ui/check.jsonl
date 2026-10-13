@@ -1,0 +1,6 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"核查新组件是否需要 emit 作答事件、Props 是否最小化。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"核查加载失败与空状态是否按既有分层处理。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"核查调用路径与路由守卫一致性。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/design.md","reason":"对照第 2.1 节核查未改答题页恢复逻辑、未给 QuestionCard 加只读模式。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/prd.md","reason":"逐条核对父任务 R5 验收项与只读约束。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"核查是否新增了与既有只读渲染重复的实现。"}

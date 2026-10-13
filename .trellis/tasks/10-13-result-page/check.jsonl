@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/state-management.md","reason":"核查重试失败后留在原页、不清空状态，以及按钮禁用期间的竞态。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"核查错误提示字段与既有 Axios 错误三级体系。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"核查按钮视觉语言与既有样式一致。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/design.md","reason":"对照第 2.1 节核查未破坏答题页跳转与刷新恢复。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/prd.md","reason":"逐条核对父任务 R6 验收项，特别是原始症状已消失。"}

@@ -1,0 +1,8 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"按钮区改造与组件边界。"}
+{"file":".trellis/spec/frontend/state-management.md","reason":"新增 retryQuiz action 的错误处理分层，view 负责 catch 与 toast。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Axios 错误对象字段（detail 与 error 的差异）与路由 meta。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"纯 JS 写法与可选链防护。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/research/current-implementation.md","reason":"现状调查：完成页统计推导、截断详情、三个按钮与再来一次只传两参的精确行号。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/design.md","reason":"第 5.3、5.4 节定义完成页改造与 store 变更。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/prd.md","reason":"父任务 R6、R7 与验收清单中完成页与本次错题的条目。"}
+{"file":"CONTEXT.md","reason":"本次错题、本场正确率、原题重做的领域定义。"}

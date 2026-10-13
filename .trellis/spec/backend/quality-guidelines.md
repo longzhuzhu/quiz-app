@@ -634,6 +634,7 @@ explain_question(db, question, force=data.force)
 
 - Trigger: 答题现场改题库正确答案，或修改 `PUT /api/questions/{id}/correct-answer`。
 - 范围：考试项目所有者在非模拟考试提交后更正。不重算其他场次，不改错题本。
+- 已结束的会话不参与更正：其判定按完成时的冻结与快照展示，见「答题会话冻结」。
 
 ### 2. Signatures
 
@@ -648,6 +649,8 @@ explain_question(db, question, force=data.force)
 - 不碰 `WrongAnswer` / `UserQuestionStat` / `answered_count`，不走 `POST /quiz/answer`。
 - 本场重判后若带了 `local_date`，按客户端本地日刷正确率快照，禁止用 UTC 当天冒充本地日。
 - 规范化后与当前答案相同：无操作，不清解析，不 commit。
+- 传了 `session_id` 且该会话 `is_completed`：抛 `ValueError`，**整笔拒绝**——不改题库答案、不改快照。
+  若只改快照而题库答案已变，会出现「快照的当场正确答案」与「冻结判定」自相矛盾。
 
 ### 4. Validation & Error Matrix
 
@@ -656,6 +659,7 @@ explain_question(db, question, force=data.force)
 | key 空 / 不属于选项 / 单选判断不是恰好 1 个 | 400 `detail` |
 | 题目不属于当前考试 | 404 |
 | session 不属于当前考试或不属于所有者 | 404 `答题会话不存在` |
+| session 已结束（`is_completed`） | 400 `已完成答题会话不支持更正答案` |
 | 答案未变 | 200，保留原解析 |
 
 ### 5. Good/Base/Bad Cases
@@ -686,6 +690,99 @@ quiz_store.submitAnswer(question_id, user_answer)  # 更正后再提交
 record_accuracy_snapshot(..., local_date=data.local_date)  # 客户端本地日
 apply_session_regrade(session, quiz_answer, formatted)
 ```
+
+---
+
+## Scenario: 答题会话冻结（本场快照与最终判定）
+
+### 1. Scope / Trigger
+
+- Trigger: 新增/修改答题会话的复盘展示，或改动 `/quiz/start`、`/quiz/finish`、`/wrong/practice`、`/questions/{id}/correct-answer`。
+- 范围：`QuizSession.question_snapshot` 与 `QuizSession.final_answers` 两个 JSONB 列的写入与读取语义。
+
+### 2. Signatures
+
+- `/quiz/start`、`/wrong/practice` → 写入 `question_snapshot`
+- `/quiz/finish` → 写入 `final_answers`（仅首次）
+- `snapshot_entries(questions) -> list[dict]`、`freeze_final_answers(question_ids, answers) -> dict`
+- `sync_snapshot_correct_answer(session, question_id, correct_answer) -> None`
+
+### 3. Contracts
+
+- **快照挂在会话上，不挂在 `QuizAnswer` 上。** 未答题没有 `QuizAnswer` 行，挂上去就表达不了「这题存在但没答」；
+  数组下标即题号，与 `question_ids` 严格同序。
+- **快照只存判分依据**：`question_id`、`question_type`、`content`、`options`、`correct_answer`。
+  不含翻译与 AI 解析——那些是可再生缓存，进快照只会放大体积并制造两份真相。
+- **`final_answers` 是冻结副本，不是缓存。** 题目被删除时 `delete_question` 会删掉该题所有 `QuizAnswer`
+  （`backend/app/api/routes/questions.py` 的 `delete_question`），只有冻结副本能让历史会话的判定仍可读。
+- **未答题显式写 `None`**，与「键不存在」区分开；`final_answers` 为空表示会话未结束。
+- **重复 finish 不得重算**（幂等）：第二次数不出来任何 `QuizAnswer`，重算会把已冻结的判定改写成未答，
+  还会覆盖 `completed_at`。
+- 旧会话 `question_snapshot IS NULL` 表示迁移前的场次，**不回填**——回填等于伪造历史。
+- `sync_snapshot_correct_answer` 只作用于传入的当前会话；其他会话的快照按原样冻结。
+- JSONB 整字段重新赋值，不就地 mutate（见数据库规范）。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+|---|---|
+| 重复调用 `/quiz/finish` | 200，`final_answers` 与 `completed_at` 保持首次值 |
+| 会话 `question_ids` 为空 | `final_answers` 保持 NULL，不写空 dict |
+| 快照条目含 `None`/字符串/数字等非 dict | 跳过该条，不抛 `AttributeError` |
+| 旧会话（快照 NULL）完成 | 不回填快照，正常冻结本次判定 |
+| 已完成会话改正确答案 | 400，见「更正答案」 |
+
+### 5. Good/Base/Bad Cases
+
+- Good: 答错 → 结束 → 删除该题 → 复盘仍能读出「用户选 B、判为错」。
+- Base: 进行中更正答案，只有当前会话快照跟着改，历史会话不受影响。
+- Bad: 在 `finish` 里无条件 `session.final_answers = freeze_final_answers(...)`，第二次调用后判定全变未答。
+- Bad: 用 `if entry and entry.get("question_id") == ...` 过滤快照条目——只挡住 `None`，
+  真值非 dict（字符串/数字）仍会 `AttributeError`。用 `isinstance(entry, dict)`。
+
+### 6. Tests Required
+
+- `backend/tests/test_quiz_snapshot.py`：各模式快照与 `question_ids` 同序、跨题库错题会话逐题取内容、
+  未答写显式 `None`、删除题目后冻结仍可读、重复 finish 不重算、畸形快照条目不崩、旧会话不回填。
+- 迁移 `012` 必须在真实 PostgreSQL 上验证 `upgrade` / `downgrade`（`isolated_postgres`，不碰业务库）。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+session.is_completed = True
+session.final_answers = freeze_final_answers(question_ids, answers)  # 重复 finish 会抹掉冻结
+db.commit()
+
+if entry and entry.get("question_id") == question_id:  # 非 dict 真值崩溃
+```
+
+#### Correct
+
+```python
+if not session.is_completed:
+    session.is_completed = True
+    session.completed_at = datetime.now(timezone.utc)
+    session.final_answers = freeze_final_answers(question_ids, answers)
+    db.commit()
+
+if isinstance(entry, dict) and entry.get("question_id") == question_id:
+```
+
+---
+
+## 错题本：最近一次错误答案
+
+`WrongAnswer.last_wrong_answer` / `last_wrong_session_id` 记录该题**最近一次成功提交的错误选择**。
+
+- 只在 `/quiz/answer` 判错分支写入。**改答答对时不清空**——错误证据按规格保留，
+  「后来答对」不构成清除该错误选择的理由。这与 `is_resolved` 是两件事：掌握状态可变，错误证据不变。
+- 两列可为 `NULL`：旧数据或仅由旧路径写入的行没有可靠证据，前端**不展示猜测的选择**。
+- `last_wrong_answer` 是当时提交的值，可能与当前题库正确答案对应不同题目版本；展示时不要拿它反推对错。
+- 模拟考试隔离：未结束模拟会话产生的错误证据不得通过累计错题提前暴露。
+
+测试见 `backend/tests/test_quiz_snapshot.py` 的「后来答对不覆写」用例。
 
 ---
 

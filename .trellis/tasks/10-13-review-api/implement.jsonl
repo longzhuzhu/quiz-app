@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"FastAPI 依赖注入、返回格式与服务层风格。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"401/403 规则与 HTTPException detail 契约，权限拒绝必须保持既有语义。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"查询风格与 JSONB 读取；答案排序不能依赖数据库返回顺序。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/research/current-implementation.md","reason":"现状调查：session_detail 双消费方、无 order_by、按模式隐藏字段的精确行号。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/design.md","reason":"第 4.3–4.5 节定义响应契约、统计函数与只读拒绝。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/prd.md","reason":"父任务 R3、R7 与正确率口径的不可协商约束。"}
+{"file":"CONTEXT.md","reason":"本场正确率、未答题、答题复盘的领域定义；禁止写成准确率。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"本接口跨模型、schema、API 与两个前端消费方，需按跨层契约检查。"}
