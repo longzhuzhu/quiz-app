@@ -29,6 +29,32 @@ test('多模型解析：真实登录、预热、独立答案、移动Tab、更�
   })`))
   assert.deepEqual(desktop, { count: 5, columns: 2, overflow: false, failed: true, conflict: true })
   await browser('wait', '--fn', 'Boolean(document.querySelector("[data-reader=model-b]"))')
+  const modelLabels = async () => JSON.parse(await browser('eval', `Array.from(document.querySelector('[aria-label="解析模型"]')?.querySelectorAll('button') || []).map(button => button.textContent.trim())`))
+  const desktopLabels = await modelLabels()
+  assert.equal(desktopLabels.length, 5, '桌面也应显示模型选择条')
+  await browser('click', '[aria-label="解析模型"] button:nth-child(2)')
+  const selectionStyle = async () => JSON.parse(await browser('eval', `(() => {
+    const selected = document.querySelector('[aria-label="解析模型"] [aria-selected=true], [aria-label="解析模型"] [aria-pressed=true]');
+    const style = getComputedStyle(selected);
+    return { borderTop: style.borderTopWidth, borderRight: style.borderRightWidth, borderBottom: style.borderBottomWidth,
+      shadow: style.boxShadow, background: style.backgroundColor, color: style.color, fontWeight: style.fontWeight };
+  })()`))
+  const desktopSelectionStyle = await selectionStyle()
+  assert.equal(desktopSelectionStyle.borderTop, '0px')
+  assert.equal(desktopSelectionStyle.borderRight, '0px')
+  assert.equal(desktopSelectionStyle.borderBottom, '2px')
+  assert.equal(desktopSelectionStyle.shadow, 'none', '选中模型不应出现深色粗外框')
+  assert.equal(JSON.parse(await browser('eval', 'document.querySelectorAll("[data-model-id]").length')), 5, '桌面选择模型后仍保留并排比较')
+  const refreshControl = JSON.parse(await browser('eval', `(() => {
+    const card = document.querySelector('[data-model-id="model-b"]');
+    const button = card.querySelector('button');
+    const reader = card.querySelector('[data-reader]');
+    return { inHeading: button.parentElement !== card && button.parentElement.contains(card.querySelector('h3')), aboveBody: button.getBoundingClientRect().top < reader.getBoundingClientRect().top,
+      icon: Boolean(button.querySelector('svg')), text: button.textContent.trim(), busy: button.getAttribute('aria-busy'),
+      animation: button.querySelector('svg') ? getComputedStyle(button.querySelector('svg')).animationName : 'none' };
+  })()`))
+  assert.deepEqual(refreshControl, { inHeading: true, aboveBody: true, icon: true, text: '', busy: 'false', animation: 'none' }, '更新图标应在标题右侧，空闲时保持静态')
+  assert.equal(JSON.parse(await browser('eval', 'Array.from(document.querySelectorAll("button")).some(b=>b.textContent.trim()==="更新全部解析")')), true)
   const cardColors = async () => JSON.parse(await browser('eval', `Array.from(document.querySelectorAll('[data-model-id]')).map(card => ({
     model: card.dataset.modelId, background: getComputedStyle(card).backgroundColor, border: getComputedStyle(card).borderTopColor,
   }))`))
@@ -43,12 +69,24 @@ test('多模型解析：真实登录、预热、独立答案、移动Tab、更�
   assert.ok(darkColors.every((card, i) => card.background !== lightColors[i].background), '卡片应适配深色模式')
   await browser('eval', 'document.documentElement.classList.remove("dark"); true')
   const state = async () => JSON.parse(await browser('eval', '(async()=>await(await fetch("/api/__test/ai-state")).json())()'))
+  // 移动端底部有固定主导航和题号导航，卡片右侧图标按钮必须先滚到视口上部，避免点击被遮挡。
+  const scrollToCardAction = async name => {
+    await browser('eval', `(() => {
+      const label = ${JSON.stringify(name)};
+      const target = Array.from(document.querySelectorAll('button')).find(button =>
+        button.getAttribute('aria-label') === label || button.textContent.trim() === label);
+      target.scrollIntoView({ block: 'center' });
+      const rect = target.getBoundingClientRect();
+      if (rect.top < 80) window.scrollBy(0, rect.top - 80);
+      return true;
+    })()`)
+  }
   assert.ok((await state()).peak <= 3)
   await browser('wait', '--fn', '(async()=>{const s=await(await fetch("/api/__test/ai-state")).json();return s.calls.length===10 && s.active===0})()')
   let initialCalls = (await state()).calls.length
   assert.equal(initialCalls, 10)
   // 只延迟真实 XHR 的发出；所有业务请求仍走真实 API、worker 和 PostgreSQL。
-  await browser('eval', `(() => {
+  const pendingRefresh = JSON.parse(await browser('eval', `(async () => {
     const proto = XMLHttpRequest.prototype;
     const open = proto.open, send = proto.send;
     const probe = window.aiRequestProbe = { active: 0, peak: 0, posts: 0 };
@@ -67,11 +105,19 @@ test('多模型解析：真实登录、预热、独立答案、移动Tab、更�
     };
     probe.restore = () => { proto.open = open; proto.send = send; };
     document.querySelectorAll('[data-model-id] button').forEach(button => button.click());
-  })()`)
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const button = document.querySelector('[data-model-id] button');
+    return { busy: button.getAttribute('aria-busy'), disabled: button.disabled,
+      spinning: button.querySelector('svg') ? getComputedStyle(button.querySelector('svg')).animationName !== 'none' : false };
+  })()`))
+  assert.deepEqual(pendingRefresh, { busy: 'true', disabled: true, spinning: true }, '读取状态和发出更新请求期间立即旋转，并防止重复点击')
   await browser('wait', '--fn', 'window.aiRequestProbe.posts > 0 && window.aiRequestProbe.active === 0 && !Array.from(document.querySelectorAll("button")).some(b=>/解析中|更新中/.test(b.textContent))')
   const requests = JSON.parse(await browser('eval', '({peak: window.aiRequestProbe.peak, posts: window.aiRequestProbe.posts})'))
   assert.ok(requests.peak <= 3, JSON.stringify(requests))
   assert.equal(requests.posts, 1, '状态读取期间重复单卡操作不能进入另一条生成队列')
+  const stoppedRefresh = JSON.parse(await browser('eval', `Array.from(document.querySelectorAll('[data-model-id] button')).every(button =>
+    button.getAttribute('aria-busy') === 'false' && getComputedStyle(button.querySelector('svg')).animationName === 'none')`))
+  assert.equal(stoppedRefresh, true, '任务成功或失败后刷新图标均应恢复静态')
   await browser('eval', 'window.aiRequestProbe.restore()')
   initialCalls += 1
   assert.equal((await state()).calls.length, initialCalls)
@@ -79,6 +125,8 @@ test('多模型解析：真实登录、预热、独立答案、移动Tab、更�
   await browser('wait', '--fn', 'document.querySelectorAll("[role=tab]").length === 5')
   await browser('find', 'role', 'tab', 'click', '--name', 'model-b', '--exact')
   await browser('wait', '--fn', 'document.querySelector("[data-model-id]")?.dataset.modelId === "model-b"')
+  assert.deepEqual(await modelLabels(), desktopLabels)
+  assert.deepEqual(await selectionStyle(), desktopSelectionStyle, '移动与桌面选中模型的展示应一致')
   assert.equal(JSON.parse(await browser('eval', 'document.querySelectorAll("[data-model-id]").length')), 1)
   assert.equal(JSON.parse(await browser('eval', 'document.documentElement.scrollWidth > innerWidth')), false)
   const mobileReader = JSON.parse(await browser('eval', `(() => {
@@ -125,10 +173,12 @@ test('多模型解析：真实登录、预热、独立答案、移动Tab、更�
   await browser('wait', '--fn', '!document.querySelector("[data-model-id=model-b]").textContent.includes("与题库答案不同")')
   assert.equal((await state()).calls.length, initialCalls)
   assert.equal(JSON.parse(await browser('eval', 'Boolean(document.querySelector("details"))')), false)
+  await scrollToCardAction('更新 model-b')
   await browser('find', 'role', 'button', 'click', '--name', '更新 model-b', '--exact')
   await browser('wait', '--fn', '!Array.from(document.querySelectorAll("button")).some(b=>/解析中|更新中/.test(b.textContent))')
   assert.equal((await state()).calls.length, initialCalls + 1)
-  await browser('find', 'role', 'button', 'click', '--name', '更新解析', '--exact')
+  await scrollToCardAction('更新全部解析')
+  await browser('find', 'role', 'button', 'click', '--name', '更新全部解析', '--exact')
   await browser('wait', '--fn', '!Array.from(document.querySelectorAll("button")).some(b=>/解析中|更新中/.test(b.textContent))')
   assert.equal((await state()).calls.length, initialCalls + 6)
   assert.equal(JSON.parse(await browser('eval', 'document.querySelector("[role=tab][aria-selected=true]").textContent.trim()')), 'model-b')
@@ -145,6 +195,7 @@ test('多模型解析：真实登录、预热、独立答案、移动Tab、更�
   await browser('find', 'role', 'button', 'click', '--name', '上一题', '--exact')
   await browser('wait', '--fn', 'document.querySelectorAll("[role=tab]").length === 5')
   await browser('find', 'role', 'tab', 'click', '--name', 'model-e', '--exact')
+  await scrollToCardAction('重试 model-e')
   await browser('find', 'role', 'button', 'click', '--name', '重试 model-e', '--exact')
   await browser('wait', '--fn', '!Array.from(document.querySelectorAll("button")).some(b=>/解析中|更新中/.test(b.textContent))')
   assert.equal((await state()).calls.length, initialCalls + 7)
@@ -180,7 +231,8 @@ test('多模型解析：真实登录、预热、独立答案、移动Tab、更�
     return response.status;
   })()`))
   assert.equal(edited, 200)
-  await browser('find', 'role', 'button', 'click', '--name', '更新解析', '--exact')
+  await scrollToCardAction('更新全部解析')
+  await browser('find', 'role', 'button', 'click', '--name', '更新全部解析', '--exact')
   await browser('wait', '--fn', '!Array.from(document.querySelectorAll("button")).some(b=>/解析中|更新中/.test(b.textContent))')
   assert.equal(JSON.parse(await browser('eval', 'document.body.textContent.includes("题目已变化，请刷新页面后重新解析")')), true)
   assert.equal((await state()).calls.length, initialCalls + 8)

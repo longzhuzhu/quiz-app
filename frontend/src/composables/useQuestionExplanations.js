@@ -8,6 +8,7 @@ export function useQuestionExplanations(question, autoReveal) {
   const opened = ref(false)
   const dispatching = ref(false)
   const reading = ref(false)
+  const updatingModelId = ref(null)
   const error = ref('')
   const stale = ref(false)
   let inputStamp = null
@@ -143,11 +144,15 @@ export function useQuestionExplanations(question, autoReveal) {
     if (reading.value || dispatching.value || stale.value || isGenerating(models.value.find(m => m.model_id === id) || {})) return
     const generation = epoch
     reading.value = true
+    updatingModelId.value = id
     try {
       await refresh(generation)
       if (current(generation) && !stale.value && models.value.some(m => m.model_id === id)) await generate(true, [id])
     } finally {
-      if (current(generation)) reading.value = false
+      if (current(generation)) {
+        reading.value = false
+        updatingModelId.value = null
+      }
     }
   }
 
@@ -160,6 +165,7 @@ export function useQuestionExplanations(question, autoReveal) {
     opened.value = !!autoReveal()
     dispatching.value = false
     reading.value = false
+    updatingModelId.value = null
     error.value = ''
     stale.value = false
     inputStamp = question()?.ai_input_fingerprint || null
@@ -173,5 +179,5 @@ export function useQuestionExplanations(question, autoReveal) {
   })
 
   onBeforeUnmount(() => { disposed = true; epoch += 1; stopPolling() })
-  return { models, bodies, opened, busy, dispatching, reading, error, stale, legacyAvailable, act, updateModel, refresh }
+  return { models, bodies, opened, busy, dispatching, reading, updatingModelId, error, stale, legacyAvailable, act, updateModel, refresh }
 }
