@@ -87,6 +87,10 @@
           </div>
         </div>
 
+        <div v-if="w.question.ai_explanations?.length" class="px-5 pb-4">
+          <ExplanationSummary :models="w.question.ai_explanations" @select="selectModel(w.id, $event)" />
+        </div>
+
         <!-- 展开详情 -->
         <Transition
           enter-active-class="transition-all duration-300 ease-out"
@@ -134,24 +138,10 @@
                   @translated="onTranslated(w, $event)"
                   @toggle="translationVisible[w.id] = !translationVisible[w.id]"
                 />
-                <ExplainButton
-                  :question-id="w.question.id"
-                  :initial-explanation="{ explanation: w.question.explanation, explanation_zh: w.question.explanation_zh }"
-                  :displayed="!!displayedExplanation(w)"
-                  @explained="onExplained(w, $event)"
-                />
                 <AddVocabButton />
               </div>
-              <!-- AI 解析内容 -->
-              <div
-                v-if="displayedExplanation(w)"
-                class="mt-3 rounded-card border border-sky-200 bg-sky-50 p-4 text-sm
-                       dark:border-sky-800 dark:bg-sky-900/20">
-                <p class="font-medium text-sky-800 dark:text-sky-300">AI 解析</p>
-                <p class="mt-2 whitespace-pre-wrap text-gray-600 dark:text-gray-400">
-                  {{ displayedExplanation(w) }}
-                </p>
-              </div>
+              <QuestionExplanation :question="w.question" :auto-reveal="true" :show-summary="false"
+                :ref="el => setExplanationPanel(w.id, el)" @summary="w.question.ai_explanations = $event" />
             </div>
           </div>
         </Transition>
@@ -161,14 +151,15 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useBankStore } from '../stores/bank'
 import { useQuizStore } from '../stores/quiz'
 import { currentExamPath } from '../utils/examRoutes'
 import client from '../api/client'
 import TranslateButton from '../components/TranslateButton.vue'
-import ExplainButton from '../components/ExplainButton.vue'
+import QuestionExplanation from '../components/QuestionExplanation.vue'
+import ExplanationSummary from '../components/ExplanationSummary.vue'
 import AddVocabButton from '../components/AddVocabButton.vue'
 import BaseButton from '../components/BaseButton.vue'
 import SkeletonLoader from '../components/SkeletonLoader.vue'
@@ -187,7 +178,7 @@ const selectedBankId = ref(null)
 const banks = ref([])
 const expandedId = ref(null)
 const translationVisible = reactive({})
-const explainResults = reactive({})
+const explanationPanels = new Map()
 const wrongStats = ref({ unresolved: 0, resolved: 0, total: 0 })
 
 const masteryRate = computed(() => {
@@ -203,16 +194,14 @@ function isCorrectOption(question, key) {
   return question.correct_answer.split(',').map(s => s.trim()).includes(key)
 }
 
-function displayedExplanation(wrong) {
-  return explainResults[wrong.id]?.explanation_zh || wrong.question.explanation_zh || null
+function setExplanationPanel(id, panel) {
+  if (panel) explanationPanels.set(id, panel)
+  else explanationPanels.delete(id)
 }
 
-function onExplained(w, payload) {
-  explainResults[w.id] = payload
-  if (w.question) {
-    w.question.explanation = payload.explanation
-    w.question.explanation_zh = payload.explanation_zh
-  }
+function selectModel(id, modelId) {
+  expandedId.value = id
+  nextTick(() => explanationPanels.get(id)?.selectModel(modelId))
 }
 
 function onTranslated(w, data) {

@@ -146,13 +146,15 @@ def get_bank_in_exam_or_404(db: Session, bank_id: int, exam: Exam, *, lock_for_r
     return bank
 
 
-def get_question_in_exam_or_404(db: Session, question_id: int, exam: Exam) -> Question:
-    question = (
+def get_question_in_exam_or_404(db: Session, question_id: int, exam: Exam, *, lock_for_update: bool = False) -> Question:
+    query = (
         db.query(Question)
         .join(QuestionBank, Question.bank_id == QuestionBank.id)
         .filter(Question.id == question_id, QuestionBank.exam_id == exam.id)
-        .first()
     )
+    if lock_for_update:
+        query = query.with_for_update(of=Question)
+    question = query.first()
     if question is None:
         raise HTTPException(status_code=404, detail="题目不存在")
     return question

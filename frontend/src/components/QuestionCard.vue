@@ -61,14 +61,6 @@
       <TranslateButton :key="question.id" :question-id="question.id" :has-translation="hasFullTranslation" :show="showTranslation"
         @translated="(e) => { $emit('translated', e); showTranslation = true }"
         @toggle="showTranslation = !showTranslation" />
-      <ExplainButton
-        v-if="!examMode"
-        :key="question.id"
-        :question-id="question.id"
-        :initial-explanation="initialExplanation"
-        :displayed="!!displayedExplanation"
-        @explained="onExplained"
-      />
       <AddVocabButton :initial-term="question.content" />
     </div>
 
@@ -99,13 +91,8 @@
       </div>
     </div>
 
-    <!-- AI 解析内容（独立于按钮行） -->
-    <div v-if="displayedExplanation && !examMode"
-      class="mt-3 rounded-card border border-sky-200 bg-sky-50 p-4 text-sm
-             dark:border-sky-800 dark:bg-sky-900/20">
-      <p class="font-medium text-sky-800 dark:text-sky-300">AI 解析</p>
-      <p class="mt-2 whitespace-pre-wrap text-gray-600 dark:text-gray-400">{{ displayedExplanation }}</p>
-    </div>
+    <QuestionExplanation v-if="!examMode" ref="explanationPanel" :key="question.id"
+      :question="question" :auto-reveal="answered" />
 
     <!-- 操作栏 -->
     <div class="mt-6 flex flex-wrap justify-between items-center gap-2">
@@ -133,7 +120,7 @@
 import { computed, ref, watch } from 'vue'
 import { CheckCircleIcon, ClipboardDocumentIcon, XCircleIcon } from '@heroicons/vue/24/outline'
 import TranslateButton from './TranslateButton.vue'
-import ExplainButton from './ExplainButton.vue'
+import QuestionExplanation from './QuestionExplanation.vue'
 import AddVocabButton from './AddVocabButton.vue'
 import BaseButton from './BaseButton.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
@@ -160,29 +147,13 @@ const selectedAnswers = ref([])
 const answered = ref(false)
 const result = ref(null)
 const showTranslation = ref(false)
-const explainData = ref(null)
+const explanationPanel = ref(null)
 const submitting = ref(false)
 const correctionMode = ref(false)
 const pendingCorrectKeys = ref([])
 const confirmCorrectOpen = ref(false)
 const correcting = ref(false)
 let correctionGeneration = 0
-
-const initialExplanation = computed(() => {
-  if (!props.question?.explanation_zh) return null
-  return {
-    explanation: props.question.explanation,
-    explanation_zh: props.question.explanation_zh,
-  }
-})
-
-const displayedExplanation = computed(() => {
-  if (explainData.value?.explanation_zh) return explainData.value.explanation_zh
-  if (answered.value) {
-    return result.value?.explanation_zh || props.question?.explanation_zh || null
-  }
-  return null
-})
 
 const hasFullTranslation = computed(() => {
   if (!props.question?.content_zh) return false
@@ -205,7 +176,6 @@ watch(
     answered.value = !!props.initialResult
     result.value = props.initialResult
     showTranslation.value = false
-    explainData.value = null
     correctionMode.value = false
     pendingCorrectKeys.value = []
     confirmCorrectOpen.value = false
@@ -223,38 +193,14 @@ function parseAnswerKeys(raw) {
   return String(raw).split(',').map((part) => part.trim()).filter(Boolean)
 }
 
-function parseJudgedAnswerFromExplanation(text) {
-  if (!text || !text.includes('【答案冲突】')) return []
-  const match = String(text).match(/AI 认定：([^\n]+)/)
-  if (!match) return []
-  return parseAnswerKeys(match[1])
-}
-
 function isOptionChecked(key) {
   if (correctionMode.value) return pendingCorrectKeys.value.includes(key)
   return selectedAnswers.value.includes(key)
 }
 
-function onExplained(payload) {
-  explainData.value = payload
-  if (result.value) {
-    result.value.explanation = payload.explanation
-    result.value.explanation_zh = payload.explanation_zh
-  }
-  if (props.question) {
-    props.question.explanation = payload.explanation
-    props.question.explanation_zh = payload.explanation_zh
-  }
-}
-
 function enterCorrectionMode() {
   correctionMode.value = true
-  const judged = parseJudgedAnswerFromExplanation(displayedExplanation.value)
-  if (judged.length) {
-    pendingCorrectKeys.value = [...judged]
-  } else {
-    pendingCorrectKeys.value = parseAnswerKeys(result.value?.correct_answer)
-  }
+  pendingCorrectKeys.value = parseAnswerKeys(result.value?.correct_answer)
 }
 
 function cancelCorrection() {
@@ -291,10 +237,10 @@ async function submitCorrectAnswer() {
       props.question.explanation = data.explanation
       props.question.explanation_zh = data.explanation_zh
     }
-    explainData.value = null
     correctionMode.value = false
     pendingCorrectKeys.value = []
     confirmCorrectOpen.value = false
+    explanationPanel.value?.refresh()
     toast.success('答案已更正')
     emit('answer-corrected', {
       questionId: props.question.id,

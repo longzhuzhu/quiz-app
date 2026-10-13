@@ -4,6 +4,7 @@ from app.models.user import User
 from app.models.exam import Exam
 from app.models.question_bank import QuestionBank
 from app.models.question import Question
+from app.models.question_explanation import QuestionExplanation
 from app.models.exam_topic import ExamTopic
 from app.models.question_topic import QuestionTopic
 from app.models.quiz import QuizSession, QuizAnswer
@@ -25,6 +26,7 @@ __all__ = [
     "Exam",
     "QuestionBank",
     "Question",
+    "QuestionExplanation",
     "ExamTopic",
     "QuestionTopic",
     "QuizSession",

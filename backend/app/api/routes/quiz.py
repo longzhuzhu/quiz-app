@@ -20,6 +20,7 @@ from app.models.wrong import WrongAnswer, UserQuestionStat
 from app.models.user import User
 from app.schemas.quiz import QuizStartRequest, QuizAnswerRequest, QuizFinishRequest
 from app.services.exam_service import get_bank_in_exam_or_404
+from app.services.explanation_service import input_fingerprint, summaries_for_questions
 from app.services.practice_service import (
     clear_practice_days,
     heatmap_for,
@@ -226,6 +227,7 @@ def start_quiz(
     counts = _get_user_question_counts(user_id, question_ids, db)
 
     questions_out = []
+    summaries = summaries_for_questions(db, questions, exam.id) if not is_exam else {}
     for q in questions:
         question_data = {
             "id": q.id,
@@ -236,6 +238,8 @@ def start_quiz(
             "user_answer_count": counts.get(q.id, 0),
         }
         if not is_exam:
+            question_data["ai_explanations"] = summaries.get(q.id, [])
+            question_data["ai_input_fingerprint"] = input_fingerprint(q)
             question_data["explanation"] = q.explanation
             question_data["explanation_zh"] = q.explanation_zh
         questions_out.append(question_data)
@@ -578,6 +582,7 @@ def session_detail(
         counts = _get_user_question_counts(user_id, q_ids, db)
         answered_ids = {a.question_id for a in answers}
         all_questions = db.query(Question).filter(Question.id.in_(q_ids)).all()
+        summaries = summaries_for_questions(db, all_questions, exam.id) if not is_exam else {}
         q_map = {q.id: q for q in all_questions}
         for qid in q_ids:
             q = q_map.get(qid)
@@ -592,6 +597,8 @@ def session_detail(
                     "user_answer_count": counts.get(q.id, 0),
                 }
                 if not is_exam:
+                    question_data["ai_explanations"] = summaries.get(q.id, [])
+                    question_data["ai_input_fingerprint"] = input_fingerprint(q)
                     question_data["explanation"] = q.explanation
                     question_data["explanation_zh"] = q.explanation_zh
                 questions_out.append(question_data)

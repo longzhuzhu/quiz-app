@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { createServer } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
@@ -128,7 +129,7 @@ async function startBrowser(t, initialPersonalWords = 0, initialProjectWords = 0
   const server = await startFixture(initialPersonalWords, initialProjectWords)
   // Snap Chromium 的 /tmp 与宿主机隔离，独立 profile 放在可访问的用户目录。
   const profile = await mkdtemp(join(homedir(), 'vocab-browser-'))
-  const session = `vocab-test-${process.pid}-${initialPersonalWords}`
+  const session = `vocab-test-${process.pid}-${randomUUID()}`
   const browser = async (...args) => (await exec('agent-browser', ['--session', session, '--profile', profile, ...args], {
     timeout: 30000, maxBuffer: 1024 * 1024,
   })).stdout

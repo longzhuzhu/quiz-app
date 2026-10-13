@@ -20,6 +20,7 @@ DEFAULT_CONCURRENCY = 2
 
 def process_one_job(worker_id: str = DEFAULT_WORKER_ID) -> bool:
     db = SessionLocal()
+    job = None
     try:
         job_service.recover_stale_jobs(db)
         job = job_service.claim_next_job(db, worker_id=worker_id)
@@ -42,6 +43,7 @@ def process_one_job(worker_id: str = DEFAULT_WORKER_ID) -> bool:
             job_service.requeue_job(db, job, str(exc))
         return True
     finally:
+        job_service.release_explanation_slot(job)
         db.close()
 
 

@@ -2,13 +2,13 @@ import { spawn } from 'node:child_process'
 import { createServer } from 'node:net'
 import { fileURLToPath } from 'node:url'
 
-export async function startStudyBackend(t) {
+export async function startStudyBackend(t, { script = 'run_vocab_study_backend.py' } = {}) {
   const port = await new Promise(resolve => {
     const server = createServer()
     server.listen(0, '127.0.0.1', () => { const port = server.address().port; server.close(() => resolve(port)) })
   })
   const root = fileURLToPath(new URL('../../../', import.meta.url))
-  const child = spawn(`${root}.venv/bin/python`, [`${root}backend/tests/run_vocab_study_backend.py`, '--port', String(port)], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] })
+  const child = spawn(`${root}.venv/bin/python`, [`${root}backend/tests/${script}`, '--port', String(port)], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] })
   let output = ''
   child.stdout.on('data', data => { output += data })
   child.stderr.on('data', data => { output += data })

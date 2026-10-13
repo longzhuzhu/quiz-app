@@ -1,5 +1,7 @@
 """Settings API 路由 - AI 配置管理、连接测试"""
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -10,10 +12,13 @@ from app.schemas.settings import AISettingsUpdateRequest, AITestRequest, QuizSet
 from app.services.ai_service import build_chat_completion_payload
 from app.services.settings_service import (
     QUIZ_AI_PREWARM_ENABLED_SETTING,
+    EXPLANATION_MODELS_SETTING,
+    get_explanation_models,
     get_effective_ai_settings,
     get_key as get_setting,
     get_masked_effective_ai_api_key,
     has_effective_ai_api_key,
+    get_effective_ai_api_key,
     is_quiz_ai_prewarm_enabled,
     set_bool_key,
     set_encrypted_ai_api_key,
@@ -44,6 +49,7 @@ def get_ai_settings(
         "ai_model": get_setting(db, "ai_model", ""),
         "ai_translate_model": get_setting(db, "ai_translate_model", ""),
         "ai_explain_model": get_setting(db, "ai_explain_model", ""),
+        "ai_explain_models": [item.model_dump() for item in get_explanation_models(db)],
     }
 
 
@@ -67,6 +73,8 @@ def update_ai_settings(
         set_setting(db, "ai_translate_model", data.ai_translate_model.strip())
     if data.ai_explain_model is not None:
         set_setting(db, "ai_explain_model", data.ai_explain_model.strip())
+    if data.ai_explain_models is not None:
+        set_setting(db, EXPLANATION_MODELS_SETTING, json.dumps([item.model_dump() for item in data.ai_explain_models], ensure_ascii=False))
 
     db.commit()
     return {"message": "设置已保存"}
