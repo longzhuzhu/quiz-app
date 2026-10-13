@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"核查 JSONB 是否整字段赋值、迁移可升降级、命名是否符合规范。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"核查服务层契约与返回格式。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/research/current-implementation.md","reason":"对照现状证据，确认改动未破坏既有作答与删除语义。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/design.md","reason":"对照第 6 节边界条件表核查旧会话、删除、清空历史等分支。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/prd.md","reason":"核对父任务 R1、R2、R8 与验收清单是否被本子任务满足。"}

@@ -175,6 +175,7 @@ def test_update_regrades_current_session_only(monkeypatch):
     session.user_id = 9
     session.bank.exam_id = exam.id
     session.correct_count = 1
+    session.is_completed = False  # 只有尚未结束的会话才允许更正答案
     quiz_answer = SimpleNamespace(user_answer="C", is_correct=False, question_id=question.id)
 
     db = MagicMock(name="db")
@@ -207,6 +208,32 @@ def test_update_regrades_current_session_only(monkeypatch):
     assert snapshot_calls[0]["local_date"] == "2026-09-10"
     db.commit.assert_called_once()
     db.add.assert_not_called()
+
+
+def test_update_rejects_completed_session(monkeypatch):
+    exam = _exam()
+    question = _question()
+    session = MagicMock(name="session")
+    session.id = 12
+    session.user_id = 9
+    session.bank.exam_id = exam.id
+    session.is_completed = True
+
+    db = MagicMock(name="db")
+    db.get.return_value = session
+    monkeypatch.setattr(
+        "app.services.question_service.clear_question_explanation",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not clear")),
+    )
+
+    with pytest.raises(ValueError, match="已完成"):
+        update_question_correct_answer(
+            db, question, exam, correct_answer="C", session_id=12
+        )
+
+    assert question.correct_answer == "B"
+    assert question.explanation_zh == "zh"
+    db.commit.assert_not_called()
 
 
 def test_update_does_not_import_or_touch_wrong_answer():

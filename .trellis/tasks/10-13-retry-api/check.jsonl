@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/error-handling.md","reason":"核查越权/跨项目/未完成/无题目列表各自的状态码，以及失败无副作用。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"核查端点契约与既有接口的一致性。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/research/current-implementation.md","reason":"对照跨题库与掌握标记的领域约束，确认未缩成首个题库、未剔除已掌握题。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/design.md","reason":"对照第 6 节边界表核查考点已删除、旧会话缺列表等分支。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/prd.md","reason":"逐条核对父任务 R4 验收项。"}

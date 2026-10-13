@@ -16,6 +16,7 @@ from app.models.wrong import UserQuestionStat, WrongAnswer
 from app.schemas.wrong import WrongPracticeRequest
 from app.services.exam_service import get_bank_in_exam_or_404
 from app.services.explanation_service import input_fingerprint, summaries_for_questions
+from app.services.quiz_snapshot_service import snapshot_entries
 
 router = APIRouter()
 
@@ -118,6 +119,8 @@ def practice_wrong(
         mode="wrong_practice",
         total_questions=len(ordered_questions),
         question_ids=json.dumps(question_ids),
+        # 错题会话可跨题库，快照逐题取各自题库内容，不能只查 first_bank_id
+        question_snapshot=snapshot_entries(ordered_questions),
     )
     db.add(session)
     db.commit()

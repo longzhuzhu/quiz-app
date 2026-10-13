@@ -1,0 +1,32 @@
+{
+  "id": "quiz-review-retry",
+  "name": "quiz-review-retry",
+  "title": "答题复盘与原题重做（Issue #63）",
+  "description": "Issue #63 父任务：统一所有模式的完成页与只读复盘，保留本场题目快照，支持按原题原序重开一场。持有需求集、任务地图与跨子任务集成验收标准；实施由 5 个子任务承担。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "longzhuzhu",
+  "assignee": "longzhuzhu",
+  "createdAt": "2026-10-13",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "10-13-snapshot-model",
+    "10-13-review-api",
+    "10-13-retry-api",
+    "10-13-review-ui",
+    "10-13-result-page"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

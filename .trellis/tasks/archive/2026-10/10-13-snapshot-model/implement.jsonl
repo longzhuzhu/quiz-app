@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"JSONB 字段写入必须整字段重新赋值；ORM 模型定义与命名规则；迁移必须真跑 upgrade。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"FastAPI 服务层风格、显式 db 注入与类型注解约定。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"事务与 rollback 模式，避免快照写入失败留下半写状态。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/research/current-implementation.md","reason":"现状调查：QuizSession/QuizAnswer 结构、两个快照写入入口、删除题目会删 QuizAnswer 的证据。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/design.md","reason":"第 3 节定义快照字段、冻结语义与迁移方案。"}
+{"file":"CONTEXT.md","reason":"本场题目快照、当场正确答案、未答题的领域定义与 Avoid 约定。"}

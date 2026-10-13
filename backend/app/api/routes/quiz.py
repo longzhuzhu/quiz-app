@@ -30,6 +30,7 @@ from app.services.practice_service import (
     record_question_touch,
     trend_for,
 )
+from app.services.quiz_snapshot_service import freeze_final_answers, snapshot_entries
 from app.services.topic_service import (
     list_question_ids_for_competency,
     list_question_ids_for_domain,
@@ -218,6 +219,7 @@ def start_quiz(
         topic_id=topic.id if topic else None,
         total_questions=len(questions),
         question_ids=json.dumps([q.id for q in questions]),
+        question_snapshot=snapshot_entries(questions),
     )
     db.add(session)
     db.commit()
@@ -330,7 +332,7 @@ def submit_answer(
         counted_as_new_attempt = True
 
     if not is_correct:
-        # 自动收集错题
+        # 自动收集错题，并保留最近一次错误答案作为错误作答证据（后来答对不覆写）
         wrong = db.query(WrongAnswer).filter_by(
             user_id=user_id, question_id=question_id
         ).first()
@@ -338,8 +340,15 @@ def submit_answer(
             wrong.wrong_count += 1
             wrong.last_wrong_at = datetime.now(timezone.utc)
             wrong.is_resolved = False
+            wrong.last_wrong_answer = user_answer
+            wrong.last_wrong_session_id = session_id
         else:
-            wrong = WrongAnswer(user_id=user_id, question_id=question_id)
+            wrong = WrongAnswer(
+                user_id=user_id,
+                question_id=question_id,
+                last_wrong_answer=user_answer,
+                last_wrong_session_id=session_id,
+            )
             db.add(wrong)
 
     session_mode = session.mode
@@ -402,9 +411,17 @@ def finish_quiz(
     if session.user_id != user_id:
         raise HTTPException(status_code=403, detail="无权限")
 
-    session.is_completed = True
-    session.completed_at = datetime.now(timezone.utc)
-    db.commit()
+    # 完成冻结只做一次：重复结束（双击或重试）不得重算，否则原题被删后
+    # QuizAnswer 已清空，重算会把冻结判定改写成未答。已完成但缺冻结的旧会话
+    # 同样不在此回填，由复盘接口走兼容分支。
+    if not session.is_completed:
+        session.is_completed = True
+        session.completed_at = datetime.now(timezone.utc)
+        session_question_ids = json.loads(session.question_ids) if session.question_ids else []
+        if session_question_ids:
+            answers = db.query(QuizAnswer).filter_by(session_id=session.id).all()
+            session.final_answers = freeze_final_answers(session_question_ids, answers)
+        db.commit()
 
     return {
         "session": {

@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"FastAPI 端点、依赖注入与返回格式约定。"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"校验失败的状态码选择与事务 rollback，失败不得留下部分会话。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"批量查询与 JSONB 快照写入；SAVEPOINT 与并发约束。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/research/current-implementation.md","reason":"现状调查：再来一次只传 bank_id+mode、跨题库会话 bank_id 只是首个题库的证据。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/design.md","reason":"第 4.6 节定义端点校验顺序、原子失败与快照重建。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/prd.md","reason":"父任务 R4 与验收清单中重开相关的全部条目。"}
+{"file":"CONTEXT.md","reason":"原题重做的领域定义：只复用成员与顺序，不恢复题库旧版本。"}

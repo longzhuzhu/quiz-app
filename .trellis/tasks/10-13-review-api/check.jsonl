@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/error-handling.md","reason":"核查越权、跨项目、已完成拒绝提交的状态码与 detail 未被改变。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"核查返回格式与边界行为一致性。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核查契约变更是否同步了两个前端消费方，是否提前暴露模拟答案。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/design.md","reason":"对照第 2.1、2.2 节高风险门禁核查隔离与刷新恢复。"}
+{"file":".trellis/tasks/10-13-quiz-review-retry/prd.md","reason":"逐条核对 R3、R7 验收项与回归清单。"}
