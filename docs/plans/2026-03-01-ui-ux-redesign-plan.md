@@ -475,6 +475,8 @@ git commit -m "feat: redesign quiz page with improved navigation and toast notif
 
 ### Task 10: 答题结果页重设计
 
+> 2026-10-13 更新：本任务中的旧结果布局与按钮行为已被 [Issue #63 设计](2026-10-13-quiz-review-retry-design.md) 替代；下面的样式说明仅保留为历史设计记录，不作为新复盘的实施步骤。
+
 **Files:**
 - Rewrite: `frontend/src/views/QuizResultView.vue`
 
@@ -495,7 +497,7 @@ git commit -m "feat: redesign quiz page with improved navigation and toast notif
 
 **底部按钮:**
 - 三个按钮: 返回首页(secondary)、查看错题(primary)、再来一次(secondary with emerald)
-- "再来一次" 按钮: 调用 quizStore.startQuiz 同题库同模式重新开始
+- "再来一次" 按钮：按原会话全部题目和原顺序新开同模式会话，不再调用题库选题来重新抽题；详细边界见 Issue #63 设计
 
 **Step 2: 验证**
 
