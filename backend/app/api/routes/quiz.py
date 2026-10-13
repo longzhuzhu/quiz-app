@@ -409,11 +409,14 @@ def retry_quiz(
 
     counts = _get_user_question_counts(user_id, source_question_ids, db)
     # 跨题库错题会话的题目分属不同题库，只限定考试项目，不能加 bank_id 过滤；
-    # 查询返回顺序不可依赖，按原 question_ids 重建
+    # 查询返回顺序不可依赖，按原 question_ids 重建。
+    # 行锁持有到本次提交：question_ids 存的是 JSON 而非外键，删除题目不会触发约束错误，
+    # 若校验与创建之间被并发删除，新会话会带上一个已不存在的题。删除端已有行锁，同一把锁。
     rows = (
         db.query(Question)
         .join(QuestionBank, Question.bank_id == QuestionBank.id)
         .filter(Question.id.in_(source_question_ids), QuestionBank.exam_id == exam.id)
+        .with_for_update(of=Question)
         .all()
     )
     question_map = {q.id: q for q in rows}
