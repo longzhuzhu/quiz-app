@@ -24,7 +24,7 @@
         <router-link
           v-for="s in sessions"
           :key="s.id"
-          :to="currentExamPath(route, 'quizResult', { sessionId: s.id })"
+          :to="currentExamPath(route, 'quizReview', { sessionId: s.id })"
           class="flex items-center gap-4 rounded-xl bg-white dark:bg-slate-800 shadow-card hover:shadow-card-hover transition-all p-5"
         >
           <!-- 正确率圆环 -->

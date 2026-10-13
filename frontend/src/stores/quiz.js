@@ -20,6 +20,14 @@ export const useQuizStore = defineStore('quiz', () => {
     currentIndex.value = 0
   }
 
+  async function retryQuiz(sessionId) {
+    const res = await client.post('/quiz/retry', { session_id: sessionId })
+    session.value = res.data.session
+    questions.value = res.data.questions
+    currentIndex.value = 0
+    return res.data
+  }
+
   async function submitAnswer(questionId, userAnswer, answerDurationMs = null) {
     const res = await client.post('/quiz/answer', {
       session_id: session.value.id,
@@ -57,5 +65,5 @@ export const useQuizStore = defineStore('quiz', () => {
     currentIndex.value = 0
   }
 
-  return { session, questions, currentIndex, startQuiz, submitAnswer, finishQuiz, nextQuestion, prevQuestion, reset }
+  return { session, questions, currentIndex, startQuiz, retryQuiz, submitAnswer, finishQuiz, nextQuestion, prevQuestion, reset }
 })
