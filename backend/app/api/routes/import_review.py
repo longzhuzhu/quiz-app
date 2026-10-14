@@ -53,7 +53,7 @@ def accept_item(
     get_import_job_in_exam_or_404(db, job_id, exam)
     result = accept_review_item(db, job_id, item_id, current_user.id)
     if "error" in result:
-        status_code = 404 if "不存在" in result["error"] else 400
+        status_code = result.get("status_code", 404 if "不存在" in result["error"] else 400)
         raise HTTPException(status_code=status_code, detail=result["error"])
     return result
 
@@ -69,7 +69,7 @@ def skip_item(
     get_import_job_in_exam_or_404(db, job_id, exam)
     result = skip_review_item(db, job_id, item_id, current_user.id)
     if "error" in result:
-        status_code = 404 if "不存在" in result["error"] else 400
+        status_code = result.get("status_code", 404 if "不存在" in result["error"] else 400)
         raise HTTPException(status_code=status_code, detail=result["error"])
     return result
 

@@ -17,6 +17,7 @@ from decimal import Decimal
 import httpx
 from pydantic import ValidationError
 from sqlalchemy import func
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -42,7 +43,16 @@ from app.services.job_service import (
     requeue_job,
 )
 
+from app.services.import_execution import (
+    LeaseLost, commit_import, coordinated_review, execution_for,
+    require_execution, release_import_execution,
+)
+
 logger = logging.getLogger(__name__)
+
+
+class ImportRecoveryError(ValueError):
+    """持久化证据不完整；禁止把拒绝恢复伪装成普通 chunk 失败。"""
 
 # ─── 常量 ──────────────────────────────────────
 
@@ -306,7 +316,7 @@ def create_smart_import_job(
     db.flush()
 
     import_job.background_job_id = bg_job.id
-    db.commit()
+    commit_import(db)
 
     return {
         "import_job_id": import_job.id,
@@ -316,6 +326,201 @@ def create_smart_import_job(
 
 
 # ─── 主编排器 ──────────────────────────────────
+
+
+def _source_file_hash(file_path: str) -> str:
+    digest = hashlib.sha256()
+    with open(file_path, "rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _initialize_manifest(db: Session, import_job: ImportJob, _payload: dict) -> list[ImportChunk] | None:
+    """切片、源身份及对账基线一次性提交；无法解释的旧状态拒绝执行。"""
+    config = import_job.config_json or {}
+    existing = db.query(ImportChunk).filter_by(import_job_id=import_job.id).order_by(ImportChunk.chunk_no.asc()).all()
+    manifest = config.get("chunk_manifest")
+    if manifest is not None:
+        members = manifest.get("members", [])
+        actual = [{"id": row.id, "no": row.chunk_no, "hash": row.chunk_hash} for row in existing]
+        if (manifest.get("schema") != 1 or manifest.get("file_hash") != import_job.file_hash
+                or manifest.get("expected_qnos") != config.get("expected_qnos")
+                or manifest.get("answer_key_hash") != hashlib.sha256(config.get("answer_key_text", "").encode()).hexdigest()
+                or not members or actual != members or len({item["no"] for item in actual}) != len(actual)
+                or any(hashlib.sha256(row.chunk_text.encode("utf-8")).hexdigest() != row.chunk_hash for row in existing)):
+            raise ValueError("切片 manifest 不一致，拒绝重试；请人工核验历史记录")
+        return existing
+    if (existing or import_job.parsed_questions or import_job.imported_questions or import_job.review_questions
+            or import_job.status not in ("pending", "extracting", "chunking")
+            or db.query(ImportParsedQuestion).filter_by(import_job_id=import_job.id).first() is not None):
+        raise ValueError("历史导入缺少可靠 manifest/checkpoint，拒绝自动重试；未删除历史数据")
+    file_path, file_type, file_hash = import_job.file_path, import_job.file_type, import_job.file_hash
+    _update_import_job_status(db, import_job, "extracting")
+    db.rollback()  # 抽取文件期间不持有业务事务。
+    try:
+        if _source_file_hash(file_path) != file_hash:
+            raise ValueError("源文件 hash 与导入任务不一致")
+        pages = _extract_pages_from_file(file_path, file_type)
+    except LeaseLost:
+        raise
+    except Exception as exc:
+        _fail_import_job(db, import_job, f"文件抽取失败: {exc}")
+        return None
+    if not pages:
+        _fail_import_job(db, import_job, "文件抽取结果为空")
+        return None
+    _update_import_job_status(db, import_job, "chunking")
+    normalized = _normalize_text("\n".join(page["text"] for page in pages))
+    answer_key = _extract_answer_key(normalized)
+    answer_key_text = _format_answer_key(answer_key) if answer_key else ""
+    if answer_key:
+        normalized = ANSWER_KEY_PATTERN.sub("", normalized).strip()
+    data = _split_into_chunks(pages, normalized, answer_key_text)
+    if not data:
+        _fail_import_job(db, import_job, "文本切片结果为空，无法继续解析")
+        return None
+    execution = execution_for(db)
+    if execution is not None:
+        execution.guard(db)
+    chunks = []
+    expected = set()
+    for item in data:
+        chunk = ImportChunk(import_job_id=import_job.id, chunk_no=item["chunk_no"],
+                            start_page=item.get("start_page"), end_page=item.get("end_page"),
+                            chunk_text=item["chunk_text"], normalized_text=item.get("normalized_text", ""),
+                            chunk_hash=hashlib.sha256(item["chunk_text"].encode("utf-8")).hexdigest(), status="pending")
+        db.add(chunk)
+        chunks.append(chunk)
+        for segment in _split_by_single_question(item["chunk_text"]):
+            qno = _normalize_qno(segment.get("source_question_no"))
+            if qno is not None:
+                expected.add(qno)
+    db.flush()
+    import_job.total_pages = len(pages)
+    import_job.total_chunks = len(chunks)
+    import_job.config_json = {**(import_job.config_json or {}),
+                             "expected_qnos": sorted(expected, key=_qno_sort_key),
+                             "answer_key_text": answer_key_text,
+                             "chunk_manifest": {"schema": 1, "file_hash": file_hash,
+                                "expected_qnos": sorted(expected, key=_qno_sort_key),
+                                "answer_key_hash": hashlib.sha256(answer_key_text.encode()).hexdigest(),
+                                "members": [{"id": row.id, "no": row.chunk_no, "hash": row.chunk_hash} for row in chunks]}}
+    commit_import(db)
+    return chunks
+
+
+def _request_id(db, bg_job) -> int | None:
+    execution = execution_for(db)
+    if execution is not None:
+        return execution.token.background_job_id
+    value = getattr(bg_job, "id", None)
+    return value if isinstance(value, int) else None
+
+
+def _response_hash(response: dict | None) -> str:
+    return hashlib.sha256(json.dumps(response, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _chunk_checkpoint(chunk, request_id) -> dict:
+    if request_id is None:
+        return {}
+    issues = chunk.issues_json or {}
+    checkpoint = issues.get("execution_checkpoint", {})
+    if checkpoint.get("request_id") == request_id:
+        return checkpoint
+    completed = issues.get("completed_requests", {}).get(str(request_id))
+    if completed is not None:
+        if completed.get("chunk_hash") != chunk.chunk_hash:
+            raise ImportRecoveryError("已完成请求的 chunk checkpoint 不一致")
+        terminal_failure = completed.get("terminal_failure", False)
+        return {"persistence_done": not terminal_failure, "terminal_failure": terminal_failure,
+                "finalization_done": completed.get("finalization_done", False)}
+    return {}
+
+
+def _record_response_checkpoint(chunk, request_id) -> None:
+    if request_id is None:
+        return
+    chunk.issues_json = {**(chunk.issues_json or {}), "execution_checkpoint": {
+        "schema": 1, "request_id": request_id, "initialized": True,
+        "chunk_hash": chunk.chunk_hash, "response_hash": _response_hash(chunk.llm_response_json),
+        "response_ready": True, "persistence_done": False,
+    }}
+
+
+def _validate_response_checkpoint(chunk, checkpoint) -> None:
+    if (checkpoint.get("schema") != 1 or checkpoint.get("chunk_hash") != chunk.chunk_hash
+            or checkpoint.get("response_hash") != _response_hash(chunk.llm_response_json)):
+        raise ImportRecoveryError("响应 checkpoint 不一致，拒绝自动恢复")
+
+
+def _persist_chunk_questions(
+    db: Session, chunk: ImportChunk, import_job: ImportJob, result: LlmParseResult,
+    auto_import: bool, seen_signatures: set | None, imported_qnos: set[str] | None,
+    request_id: int | None,
+) -> None:
+    """响应已经独立持久化；解析审计、复核、正式题与 done 在一事务提交。"""
+    signatures_before = set(seen_signatures or ())
+    qnos_before = set(imported_qnos or ())
+    atomic = isinstance(db, Session)
+    execution = execution_for(db)
+    if execution is not None:
+        execution.guard(db)
+    try:
+        if chunk.status != "failed":
+            for question in result.questions:
+                _save_parsed_question(db=db, parsed_q=question, import_job=import_job, chunk=chunk,
+                                      chunk_text=chunk.chunk_text, auto_import=auto_import,
+                                      seen_signatures=seen_signatures, imported_qnos=imported_qnos, commit=not atomic)
+        if request_id is not None:
+            issues = chunk.issues_json or {}
+            checkpoint = {**issues.get("execution_checkpoint", {}), "persistence_done": True,
+                          "question_count": len(result.questions)}
+            chunk.issues_json = {**issues, "execution_checkpoint": checkpoint,
+                                "completed_requests": {**issues.get("completed_requests", {}),
+                                    str(request_id): {"response_hash": checkpoint.get("response_hash"),
+                                                      "chunk_hash": chunk.chunk_hash,
+                                                      "question_count": len(result.questions)}}}
+        commit_import(db)
+    except BaseException:
+        if atomic:
+            db.rollback()
+        if seen_signatures is not None:
+            seen_signatures.clear()
+            seen_signatures.update(signatures_before)
+        if imported_qnos is not None:
+            imported_qnos.clear()
+            imported_qnos.update(qnos_before)
+        raise
+
+
+def _call_import_model(messages, db, *, timeout):
+    execution = execution_for(db)
+    if execution is None:
+        return call_ai_api(messages, db, scene="smart_import", timeout=timeout)
+    from app.services.settings_service import get_effective_ai_settings
+    execution.guard(db)
+    config = get_effective_ai_settings(db, scene="smart_import")
+    db.rollback()
+    result = call_ai_api(messages, db, scene="smart_import", timeout=timeout, ai_config=config)
+    execution.check_lock()
+    return result
+
+
+def _recount_import(db, import_job):
+    if not isinstance(db, Session):
+        return
+    execution = execution_for(db)
+    if execution is not None:
+        execution.guard(db)
+    db.flush()
+    job_id = import_job.id
+    import_job.parsed_questions = db.query(ImportParsedQuestion).filter_by(import_job_id=job_id).count()
+    import_job.imported_questions = db.query(ImportParsedQuestion).filter_by(import_job_id=job_id, import_status="imported").count()
+    import_job.review_questions = db.query(ImportReviewItem).filter_by(import_job_id=job_id, status="pending").count()
+    import_job.failed_chunks = db.query(ImportChunk).filter(ImportChunk.import_job_id == job_id,
+        ImportChunk.status.in_(("failed", "llm_failed", "parse_failed", "parsed_partial"))).count()
 
 
 def run_smart_import(db: Session, background_job: BackgroundJob) -> None:
@@ -329,83 +534,28 @@ def run_smart_import(db: Session, background_job: BackgroundJob) -> None:
     if not import_job:
         raise ValueError(f"ImportJob {import_job_id} 不存在")
 
-    file_path = payload.get("file_path", "")
-    file_type = payload.get("file_type", "")
+    require_execution(db, background_job.id, import_job.id)
     auto_import = payload.get("auto_import", True)
     use_llm_cache = payload.get("use_llm_cache", True)
-
-    # 阶段1：文本抽取
-    _update_import_job_status(db, import_job, "extracting")
-    try:
-        pages = _extract_pages_from_file(file_path, file_type)
-    except Exception as exc:
-        _fail_import_job(db, import_job, f"文件抽取失败: {exc}")
+    chunks = _initialize_manifest(db, import_job, payload)
+    if chunks is None:
         return
-
-    if not pages:
-        _fail_import_job(db, import_job, "文件抽取结果为空")
+    request_id = _request_id(db, background_job)
+    finalized = (import_job.config_json or {}).get("main_finalization", {})
+    if finalized.get("request_id") == request_id and finalized.get("done"):
+        if finalized.get("manifest_hash") != _response_hash(import_job.config_json["chunk_manifest"]):
+            raise ImportRecoveryError("收尾 checkpoint 的 manifest 不一致")
+        for chunk in chunks:
+            checkpoint = _chunk_checkpoint(chunk, request_id)
+            if not checkpoint.get("persistence_done") and not checkpoint.get("terminal_failure"):
+                raise ImportRecoveryError("已收尾请求缺少块入库 checkpoint")
+            if checkpoint.get("response_ready"):
+                _validate_response_checkpoint(chunk, checkpoint)
+        execution = execution_for(db)
+        if execution is not None:
+            execution.guard(db)
+        db.rollback()
         return
-
-    import_job.total_pages = len(pages)
-    db.commit()
-
-    # 阶段2：文本规范化与 Chunk 切片
-    _update_import_job_status(db, import_job, "chunking")
-    full_text = "\n".join(p["text"] for p in pages)
-    normalized_text = _normalize_text(full_text)
-
-    # 检测并提取答案键
-    answer_key = _extract_answer_key(normalized_text)
-    answer_key_text = ""
-    if answer_key:
-        # 移除答案键部分以避免重复解析
-        normalized_text = ANSWER_KEY_PATTERN.sub("", normalized_text).strip()
-        answer_key_text = _format_answer_key(answer_key)
-
-    chunks_data = _split_into_chunks(pages, normalized_text, answer_key_text)
-
-    if not chunks_data:
-        _fail_import_job(db, import_job, "文本切片结果为空，无法继续解析")
-        return
-
-    # 保存 chunks 到数据库
-    for chunk_data in chunks_data:
-        chunk_hash = hashlib.sha256(chunk_data["chunk_text"].encode("utf-8")).hexdigest()
-        chunk = ImportChunk(
-            import_job_id=import_job.id,
-            chunk_no=chunk_data["chunk_no"],
-            start_page=chunk_data.get("start_page"),
-            end_page=chunk_data.get("end_page"),
-            chunk_text=chunk_data["chunk_text"],
-            normalized_text=chunk_data.get("normalized_text", ""),
-            chunk_hash=chunk_hash,
-            status="pending",
-        )
-        db.add(chunk)
-    db.flush()
-
-    import_job.total_chunks = len(chunks_data)
-
-    # PR-4: 计算并存储 expected_qnos —— reconciliation 的"应入库题号"基线。
-    # 在切完 chunk 后一次性写入；reparse 路径不重写该字段（保证可重复对账）。
-    expected_qnos: set[str] = set()
-    for chunk_data in chunks_data:
-        for seg in _split_by_single_question(chunk_data["chunk_text"]):
-            norm = _normalize_qno(seg.get("source_question_no"))
-            if norm is not None:
-                expected_qnos.add(norm)
-
-    # 将 answer_key_text 与 expected_qnos 一并持久化到 config_json。
-    # 使用新 dict 重新赋值，避免 JSONB 就地变更导致脏检测丢失。
-    config = {
-        **(import_job.config_json or {}),
-        "expected_qnos": sorted(expected_qnos, key=_qno_sort_key),
-    }
-    if answer_key_text:
-        config = {**config, "answer_key_text": answer_key_text}
-    import_job.config_json = config
-
-    db.commit()
 
     # 阶段3：LLM 解析
     _update_import_job_status(db, import_job, "parsing")
@@ -418,18 +568,11 @@ def run_smart_import(db: Session, background_job: BackgroundJob) -> None:
         eq_answer = [a.strip() for a in (eq.correct_answer or "").split(",")] if eq.correct_answer else []
         seen_signatures.add(_question_signature(eq.question_type, eq.content, eq_options, eq_answer))
 
-    chunks = (
-        db.query(ImportChunk)
-        .filter_by(import_job_id=import_job.id)
-        .order_by(ImportChunk.chunk_no.asc())
-        .all()
-    )
-
     # 更新 BackgroundJob progress_total 为实际 chunk 数
     bg_job = db.get(BackgroundJob, background_job.id)
     if bg_job and bg_job.progress_total == 0:
         bg_job.progress_total = len(chunks)
-        db.commit()
+        commit_import(db)
 
     for index, chunk in enumerate(chunks, start=1):
         # 刷新 import_job 引用
@@ -446,19 +589,41 @@ def run_smart_import(db: Session, background_job: BackgroundJob) -> None:
                 seen_signatures=seen_signatures,
                 bg_job=bg_job,
             )
+        except (LeaseLost, ImportRecoveryError):
+            raise
         except Exception as exc:
-            logger.error("Chunk %d 解析失败: %s", chunk.chunk_no, exc)
+            db.rollback()
+            # persistence 失败必须重试同一响应，不能伪装成业务 partial 终态。
+            checkpoint = (chunk.issues_json or {}).get("execution_checkpoint", {})
+            if checkpoint.get("response_ready"):
+                # 已持久化响应（含已完成入库）后的编排异常属于恢复路径，
+                # 不能把原本成功的块改成 failed 并伪造 partial 终态。
+                raise
+            logger.error("Chunk %d 解析失败: %s", chunk.chunk_no, type(exc).__name__)
             chunk.status = "failed"
-            chunk.issues_json = {"error": str(exc)}
-            import_job.failed_chunks = (import_job.failed_chunks or 0) + 1
-            db.commit()
-            # 单个 chunk 失败不中断整个导入
+            chunk.issues_json = {**(chunk.issues_json or {}), "error": str(exc)}
+            if request_id is not None:
+                # 硬失败是本请求的已处理终态，不是缺少入库证据的旧 parsed。
+                # 保留失败报告；仅新的显式 reparse 请求重新处理该块。
+                issues = chunk.issues_json
+                chunk.issues_json = {**issues, "execution_checkpoint": {
+                    "schema": 1, "request_id": request_id, "initialized": True,
+                    "chunk_hash": chunk.chunk_hash, "terminal_failure": True,
+                    "response_ready": False, "persistence_done": False, "question_count": 0,
+                }, "completed_requests": {**issues.get("completed_requests", {}),
+                    str(request_id): {"chunk_hash": chunk.chunk_hash, "question_count": 0,
+                                      "terminal_failure": True},
+                }}
+            commit_import(db)
 
-        # 心跳更新进度
+        _recount_import(db, import_job)
+        bg_job.success_count = index
+        bg_job.skipped_count = 0
+        # 进度来自 manifest 遍历，不按执行次数累加。
         heartbeat_job(
             db,
             bg_job,
-            success_increment=1,
+            success_increment=0,
             status_message=f"解析 Chunk {index}/{len(chunks)}",
         )
 
@@ -466,6 +631,11 @@ def run_smart_import(db: Session, background_job: BackgroundJob) -> None:
     _update_import_job_status(db, import_job, "validating")
     import_job = db.get(ImportJob, import_job_id)
     _finalize_import(db, import_job)
+    import_job.config_json = {**(import_job.config_json or {}), "main_finalization": {
+        "request_id": request_id, "done": True,
+        "manifest_hash": _response_hash(import_job.config_json["chunk_manifest"]),
+    }}
+    commit_import(db)
 
 
 def _process_chunk(
@@ -515,8 +685,25 @@ def _process_chunk(
           走 L2 fallback；如 L2 全部失败 → status="failed", failed_chunks++,
           **不再 raise**（已显式记账）。
     """
+    execution = execution_for(db)
+    if execution is not None and (import_job.id != execution.token.import_job_id or chunk.import_job_id != import_job.id):
+        raise LeaseLost("执行上下文与 chunk/import_job 不匹配")
+    request_id = _request_id(db, bg_job)
+    checkpoint = _chunk_checkpoint(chunk, request_id)
+    if checkpoint.get("persistence_done") or checkpoint.get("terminal_failure"):
+        if checkpoint.get("response_ready"):
+            _validate_response_checkpoint(chunk, checkpoint)
+        return
+    if request_id is not None and not checkpoint and chunk.status.startswith("parsed"):
+        raise ImportRecoveryError("已解析 chunk 缺少可靠入库 checkpoint，拒绝自动重试")
+    if checkpoint.get("response_ready"):
+        _validate_response_checkpoint(chunk, checkpoint)
+        llm_result = _parse_llm_response(json.dumps(chunk.llm_response_json, ensure_ascii=False))
+        _persist_chunk_questions(db, chunk, import_job, llm_result, auto_import,
+                                 seen_signatures, imported_qnos, request_id)
+        return
     chunk.status = "parsing"
-    db.commit()
+    commit_import(db)
 
     chunk_text = chunk.chunk_text
     config = import_job.config_json or {}
@@ -544,7 +731,7 @@ def _process_chunk(
     # 2) 构建 prompt + 持久化 llm_request_json（便于事后审计）
     messages = _build_llm_prompt(chunk_text, answer_key_text)
     chunk.llm_request_json = {"messages": messages}
-    db.commit()
+    commit_import(db)
 
     # 3) L1 整 chunk 调用（含最多 1 次重试）
     retry_count = 0
@@ -578,7 +765,7 @@ def _process_chunk(
                 "fallback_used": False,
                 "per_question_failures": [],
             }
-            db.commit()
+            commit_import(db)
             raise
 
     # 4) 如 L1 已决定降级，先执行 L2 单题降级。
@@ -596,6 +783,8 @@ def _process_chunk(
     # 5) 解析 LLM 响应（L1 路径可能失败；L2 路径自构造，保证可解析）
     try:
         llm_result = _parse_llm_response(response_text or "")
+    except LeaseLost:
+        raise
     except Exception as exc:
         chunk.status = "parse_failed"
         chunk.issues_json = {
@@ -607,7 +796,7 @@ def _process_chunk(
             "per_question_failures": per_question_failures,
         }
         chunk.llm_response_json = {"raw": (response_text or "")[:2000]}
-        db.commit()
+        commit_import(db)
         raise
 
     # 5.1) L1 完整性检查：合法 JSON 但题量明显少于 chunk 内可检测题号段时，
@@ -698,23 +887,10 @@ def _process_chunk(
             response_text=response_text or "",
         )
 
-    db.commit()
-
-    # 10) 入库（status="failed" 时 questions 必为空，但显式跳过更稳健）
-    if chunk.status == "failed":
-        return
-
-    for parsed_q in llm_result.questions:
-        _save_parsed_question(
-            db=db,
-            parsed_q=parsed_q,
-            import_job=import_job,
-            chunk=chunk,
-            chunk_text=chunk_text,
-            auto_import=auto_import,
-            seen_signatures=seen_signatures,
-            imported_qnos=imported_qnos,
-        )
+    _record_response_checkpoint(chunk, request_id)
+    commit_import(db)
+    _persist_chunk_questions(db, chunk, import_job, llm_result, auto_import,
+                             seen_signatures, imported_qnos, request_id)
 
 
 def _process_chunk_cached(
@@ -729,6 +905,7 @@ def _process_chunk_cached(
     bg_job: BackgroundJob | None = None,
 ) -> None:
     """处理 LlmParseCache 命中的 chunk：直接复用历史响应，跳过 LLM 调用。"""
+    request_id = _request_id(db, bg_job)
     response_text = cached.get("response_text", "")
     chunk.llm_request_json = cached.get("request_json")
     try:
@@ -738,13 +915,15 @@ def _process_chunk_cached(
 
     try:
         llm_result = _parse_llm_response(response_text)
+    except LeaseLost:
+        raise
     except Exception as exc:
         chunk.status = "parse_failed"
         chunk.issues_json = {
             **(chunk.issues_json or {}),
             "error": f"缓存响应解析失败: {exc}",
         }
-        db.commit()
+        commit_import(db)
         raise
 
     expected_segments = _split_by_single_question(chunk_text)
@@ -806,9 +985,8 @@ def _process_chunk_cached(
                 "actual_questions": actual_count,
             }] + (llm_result.chunk_issues or []),
         }
-        db.commit()
-        if chunk.status == "failed":
-            return
+        _record_response_checkpoint(chunk, request_id)
+        commit_import(db)
     else:
         chunk.status = "parsed_cached"
         if llm_result.chunk_issues:
@@ -816,19 +994,11 @@ def _process_chunk_cached(
                 **(chunk.issues_json or {}),
                 "chunk_issues": llm_result.chunk_issues,
             }
-        db.commit()
+        _record_response_checkpoint(chunk, request_id)
+        commit_import(db)
 
-    for parsed_q in llm_result.questions:
-        _save_parsed_question(
-            db=db,
-            parsed_q=parsed_q,
-            import_job=import_job,
-            chunk=chunk,
-            chunk_text=chunk_text,
-            auto_import=auto_import,
-            seen_signatures=seen_signatures,
-            imported_qnos=imported_qnos,
-        )
+    _persist_chunk_questions(db, chunk, import_job, llm_result, auto_import,
+                             seen_signatures, imported_qnos, request_id)
 
 
 def _build_fallback_response_text(
@@ -875,7 +1045,7 @@ def _call_llm_with_l1_retry(
     last_exc: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
-            text = call_ai_api(messages, db, scene="smart_import", timeout=timeout)
+            text = _call_import_model(messages, db, timeout=timeout)
             return text, attempt
         except ValueError as exc:
             if not _is_retryable_value_error(exc):
@@ -948,9 +1118,7 @@ def _run_per_question_fallback(
 
         msgs = _build_llm_prompt(seg["text"], answer_key_text)
         try:
-            txt = call_ai_api(
-                msgs, db, scene="smart_import", timeout=L2_PER_QUESTION_TIMEOUT,
-            )
+            txt = _call_import_model(msgs, db, timeout=L2_PER_QUESTION_TIMEOUT)
             parsed = _parse_llm_response(txt)
             for q in parsed.questions:
                 merged.append(q.model_dump())
@@ -976,6 +1144,8 @@ def _run_per_question_fallback(
                         f"Chunk {chunk.chunk_no} L2 fallback {idx}/{total_segments}"
                     ),
                 )
+            except LeaseLost:
+                raise
             except Exception as exc:
                 # heartbeat 失败不应中断 fallback；继续下一段
                 logger.warning(
@@ -993,6 +1163,7 @@ def _persist_duplicate_parsed_question(
     chunk: ImportChunk,
     *,
     reason: str,
+    commit: bool = True,
 ) -> None:
     """统一处理 DUPLICATE 路径：把 ImportParsedQuestion 写为 ``review_status='duplicate'``,
     ``import_status='skipped'``，**不**写入 Question 表，**不**更新 ``seen_signatures``。
@@ -1053,7 +1224,10 @@ def _persist_duplicate_parsed_question(
     )
     db.add(parsed_question)
     import_job.parsed_questions = (import_job.parsed_questions or 0) + 1
-    db.commit()
+    if commit:
+        commit_import(db)
+    else:
+        db.flush()
 
 
 def _unusable_question_issues(parsed_q: ParsedQuestion) -> list[dict]:
@@ -1096,6 +1270,8 @@ def _save_parsed_question(
     auto_import: bool,
     seen_signatures: set | None = None,
     imported_qnos: set[str] | None = None,
+    *,
+    commit: bool = True,
 ) -> None:
     """保存单个解析题目，执行质量评分并决定自动入库或人工复核。
 
@@ -1114,7 +1290,7 @@ def _save_parsed_question(
         norm_qno = _normalize_qno(parsed_q.source_question_no)
         if norm_qno is not None and norm_qno in imported_qnos:
             _persist_duplicate_parsed_question(
-                db, parsed_q, import_job, chunk, reason="qno",
+                db, parsed_q, import_job, chunk, reason="qno", commit=commit,
             )
             return
 
@@ -1129,7 +1305,7 @@ def _save_parsed_question(
     sig = _question_signature(question_type, full_content_for_sig, options_for_sig, correct_answer_list)
     if seen_signatures is not None and sig in seen_signatures:
         _persist_duplicate_parsed_question(
-            db, parsed_q, import_job, chunk, reason="content",
+            db, parsed_q, import_job, chunk, reason="content", commit=commit,
         )
         return
 
@@ -1201,14 +1377,17 @@ def _save_parsed_question(
         import_job.review_questions = (import_job.review_questions or 0) + 1
 
     import_job.parsed_questions = (import_job.parsed_questions or 0) + 1
-    db.commit()
+    if commit:
+        commit_import(db)
+    else:
+        db.flush()
 
 
 def _write_question_to_bank(
     db: Session,
     parsed_question: ImportParsedQuestion,
     bank_id: int,
-) -> Question | None:
+) -> Question:
     """将解析结果写入 Question 表（双重保险：再次检查 Question 表去重）"""
     # 转换 options 和 correct_answer 格式
     options = parsed_question.options_json
@@ -1341,7 +1520,7 @@ def create_reparse_job(
         created_by=user_id,
     )
     db.add(bg_job)
-    db.commit()
+    commit_import(db)
 
     return {
         "background_job_id": bg_job.id,
@@ -1365,32 +1544,52 @@ def run_reparse(db: Session, background_job: BackgroundJob) -> None:
     if not chunk:
         raise ValueError(f"ImportChunk {chunk_id} 不存在")
 
+    require_execution(db, background_job.id, import_job.id)
+    if chunk.import_job_id != import_job.id or bank_id != import_job.bank_id:
+        raise ValueError("重解析 chunk/bank 不属于该导入任务")
+    request_id = _request_id(db, background_job)
+    checkpoint = _chunk_checkpoint(chunk, request_id)
+    if checkpoint.get("finalization_done"):
+        if checkpoint.get("response_ready"):
+            _validate_response_checkpoint(chunk, checkpoint)
+        execution = execution_for(db)
+        if execution is not None:
+            execution.guard(db)
+        db.rollback()
+        return
+    same_request = checkpoint.get("initialized", False) or checkpoint.get("persistence_done", False)
+
     # 删除该 chunk 下未导入的 parsed_questions 及关联的 review_items
-    old_parsed = (
-        db.query(ImportParsedQuestion)
-        .filter_by(chunk_id=chunk_id)
-        .all()
-    )
-    for pq in old_parsed:
-        if pq.import_status == "imported" and pq.imported_question_id:
-            # 已导入的题目保留，不删除
-            continue
-        # 删除关联的 review_items
-        db.query(ImportReviewItem).filter_by(parsed_question_id=pq.id).delete()
-        # 更新 import_job 统计
-        if pq.review_status == "pending":
-            import_job.review_questions = max(0, (import_job.review_questions or 0) - 1)
-        import_job.parsed_questions = max(0, (import_job.parsed_questions or 0) - 1)
-        db.delete(pq)
+    if not same_request:
+        execution = execution_for(db)
+        if execution is not None:
+            execution.guard(db)
+        old_query = db.query(ImportParsedQuestion).filter_by(chunk_id=chunk_id)
+        if isinstance(db, Session):
+            old_query = old_query.with_for_update().populate_existing()
+        old_parsed = old_query.all()
+        for pq in old_parsed:
+            if pq.import_status == "imported" and pq.imported_question_id:
+                # 已导入的题目保留，不删除
+                continue
+            # 删除关联的 review_items
+            db.query(ImportReviewItem).filter_by(parsed_question_id=pq.id).delete()
+            # 更新 import_job 统计
+            if pq.review_status == "pending":
+                import_job.review_questions = max(0, (import_job.review_questions or 0) - 1)
+            import_job.parsed_questions = max(0, (import_job.parsed_questions or 0) - 1)
+            db.delete(pq)
 
-    db.flush()
+        db.flush()
 
-    # 重置 chunk 状态
-    chunk.status = "pending"
-    chunk.llm_request_json = None
-    chunk.llm_response_json = None
-    chunk.issues_json = None
-    db.commit()
+        # 重置 chunk 状态
+        chunk.status = "pending"
+        chunk.llm_request_json = None
+        chunk.llm_response_json = None
+        chunk.issues_json = {"completed_requests": (chunk.issues_json or {}).get("completed_requests", {}),
+                            "execution_checkpoint": {"request_id": request_id, "initialized": True,
+                               "chunk_hash": chunk.chunk_hash, "schema": 1}}
+        commit_import(db)
 
     # 重新处理该 chunk
     config = import_job.config_json or {}
@@ -1432,6 +1631,7 @@ def run_reparse(db: Session, background_job: BackgroundJob) -> None:
         imported_qnos=imported_qnos,
     )
 
+    _recount_import(db, import_job)
     # 更新 import_job 状态
     if import_job.review_questions > 0:
         _update_import_job_status(db, import_job, "review_required")
@@ -1445,11 +1645,22 @@ def run_reparse(db: Session, background_job: BackgroundJob) -> None:
     # 注意：reparse **不**走 _finalize_import（避免覆盖 status 状态机），
     # 只复用 _compute_reconciliation 重新计算对账数据 —— 满足 PRD AC3。
     _write_reconciliation(db, import_job)
+    if request_id is not None:
+        issues = chunk.issues_json or {}
+        completed = issues.get("completed_requests", {})
+        chunk.issues_json = {**issues,
+            "execution_checkpoint": {**issues.get("execution_checkpoint", {}), "finalization_done": True},
+            "completed_requests": {**completed, str(request_id): {
+                **completed.get(str(request_id), {}), "finalization_done": True,
+            }},
+        }
+        commit_import(db)
 
 
 # ─── 复核操作 ──────────────────────────────────
 
 
+@coordinated_review
 def accept_review_item(
     db: Session,
     import_job_id: int,
@@ -1461,14 +1672,20 @@ def accept_review_item(
     if not import_job:
         return {"error": "导入任务不存在"}
 
-    review_item = db.get(ImportReviewItem, review_item_id)
+    if isinstance(db, Session):
+        review_item = db.query(ImportReviewItem).filter_by(id=review_item_id).with_for_update().populate_existing().first()
+    else:
+        review_item = db.get(ImportReviewItem, review_item_id)
     if not review_item or review_item.import_job_id != import_job_id:
         return {"error": "复核项不存在或不属于该导入任务"}
 
     if review_item.status != "pending":
         return {"error": f"复核项状态为 {review_item.status}，无法再次操作"}
 
-    parsed_question = db.get(ImportParsedQuestion, review_item.parsed_question_id)
+    if isinstance(db, Session):
+        parsed_question = db.query(ImportParsedQuestion).filter_by(id=review_item.parsed_question_id).with_for_update().populate_existing().first()
+    else:
+        parsed_question = db.get(ImportParsedQuestion, review_item.parsed_question_id)
     if not parsed_question:
         return {"error": "关联的解析题目不存在"}
 
@@ -1485,7 +1702,7 @@ def accept_review_item(
 
     import_job.imported_questions = (import_job.imported_questions or 0) + 1
     import_job.review_questions = max(0, (import_job.review_questions or 0) - 1)
-    db.commit()
+    commit_import(db)
 
     # 更新题库统计
     _update_bank_stats(db, import_job.bank_id)
@@ -1493,6 +1710,7 @@ def accept_review_item(
     return {"question_id": question.id, "message": "题目已入库"}
 
 
+@coordinated_review
 def skip_review_item(
     db: Session,
     import_job_id: int,
@@ -1504,14 +1722,20 @@ def skip_review_item(
     if not import_job:
         return {"error": "导入任务不存在"}
 
-    review_item = db.get(ImportReviewItem, review_item_id)
+    if isinstance(db, Session):
+        review_item = db.query(ImportReviewItem).filter_by(id=review_item_id).with_for_update().populate_existing().first()
+    else:
+        review_item = db.get(ImportReviewItem, review_item_id)
     if not review_item or review_item.import_job_id != import_job_id:
         return {"error": "复核项不存在或不属于该导入任务"}
 
     if review_item.status != "pending":
         return {"error": f"复核项状态为 {review_item.status}，无法再次操作"}
 
-    parsed_question = db.get(ImportParsedQuestion, review_item.parsed_question_id)
+    if isinstance(db, Session):
+        parsed_question = db.query(ImportParsedQuestion).filter_by(id=review_item.parsed_question_id).with_for_update().populate_existing().first()
+    else:
+        parsed_question = db.get(ImportParsedQuestion, review_item.parsed_question_id)
 
     # 更新状态
     if parsed_question:
@@ -1522,7 +1746,7 @@ def skip_review_item(
     review_item.reviewed_at = datetime.now(timezone.utc)
 
     import_job.review_questions = max(0, (import_job.review_questions or 0) - 1)
-    db.commit()
+    commit_import(db)
 
     return {"message": "题目已跳过"}
 
@@ -1707,7 +1931,7 @@ def _split_by_question_markers(text: str) -> list[dict]:
         return []
 
     matches = list(best_pattern.finditer(text))
-    segments = []
+    segments: list[dict] = []
     leading_text = text[:matches[0].start()]
     attach_leading_to_first = _looks_like_leading_reading_material(leading_text)
 
@@ -1720,7 +1944,7 @@ def _split_by_question_markers(text: str) -> list[dict]:
             segments.append({"text": segment_text, "start_page": None, "end_page": None})
 
     # 将过小的片段合并
-    merged = []
+    merged: list[dict] = []
     buffer_text = ""
     for seg in segments:
         if len(buffer_text) + len(seg["text"]) > CHUNK_MAX_CHARS and buffer_text:
@@ -2053,7 +2277,18 @@ def _store_llm_cache(
         request_json=request_json,
         response_json=response_json,
     )
-    db.add(cache_entry)
+    if isinstance(db, Session) and db.get_bind().dialect.name == "postgresql":
+        execution = execution_for(db)
+        if execution is not None:
+            execution.guard(db)
+        db.execute(pg_insert(LlmParseCache).values(
+            cache_key=cache_key, model_name=None, prompt_version=PROMPT_VERSION,
+            chunk_hash=chunk_hash, request_json=request_json, response_json=response_json,
+        ).on_conflict_do_nothing(index_elements=[LlmParseCache.cache_key]))
+    else:
+        existing = db.query(LlmParseCache).filter_by(cache_key=cache_key).first()
+        if existing is None:
+            db.add(cache_entry)
     db.flush()
 
 
@@ -2073,7 +2308,7 @@ def _update_import_job_status(db: Session, import_job: ImportJob, status: str) -
     if import_job:
         import_job.status = status
         import_job.updated_at = datetime.now(timezone.utc)
-        db.commit()
+        commit_import(db)
 
 
 def _fail_import_job(db: Session, import_job: ImportJob, error_message: str) -> None:
@@ -2083,7 +2318,7 @@ def _fail_import_job(db: Session, import_job: ImportJob, error_message: str) -> 
         import_job.status = "failed"
         import_job.error_message = error_message
         import_job.updated_at = datetime.now(timezone.utc)
-        db.commit()
+        commit_import(db)
 
 
 def _compute_reconciliation(db: Session, import_job: ImportJob) -> dict:
@@ -2162,7 +2397,7 @@ def _write_reconciliation(db: Session, import_job: ImportJob) -> None:
         **(import_job.config_json or {}),
         "reconciliation": recon,
     }
-    db.commit()
+    commit_import(db)
 
 
 def _auto_handled_counts(db: Session, import_job_id: int) -> dict:
@@ -2197,6 +2432,7 @@ def _finalize_import(db: Session, import_job: ImportJob) -> None:
     if not import_job:
         return
 
+    _recount_import(db, import_job)
     # 统计最终结果
     total_parsed = import_job.parsed_questions or 0
     total_imported = import_job.imported_questions or 0
@@ -2240,7 +2476,7 @@ def _finalize_import(db: Session, import_job: ImportJob) -> None:
         import_job.status = "imported"
 
     import_job.updated_at = datetime.now(timezone.utc)
-    db.commit()
+    commit_import(db)
 
     # 更新题库统计和高频词
     if total_imported > 0:
@@ -2250,7 +2486,7 @@ def _finalize_import(db: Session, import_job: ImportJob) -> None:
     bank = db.get(QuestionBank, import_job.bank_id)
     if bank:
         bank.source_filename = import_job.file_name
-        db.commit()
+        commit_import(db)
 
     # PR-4：写入 reconciliation 报告
     # 放在 status / summary_json / bank stats 落盘之后；reconciliation 是独立的"对账"
@@ -2268,12 +2504,7 @@ def _update_bank_stats(db: Session, bank_id: int) -> None:
     total_questions = db.query(func.count(Question.id)).filter_by(bank_id=bank_id).scalar() or 0
     bank.question_count = total_questions
 
-    # 重建高频词统计（保留已有翻译）
-    existing_translations = {
-        row.term: row.term_zh
-        for row in db.query(BankWordFrequency).filter_by(bank_id=bank_id).all()
-        if row.term_zh
-    }
+    existing_words = {row.term: row for row in db.query(BankWordFrequency).filter_by(bank_id=bank_id).all()}
 
     all_questions = (
         db.query(Question)
@@ -2295,18 +2526,21 @@ def _update_bank_stats(db: Session, bank_id: int) -> None:
         for row in db.query(BankWordExclusion).filter_by(bank_id=bank_id).all()
     }
 
-    db.query(BankWordFrequency).filter_by(bank_id=bank_id).delete()
+    surviving = set()
     for item in frequency_items:
-        if item["term"] in excluded_terms:
+        term = item["term"]
+        if term in excluded_terms:
             continue
-        db.add(BankWordFrequency(
-            bank_id=bank_id,
-            term=item["term"],
-            term_zh=existing_translations.get(item["term"]),
-            frequency=item["frequency"],
-        ))
+        surviving.add(term)
+        if term in existing_words:
+            existing_words[term].frequency = item["frequency"]
+        else:
+            db.add(BankWordFrequency(bank_id=bank_id, term=term, frequency=item["frequency"]))
+    for term, row in existing_words.items():
+        if term not in surviving:
+            db.delete(row)
 
-    db.commit()
+    commit_import(db)
 
 
 # ─── 序列化辅助 ──────────────────────────────────
@@ -2441,7 +2675,7 @@ def _auto_handled_quality_tips(pq: ImportParsedQuestion) -> list[str]:
         code = issue.get("code")
         if pq.review_status == "auto_skipped" and code in UNUSABLE_REASON_LABELS:
             continue
-        label = QUALITY_TIP_LABELS.get(code)
+        label = QUALITY_TIP_LABELS.get(code) if code is not None else None
         if label and label not in tips:
             tips.append(label)
     return tips
