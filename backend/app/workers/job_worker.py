@@ -4,14 +4,23 @@
 """
 
 import argparse
+import logging
 import os
 import sys
 import threading
 import time
+from typing import TypedDict
 
 from app.core.database import SessionLocal
 from app.services import job_service
 from app.services.job_handlers import run_job
+from app.services.import_execution import ImportExecution, LeaseLost, execution_for, release_import_execution
+
+logger = logging.getLogger(__name__)
+
+class _ImportTerminalKwargs(TypedDict, total=False):
+    execution: ImportExecution
+
 
 DEFAULT_WORKER_ID = "job-worker"
 DEFAULT_POLL_INTERVAL = 2.0
@@ -21,30 +30,47 @@ DEFAULT_CONCURRENCY = 10
 def process_one_job(worker_id: str = DEFAULT_WORKER_ID) -> bool:
     db = SessionLocal()
     job = None
+    execution = None
     try:
         job_service.recover_stale_jobs(db)
         job = job_service.claim_next_job(db, worker_id=worker_id)
         if job is None:
             return False
+        execution = execution_for(db)
+        terminal_kwargs: _ImportTerminalKwargs = {"execution": execution} if execution is not None else {}
 
         try:
             # handler 可以返回一段收尾说明（如「部分批次跳过」），没有则用默认文案
             completion_message = run_job(db, job)
             job = db.get(type(job), job.id)
             if completion_message:
-                job_service.complete_job(db, job, completion_message)
+                job_service.complete_job(db, job, completion_message, **terminal_kwargs)
             else:
-                job_service.complete_job(db, job)
+                job_service.complete_job(db, job, **terminal_kwargs)
+        except LeaseLost:
+            db.rollback()
+            logger.warning("[smart_import] fenced worker background_job_id=%s attempt=%s",
+                           execution.token.background_job_id if execution else job.id,
+                           execution.token.attempt_count if execution else None)
         except Exception as exc:
             db.rollback()
             job = db.get(type(job), job.id)
             if job is None:
                 raise
-            job_service.requeue_job(db, job, str(exc))
+            try:
+                job_service.requeue_job(db, job, str(exc), **terminal_kwargs)
+            except LeaseLost:
+                db.rollback()
         return True
     finally:
-        job_service.release_explanation_slot(job)
-        db.close()
+        try:
+            db.rollback()
+        finally:
+            try:
+                release_import_execution(db, job)
+            finally:
+                job_service.release_explanation_slot(job)
+                db.close()
 
 
 def worker_loop(

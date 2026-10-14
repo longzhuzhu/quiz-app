@@ -3,6 +3,7 @@
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_current_user, get_exam_context
@@ -69,6 +70,7 @@ def list_wrong(
             "id": w.id,
             "question_id": w.question_id,
             "wrong_count": w.wrong_count,
+            "correct_streak": w.correct_streak,
             "last_wrong_at": w.last_wrong_at.isoformat(),
             "question": {
                 "id": q.id,
@@ -97,12 +99,21 @@ def practice_wrong(
     user_id = current_user.id
     bank_id = data.bank_id
 
+    # 非法题量在此手写校验而非用 Pydantic ge=1：框架对校验失败返回 422 且 detail 为数组，
+    # 前端读不到可读文案，也偏离本接口既有的 400 契约。
+    if data.question_count is not None and data.question_count < 1:
+        raise HTTPException(status_code=400, detail="题目数量必须大于 0")
+
     query = _wrong_query(db, user_id, exam).filter(WrongAnswer.is_resolved.is_(False))
     if bank_id:
         get_bank_in_exam_or_404(db, bank_id, exam)
         query = query.filter(Question.bank_id == bank_id)
 
-    wrongs = query.all()
+    # 每次开始都重新洗牌，避免固定顺序让用户形成位置记忆；
+    # 超量请求静默截断，因为错题数会随练习实时减少，硬失败会让「填 20 只剩 18」变成错误。
+    wrongs = query.order_by(func.random()).all()
+    if data.question_count:
+        wrongs = wrongs[: data.question_count]
     if not wrongs:
         raise HTTPException(status_code=400, detail="没有错题")
 
@@ -164,6 +175,9 @@ def resolve_wrong(
     if not wrong:
         raise HTTPException(status_code=404, detail="错题记录不存在")
     wrong.is_resolved = True
+    # 手动掌握与自动掌握必须落到同一状态，否则「手动掌握后答错再答对一次」
+    # 会因残留计数而立刻自动掌握，与自动路径行为不一致。
+    wrong.correct_streak = 0
     db.commit()
     return {"message": "已标记为掌握"}
 

@@ -16,7 +16,7 @@ from app.models.exam_topic import ExamTopic, TOPIC_LEVEL_COMPETENCY, TOPIC_LEVEL
 from app.models.question import Question
 from app.models.question_bank import QuestionBank
 from app.models.quiz import QuizSession, QuizAnswer
-from app.models.wrong import WrongAnswer, UserQuestionStat
+from app.models.wrong import MASTERY_CORRECT_STREAK, WrongAnswer, UserQuestionStat
 from app.models.user import User
 from app.schemas.quiz import (
     QuizAnswerRequest,
@@ -540,11 +540,17 @@ def submit_answer(
         user_answer_count = _upsert_user_question_stat(user_id, question_id, db)
         counted_as_new_attempt = True
 
-    if not is_correct:
-        # 自动收集错题，并保留最近一次错误答案作为错误作答证据（后来答对不覆写）
+    # 答错必然要读错题记录（写入或复活）；答对只在可能加一的两条路径上才需要读，
+    # 其余路径不查——原实现的查询只存在于答错分支内，不能因为提到分支外就给
+    # 每次正确作答都加一次往返（答题接口是延迟敏感路径）。
+    wrong = None
+    if (not is_correct) or (counted_as_new_attempt and session.mode != "exam"):
         wrong = db.query(WrongAnswer).filter_by(
             user_id=user_id, question_id=question_id
         ).first()
+
+    if not is_correct:
+        # 自动收集错题，并保留最近一次错误答案作为错误作答证据（后来答对不覆写）
         if wrong:
             wrong.wrong_count += 1
             wrong.last_wrong_at = datetime.now(timezone.utc)
@@ -559,6 +565,22 @@ def submit_answer(
                 last_wrong_session_id=session_id,
             )
             db.add(wrong)
+        # 任何一次答错都清零连对，包含本场改答到错；不设限才能防「答对后改错再改回」刷连对。
+        # 模拟考试例外：它不向用户展示对错，连对同样不参与，否则会出现
+        # 「模拟考答错后连对归零，但用户看不到任何对错反馈」的静默逆转。
+        if session.mode != "exam" and wrong.correct_streak:
+            wrong.correct_streak = 0
+    elif (
+        wrong is not None
+        # 模拟考试不向用户展示对错，静默改写掌握状态无法归因，故既不加入也不归零。
+        and session.mode != "exam"
+        # counted_as_new_attempt 等价于本场首次成功提交（下面 else 分支才置真）；
+        # 限定它才能防止同场反复「答错→改成对」刷满连对。语义若变，此处需同步。
+        and counted_as_new_attempt
+    ):
+        wrong.correct_streak += 1
+        if wrong.correct_streak >= MASTERY_CORRECT_STREAK:
+            wrong.is_resolved = True
 
     session_mode = session.mode
     answer_duration_ms = existing.answer_duration_ms if existing else answer.answer_duration_ms

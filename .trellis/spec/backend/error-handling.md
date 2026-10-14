@@ -207,3 +207,43 @@ def get_current_user(
         raise HTTPException(status_code=401, detail="Missing authorization credentials")
     ...
 ```
+
+---
+
+## Pydantic 边界校验返回 422，不是 400
+
+FastAPI 对 `Field(ge=1)` 这类声明式约束的校验失败返回 **422**，且响应体是
+`{"detail": [{"type": "greater_than_equal", "loc": ["body", "question_count"], ...}]}` —— `detail` 是**数组**。
+
+这与本项目其余错误（`HTTPException(detail="中文文案")`，`detail` 是字符串）形状不同，前端拿不到可读文案：
+
+- `frontend/src/api/client.js:66` 读 `err.response?.data?.msg`（Flask 风格）
+- `WrongAnswersView.vue` 的 catch 读 `e.response?.data?.detail`
+
+两者对 422 的数组 `detail` 都渲染不出有意义的内容。项目**没有**全局 `RequestValidationError` 处理器
+（`backend/app/main.py` 内无 `exception_handler`）。
+
+**约定**：需要「400 + 可读中文文案」的接口，在路由内手写校验，不用声明式约束。
+
+```python
+# Correct：schema 只声明类型
+class WrongPracticeRequest(BaseModel):
+    question_count: int | None = None
+
+# 路由内手写，返回可读 400
+if data.question_count is not None and data.question_count < 1:
+    raise HTTPException(status_code=400, detail="题目数量必须大于 0")
+```
+
+```python
+# Wrong：声明式约束导致 422 + detail 数组，前端读不出文案
+class WrongPracticeRequest(BaseModel):
+    question_count: int | None = Field(default=None, ge=1)
+```
+
+**不要为此加全局 `RequestValidationError` 处理器**：它会改变全站所有接口的校验错误码，
+而 `client.js:67` 明确依赖 422 区分「token 失效」（422 + `Invalid header` 等文案）与普通校验错误，
+一刀切改 400 会破坏登出逻辑。
+
+测试要求：断言状态码为 400 **且** `isinstance(body["detail"], str)` —— 只断言状态码的话，
+改回声明式约束后部分场景仍可能是 400，锁不住这个契约。

@@ -10,7 +10,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
@@ -31,6 +31,7 @@ from app.models.import_review_item import ImportReviewItem  # noqa: E402
 from app.models.llm_parse_cache import LlmParseCache  # noqa: E402,F401
 from app.models.question import Question  # noqa: E402
 from app.models.question_bank import QuestionBank  # noqa: E402
+from app.models.exam import Exam
 from app.models.user import User  # noqa: E402,F401
 from app.models.vocabulary import Vocabulary  # noqa: E402,F401
 from app.schemas.llm_parse import ParsedOption, ParsedQuestion  # noqa: E402
@@ -47,9 +48,16 @@ FULL_CONTENT = f"{SCENARIO}\n\n{CONTENT}"
 @pytest.fixture
 def db_session():
     engine = create_engine("sqlite:///:memory:")
+    @event.listens_for(engine, "connect")
+    def enforce_foreign_keys(connection, _record):
+        connection.execute("PRAGMA foreign_keys=ON")
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine, expire_on_commit=False)
     db = Session()
+    db.add(User(id=1, username="import-test", email="import@test.invalid", password_hash="unused"))
+    db.flush()
+    db.add(Exam(id=1, owner_id=1, slug="import-test", name="Import", short_name="Import"))
+    db.commit()
     try:
         yield db
     finally:
@@ -59,7 +67,7 @@ def db_session():
 
 @pytest.fixture
 def bank_and_job(db_session):
-    bank = QuestionBank(name="Scenario Bank", description="test")
+    bank = QuestionBank(name="Scenario Bank", description="test", exam_id=1)
     db_session.add(bank)
     db_session.flush()
     job = ImportJob(
@@ -728,6 +736,7 @@ def test_finalize_import_marks_all_auto_skipped_as_unimported(db_session, bank_a
 def test_finalize_import_failed_chunks_take_priority_over_unimported(db_session, bank_and_job, monkeypatch):
     _bank, job, chunk = bank_and_job
     job.failed_chunks = 1
+    chunk.status = "failed"
     duplicate = ImportParsedQuestion(
         import_job_id=job.id,
         chunk_id=chunk.id,

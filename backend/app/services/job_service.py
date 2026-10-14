@@ -4,8 +4,11 @@
 - 使用 SQLAlchemy 2.x select()/update() 风格
 """
 
+from __future__ import annotations
+
 import json
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
 from sqlalchemy import case, or_, select, update
 from sqlalchemy.exc import IntegrityError
@@ -19,6 +22,9 @@ from app.models.question_bank import QuestionBank
 from app.services.ai_service import has_question_explanation, has_question_translation
 from app.services.import_service import TOP_FREQUENT_TERMS_LIMIT
 from app.services.topic_tagging_service import list_untagged_question_ids
+
+if TYPE_CHECKING:
+    from app.services.import_execution import ImportExecution
 
 JOB_TYPE_AI_PREWARM = "ai_prewarm"
 JOB_TYPE_AI_EXPLANATION = "ai_explanation"
@@ -345,6 +351,9 @@ def try_claim_job_by_id(
 ) -> BackgroundJob | None:
     now = now or utc_now()
     candidate = db.get(BackgroundJob, job_id)
+    if candidate is not None and candidate.job_type in (JOB_TYPE_QUESTION_IMPORT_LLM, JOB_TYPE_QUESTION_IMPORT_LLM_REPARSE):
+        from app.services.import_execution import try_claim_import
+        return try_claim_import(db, candidate, worker_id, now, settings.WORKER_LEASE_SECONDS)
     is_explanation = candidate is not None and candidate.job_type == JOB_TYPE_AI_EXPLANATION
     reservation = None
     if is_explanation:
@@ -395,6 +404,22 @@ def try_claim_job_by_id(
         raise
 
 
+def _guard_import_attempt(
+    db: Session, job: BackgroundJob, execution: ImportExecution | None,
+) -> ImportExecution | None:
+    """非导入保持旧行为；导入所有生命周期写入使用同一个不可变领取 token。"""
+    execution = execution or getattr(job, "_import_execution", None)
+    if execution is None and job.job_type not in (JOB_TYPE_QUESTION_IMPORT_LLM, JOB_TYPE_QUESTION_IMPORT_LLM_REPARSE):
+        return None
+    from app.services.import_execution import LeaseLost
+    if execution is None:
+        raise LeaseLost("缺少不可变导入 attempt token")
+    if execution.token.background_job_id != job.id:
+        raise LeaseLost("导入 token 不属于该后台请求")
+    execution.guard(db)
+    return execution
+
+
 def heartbeat_job(
     db: Session,
     job: BackgroundJob,
@@ -402,8 +427,13 @@ def heartbeat_job(
     skipped_increment: int = 0,
     status_message: str | None = None,
     lease_seconds: int = DEFAULT_JOB_LEASE_SECONDS,
+    *,
+    execution: ImportExecution | None = None,
 ) -> BackgroundJob | None:
     now = utc_now()
+    execution = _guard_import_attempt(db, job, execution)
+    if execution is not None:
+        lease_seconds = execution.lease_seconds
     current = db.get(BackgroundJob, job.id)
     if current is None or current.status != "running":
         return current
@@ -424,8 +454,11 @@ def complete_job(
     db: Session,
     job: BackgroundJob,
     status_message: str = "任务完成",
+    *,
+    execution: ImportExecution | None = None,
 ) -> BackgroundJob | None:
     now = utc_now()
+    execution = _guard_import_attempt(db, job, execution)
     current = db.get(BackgroundJob, job.id)
     if current is None or current.status != "running":
         return current
@@ -449,13 +482,16 @@ def requeue_job(
     job: BackgroundJob,
     error_message: str,
     delay_seconds: int = DEFAULT_REQUEUE_DELAY_SECONDS,
+    *,
+    execution: ImportExecution | None = None,
 ) -> BackgroundJob | None:
+    execution = _guard_import_attempt(db, job, execution)
     current = db.get(BackgroundJob, job.id)
     if current is None or current.status != "running":
         return current
 
     if (current.attempt_count or 0) >= (current.max_attempts or 0):
-        return fail_job(db, current, error_message)
+        return fail_job(db, current, error_message, execution=execution)
 
     now = utc_now()
     current.status = "queued"
@@ -474,8 +510,11 @@ def fail_job(
     db: Session,
     job: BackgroundJob,
     error_message: str,
+    *,
+    execution: ImportExecution | None = None,
 ) -> BackgroundJob | None:
     now = utc_now()
+    execution = _guard_import_attempt(db, job, execution)
     current = db.get(BackgroundJob, job.id)
     if current is None or current.status not in {"queued", "running"}:
         return current

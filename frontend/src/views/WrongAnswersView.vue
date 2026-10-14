@@ -34,11 +34,39 @@
           <option :value="null">全部题库</option>
           <option v-for="bank in banks" :key="bank.id" :value="bank.id">{{ bank.name }}</option>
         </select>
-        <BaseButton @click="practiceWrong" :disabled="wrongs.length === 0">
+        <BaseButton @click="openPracticeModal" :disabled="wrongs.length === 0">
           错题练习
         </BaseButton>
       </div>
     </div>
+
+    <!-- 错题练习设置弹窗 -->
+    <BaseModal :open="showPracticeModal" title="错题练习设置" @close="showPracticeModal = false">
+      <div class="space-y-4">
+        <label class="block">
+          <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+            题目数量（当前筛选下共 {{ wrongs.length }} 道错题）
+          </span>
+          <input
+            v-model.number="practiceQuestionCount"
+            type="number"
+            placeholder="留空表示全部"
+            :min="1"
+            :max="wrongs.length"
+            class="mt-1 block w-full rounded-lg border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white shadow-sm focus:border-primary-500 focus:ring-primary-500"
+          />
+          <span class="mt-1 block text-xs text-gray-400 dark:text-gray-500">
+            超过可用数量时按实际错题数开始
+          </span>
+        </label>
+      </div>
+      <template #actions>
+        <BaseButton variant="secondary" @click="showPracticeModal = false">取消</BaseButton>
+        <BaseButton variant="primary" @click="practiceWrong" :disabled="wrongs.length === 0">
+          开始练习
+        </BaseButton>
+      </template>
+    </BaseModal>
 
     <!-- 加载状态 -->
     <div v-if="loading" class="space-y-4">
@@ -70,6 +98,11 @@
               <span class="inline-flex items-center gap-1">
                 <span class="inline-block h-1.5 w-1.5 rounded-full bg-rose-400"></span>
                 错误 {{ w.wrong_count }} 次
+              </span>
+              <!-- 连对进度：阈值 2 与后端 app/models/wrong.py 的 MASTERY_CORRECT_STREAK 一致 -->
+              <span v-if="w.correct_streak >= 1" class="inline-flex items-center gap-1">
+                <span class="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+                连对 {{ w.correct_streak }}/2
               </span>
               <span>正确答案: <span class="text-emerald-600 dark:text-emerald-400 font-medium">{{ w.question.correct_answer }}</span></span>
               <span v-if="w.question.question_type === 'multiple'" class="rounded-full bg-amber-100 dark:bg-amber-900/30 px-2 py-0.5 text-amber-600 dark:text-amber-400">多选</span>
@@ -162,6 +195,7 @@ import QuestionExplanation from '../components/QuestionExplanation.vue'
 import ExplanationSummary from '../components/ExplanationSummary.vue'
 import AddVocabButton from '../components/AddVocabButton.vue'
 import BaseButton from '../components/BaseButton.vue'
+import BaseModal from '../components/BaseModal.vue'
 import SkeletonLoader from '../components/SkeletonLoader.vue'
 import { useToast } from '../composables/useToast'
 import { ChevronDownIcon, FaceSmileIcon } from '@heroicons/vue/24/outline'
@@ -177,6 +211,8 @@ const loading = ref(false)
 const selectedBankId = ref(null)
 const banks = ref([])
 const expandedId = ref(null)
+const showPracticeModal = ref(false)
+const practiceQuestionCount = ref(null)
 const translationVisible = reactive({})
 const explanationPanels = new Map()
 const wrongStats = ref({ unresolved: 0, resolved: 0, total: 0 })
@@ -240,15 +276,30 @@ async function resolveWrong(id) {
   fetchStats()
 }
 
+function openPracticeModal() {
+  practiceQuestionCount.value = null
+  showPracticeModal.value = true
+}
+
 async function practiceWrong() {
   try {
-    const res = await client.post('/wrong/practice', { bank_id: selectedBankId.value })
+    // 留空（空串/NaN）表示全部；0/负数原样交给后端返回可读的 400，
+    // 不能因为 falsy 就把 0 当成「全部」，那与后端的题量边界契约相悖。
+    // 数字输入框可手打小数，取整后再发，避免 Pydantic 422（detail 为数组，读不出文案）。
+    const raw = practiceQuestionCount.value
+    const questionCount = Number.isFinite(raw) ? Math.trunc(raw) : null
+    const res = await client.post('/wrong/practice', {
+      bank_id: selectedBankId.value,
+      question_count: questionCount,
+    })
     quizStore.session = res.data.session
     quizStore.questions = res.data.questions
     quizStore.currentIndex = 0
+    showPracticeModal.value = false
     router.push(currentExamPath(route, 'quiz', { sessionId: res.data.session.id }))
   } catch (e) {
-    toast.error(e.response?.data?.error || '开始错题练习失败')
+    // FastAPI 的业务错误在 detail 里；错误文案可读是手写 400 校验的目的
+    toast.error(e.response?.data?.detail || e.response?.data?.error || '开始错题练习失败')
   }
 }
 

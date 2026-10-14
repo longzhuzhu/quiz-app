@@ -50,7 +50,7 @@ def _compile_jsonb_sqlite(element, compiler, **kw):
     return "JSON"
 
 
-from sqlalchemy import create_engine  # noqa: E402
+from sqlalchemy import create_engine, event  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 from app.core.database import Base  # noqa: E402
@@ -63,6 +63,7 @@ from app.models.import_review_item import ImportReviewItem  # noqa: E402
 from app.models.llm_parse_cache import LlmParseCache  # noqa: E402
 from app.models.question import Question  # noqa: E402
 from app.models.question_bank import QuestionBank  # noqa: E402
+from app.models.exam import Exam
 from app.models.user import User  # noqa: E402
 from app.models.vocabulary import Vocabulary  # noqa: E402
 from app.services import smart_import_service as svc  # noqa: E402
@@ -199,9 +200,16 @@ def make_fake_call_ai_api(behavior: str = "ALL_OK"):
 def db_session():
     """in-memory SQLite + Base.metadata.create_all，每个测试独立。"""
     engine = create_engine("sqlite:///:memory:")
+    @event.listens_for(engine, "connect")
+    def enforce_foreign_keys(connection, _record):
+        connection.execute("PRAGMA foreign_keys=ON")
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine, expire_on_commit=False)
     db = Session()
+    db.add(User(id=1, username="import-test", email="import@test.invalid", password_hash="unused"))
+    db.flush()
+    db.add(Exam(id=1, owner_id=1, slug="import-test", name="Import", short_name="Import"))
+    db.commit()
     try:
         yield db
     finally:
@@ -219,7 +227,7 @@ def patch_runtime(monkeypatch):
 
 def setup_bank_and_job(db, *, with_expected: bool = True) -> tuple[QuestionBank, ImportJob]:
     """创建 QuestionBank + ImportJob（含 31 个 ImportChunk）。"""
-    bank = QuestionBank(name="CIPT Test Bank", description="e2e test")
+    bank = QuestionBank(name="CIPT Test Bank", description="e2e test", exam_id=1)
     db.add(bank)
     db.flush()
 
@@ -480,7 +488,7 @@ def test_finalize_import_does_not_clobber_existing_config_json(
     monkeypatch, db_session, patch_runtime,
 ):
     """_finalize_import 写入 reconciliation 不应覆盖 config_json 中其它键。"""
-    bank = QuestionBank(name="ConfigPreserveBank")
+    bank = QuestionBank(name="ConfigPreserveBank", exam_id=1)
     db_session.add(bank)
     db_session.flush()
 
@@ -517,7 +525,7 @@ def test_finalize_import_does_not_clobber_existing_config_json(
 
 def test_serialize_import_job_exposes_reconciliation_field(db_session):
     """serialize_import_job 应暴露 reconciliation 顶层字段（None / 完整传出）。"""
-    bank = QuestionBank(name="SerializeBank")
+    bank = QuestionBank(name="SerializeBank", exam_id=1)
     db_session.add(bank)
     db_session.flush()
 
