@@ -7,6 +7,9 @@ from pydantic import BaseModel, Field
 
 class WrongPracticeRequest(BaseModel):
     bank_id: int | None = None
+    # 题量上限；为空表示取全部未掌握错题。小于 1 的非法值由路由层手写校验返回 400，
+    # 不用 Field(ge=1) 是因为框架的校验失败响应是 422 + detail 数组，前端取不到文案。
+    question_count: int | None = None
 
 
 class WrongAnswerQuestionOut(BaseModel):

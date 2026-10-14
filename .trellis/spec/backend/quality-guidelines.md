@@ -800,6 +800,11 @@ if isinstance(entry, dict) and entry.get("question_id") == question_id:
   `is_correct`、`correct_answer`、解析、`accuracy`、`wrong_count`、`unanswered_count`、
   `accuracy_basis`、`has_snapshot`。提前 return 路径只有 404/403，早于任何数据组装。
 - **`status` 只由保存的 `is_correct` 决定**，不得用布尔兜底把缺失当 `False`。
+- **过渡字段 `answers` 只服务进行中会话**：完成态不输出（`"answers" not in detail`），
+  避免它与 `questions` 两套题号口径并存导致消费方按数组下标编号而错位。进行中会话**必须保留**：
+  答题页 `QuizView.restoreSessionState` 依赖它恢复 `is_correct` / `correct_answer` / 恢复索引，
+  删掉会让刷新续答丢失判定。两侧都有测试锁定（`test_quiz_review_api.py` 的进行中用例、
+  `frontend/tests/quizResultE2E.test.js` 的回归门禁用例）。
 - 内容优先取 `question_snapshot`；无快照的旧会话退回题库当前值并置 `has_snapshot=false`。
 - `C + E + U = T` 守恒：`wrong = answered - correct`，`unanswered = total - answered`。
 
@@ -886,3 +891,42 @@ if isinstance(frozen.get("is_correct"), bool):
 ### 序列化函数分散在路由和 service 中
 
 Flask 版的 `*_to_dict()` 定义在各路由文件中（如 `bank_to_dict` 在 `banks.py`，`_word_to_dict` 在 `vocab.py`）。FastAPI 版的 `serialize_*()` 定义在对应 service 文件中。
+
+---
+
+## 延迟敏感路径：不要为「消除重复」给既有查询加往返
+
+答题提交（`POST /api/quiz/answer`）是延迟敏感路径，`backend/tests/test_answer_submit_lock_latency.py`
+专门守着它。重构这条链路时，把只在某分支内需要的查询提到分支外「复用」，会给**不进入该分支的路径**
+新增一次往返。
+
+```python
+# Wrong：为了让两个分支共用查询对象，把它提到分支外 ——
+# 每次「答对且从未答错」的提交都白查一次（原实现完全不需要）
+wrong = db.query(WrongAnswer).filter_by(user_id=user_id, question_id=question_id).first()
+if not is_correct:
+    ...
+elif wrong is not None and ...:
+    ...
+```
+
+```python
+# Correct：按需查询，只在真正可能读/写该行的路径上查
+wrong = None
+if (not is_correct) or (counted_as_new_attempt and session.mode != "exam"):
+    wrong = db.query(WrongAnswer).filter_by(
+        user_id=user_id, question_id=question_id
+    ).first()
+
+if not is_correct:
+    ...   # 复用已查询的 wrong，答错分支本来就需要它
+elif wrong is not None and ...:
+    ...
+```
+
+判断方法：先看原实现在哪些分支上查，重构后**逐分支核对**是否新增了查询。消除重复代码不是给
+热路径加成本的充分理由；宁可保留一个 `None` 判断。
+
+**相关**：同一段逻辑里如果某条件出现两次（如 `counted_as_new_attempt` 同时出现在查询条件与
+业务条件中），任一处单独失效都会被另一处兜住，行为仍然正确 —— 但这也意味着针对它的变异测试
+必须**同时**移除两处才会失败，单点变异不会。写变异测试时注意这类冗余守门。

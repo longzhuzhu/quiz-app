@@ -373,3 +373,36 @@ claimed = db.get(BackgroundJob, job_id)  # 重新读取，不依赖同步
 ### 测试要求
 
 naive/aware 比较是**驱动层行为**，SQLite 会掩盖（SQLite 无时区概念）。该缺陷的回归测试必须连真实 PostgreSQL，参考 `backend/tests/test_job_claim_datetime_compare.py`。
+
+---
+
+## 参与算术的新列：`server_default` 不是可选项
+
+给既有表新增一列时，如果这一列会**参与运算**（`+= 1`、比较大小、累加），`nullable=False` 必须配
+`server_default`，否则存量行的该列值是 NULL，运算结果恒为 NULL，功能对存量数据永久失效。
+
+`default=0`（ORM 层）只管新建对象，`server_default="0"`（DDL 层）管存量行 —— 两者都要写。
+
+```python
+# backend/app/models/wrong.py
+correct_streak: Mapped[int] = mapped_column(
+    Integer, nullable=False, default=0, server_default="0"
+)
+```
+
+```python
+# backend/alembic/versions/013_wrong_correct_streak.py
+op.add_column(
+    "wrong_answers",
+    sa.Column("correct_streak", sa.Integer(), nullable=False, server_default="0"),
+)
+```
+
+**与「可空 + 不回填」的取舍区分**：`012` 给 `quiz_sessions` 加的 `question_snapshot` / `final_answers`
+是「没有就是没有」的语义（NULL 表示旧会话无快照，读侧走兼容分支），那种情况可空、不回填是正确的。
+判断标准是**读侧如何处理 NULL**：走兼容分支 → 可空；进算术 → 必须 `server_default`。
+
+**SQLite 掩盖这一差异**：它不会让 `nullable=False` 缺 `server_default` 的迁移失败，测试全绿而生产
+存量行为 NULL。该契约必须由连真实 PostgreSQL 的迁移测试锁住，参考
+`backend/tests/test_wrong_mastery_streak.py::test_migration_013_adds_not_null_default_zero_for_existing_rows`
+（先升到前一版本 → 插入存量行 → 升到新版本 → 断言值非 NULL）。
