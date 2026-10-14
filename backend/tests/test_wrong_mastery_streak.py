@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -489,14 +490,14 @@ def test_practice_session_snapshot_unaffected_by_later_mastery(api):
 
 # --- 013 迁移（AC9）---
 
-def test_migration_013_adds_not_null_default_zero_for_existing_rows():
-    """013 在真实 PostgreSQL（隔离实例）上升级/回滚，且存量错题行取 0 而非 NULL。
+@contextmanager
+def _migration_sandbox(schema: str):
+    """在隔离 PostgreSQL 的专用 schema 上跑 alembic，产出 (engine, migrate, columns)。
 
-    SQLite 掩盖 NOT NULL + server_default 的差异，该回归必须连真实 PostgreSQL。
+    `migrate(*args)` 转发给 alembic（如 `("upgrade", "head")`）；`columns()` 返回
+    `wrong_answers.correct_streak` 是否存在的列名集合。测试结束自动 DROP SCHEMA。
     """
-    schema = "wrong_streak_migration_test"
-
-    def migration_columns(engine):
+    def columns(engine):
         with engine.connect() as conn:
             return set(conn.execute(
                 text(
@@ -522,52 +523,95 @@ def test_migration_013_adds_not_null_default_zero_for_existing_rows():
                     cwd=BACKEND_ROOT, check=True, capture_output=True, text=True,
                 )
 
-            migrate("upgrade", "001")
-            # 003 要求 owner 用户先存在；迁移跑在专用 schema 上，这里补最小的 admin 行。
-            with engine.begin() as conn:
-                conn.execute(text(f'SET LOCAL search_path TO "{schema}"'))
-                conn.execute(text(
-                    "INSERT INTO users (id, username, email, password_hash, is_admin, created_at) "
-                    "VALUES (1, 'nianyu', 'nianyu@example.com', 'x', TRUE, NOW())"
-                ))
-
-            # 先升到 012（无 correct_streak），插入一条存量错题，再升 013。
-            # 只有「存量行在升级后是 0 而不是 NULL」才是本迁移要锁住的契约；
-            # 升级之后再插入的行本就会被 ORM/DDL 默认值覆盖，验证不到回填。
-            migrate("upgrade", "012")
-            assert migration_columns(engine) == set()
-            with engine.begin() as conn:
-                conn.execute(text(f'SET LOCAL search_path TO "{schema}"'))
-                conn.execute(text(
-                    "INSERT INTO question_banks (id, exam_id, name, question_count, created_at) "
-                    "SELECT 1, id, 'b', 1, NOW() FROM exams LIMIT 1"
-                ))
-                conn.execute(text(
-                    "INSERT INTO questions (id, bank_id, question_type, content, options, correct_answer, order_index, created_at) "
-                    "VALUES (1, 1, 'single', 'q', '[]'::jsonb, 'A', 1, NOW())"
-                ))
-                conn.execute(text(
-                    "INSERT INTO wrong_answers (id, user_id, question_id, wrong_count, last_wrong_at, is_resolved) "
-                    "VALUES (1, 1, 1, 1, NOW(), FALSE)"
-                ))
-
-            migrate("upgrade", "head")
-            assert migration_columns(engine) == {"correct_streak"}
-            with engine.begin() as conn:
-                conn.execute(text(f'SET LOCAL search_path TO "{schema}"'))
-                column = conn.execute(text(
-                    "SELECT is_nullable, column_default FROM information_schema.columns "
-                    "WHERE table_schema = :schema AND table_name = 'wrong_answers' "
-                    "AND column_name = 'correct_streak'"
-                ), {"schema": schema}).one()
-                assert tuple(column) == ("NO", "0")
-                assert conn.execute(text(
-                    "SELECT count(*) FROM wrong_answers WHERE correct_streak IS NULL"
-                )).scalar() == 0
-                assert conn.execute(text("SELECT correct_streak FROM wrong_answers")).scalar() == 0
-
-            migrate("downgrade", "012")
-            assert migration_columns(engine) == set()
+            yield engine, migrate, columns
         finally:
             with engine.begin() as conn:
                 conn.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+
+
+def test_migration_013_adds_not_null_default_zero_for_existing_rows():
+    """013 在真实 PostgreSQL（隔离实例）上升级/回滚，且存量错题行取 0 而非 NULL。
+
+    SQLite 掩盖 NOT NULL + server_default 的差异，该回归必须连真实 PostgreSQL。
+    """
+    schema = "wrong_streak_migration_test"
+    with _migration_sandbox(schema) as (engine, migrate, migration_columns):
+        migrate("upgrade", "001")
+        # 003 要求 owner 用户先存在；迁移跑在专用 schema 上，这里补最小的 admin 行。
+        with engine.begin() as conn:
+            conn.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+            conn.execute(text(
+                "INSERT INTO users (id, username, email, password_hash, is_admin, created_at) "
+                "VALUES (1, 'nianyu', 'nianyu@example.com', 'x', TRUE, NOW())"
+            ))
+
+        # 先升到 012（无 correct_streak），插入一条存量错题，再升 013。
+        # 只有「存量行在升级后是 0 而不是 NULL」才是本迁移要锁住的契约；
+        # 升级之后再插入的行本就会被 ORM/DDL 默认值覆盖，验证不到回填。
+        migrate("upgrade", "012")
+        assert migration_columns(engine) == set()
+        with engine.begin() as conn:
+            conn.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+            conn.execute(text(
+                "INSERT INTO question_banks (id, exam_id, name, question_count, created_at) "
+                "SELECT 1, id, 'b', 1, NOW() FROM exams LIMIT 1"
+            ))
+            conn.execute(text(
+                "INSERT INTO questions (id, bank_id, question_type, content, options, correct_answer, order_index, created_at) "
+                "VALUES (1, 1, 'single', 'q', '[]'::jsonb, 'A', 1, NOW())"
+            ))
+            conn.execute(text(
+                "INSERT INTO wrong_answers (id, user_id, question_id, wrong_count, last_wrong_at, is_resolved) "
+                "VALUES (1, 1, 1, 1, NOW(), FALSE)"
+            ))
+
+        migrate("upgrade", "head")
+        assert migration_columns(engine) == {"correct_streak"}
+        with engine.begin() as conn:
+            conn.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+            column = conn.execute(text(
+                "SELECT is_nullable, column_default FROM information_schema.columns "
+                "WHERE table_schema = :schema AND table_name = 'wrong_answers' "
+                "AND column_name = 'correct_streak'"
+            ), {"schema": schema}).one()
+            assert tuple(column) == ("NO", "0")
+            assert conn.execute(text(
+                "SELECT count(*) FROM wrong_answers WHERE correct_streak IS NULL"
+            )).scalar() == 0
+            assert conn.execute(text("SELECT correct_streak FROM wrong_answers")).scalar() == 0
+
+        migrate("downgrade", "012")
+        assert migration_columns(engine) == set()
+
+
+def test_migration_013_upgrades_empty_table():
+    """AC9 的空库分支：wrong_answers 零行时升级同样成功，且定义与含存量行时一致。"""
+    schema = "wrong_streak_empty_test"
+    with _migration_sandbox(schema) as (engine, migrate, migration_columns):
+        # 迁移链的 003 要求 admin 用户先存在（见另一条迁移用例的同类前置），
+        # 但这里**不插入任何错题行**——空表升级不会被 server_default 的回填掩盖问题
+        # （如列被误建为可空），是与含存量行分支互补的验证。
+        migrate("upgrade", "001")
+        with engine.begin() as conn:
+            conn.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+            conn.execute(text(
+                "INSERT INTO users (id, username, email, password_hash, is_admin, created_at) "
+                "VALUES (1, 'nianyu', 'nianyu@example.com', 'x', TRUE, NOW())"
+            ))
+            # 确认起点确实是空表，否则这条用例论证不到「空库升级」
+            assert conn.execute(text("SELECT count(*) FROM wrong_answers")).scalar() == 0
+
+        migrate("upgrade", "head")
+        assert migration_columns(engine) == {"correct_streak"}
+        with engine.begin() as conn:
+            conn.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+            column = conn.execute(text(
+                "SELECT is_nullable, column_default FROM information_schema.columns "
+                "WHERE table_schema = :schema AND table_name = 'wrong_answers' "
+                "AND column_name = 'correct_streak'"
+            ), {"schema": schema}).one()
+            assert tuple(column) == ("NO", "0")
+            assert conn.execute(text("SELECT count(*) FROM wrong_answers")).scalar() == 0
+
+        migrate("downgrade", "012")
+        assert migration_columns(engine) == set()
