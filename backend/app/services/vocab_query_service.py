@@ -1,5 +1,7 @@
 """词汇可见性与学习集合查询。快照仅冻结身份，不冻结内容或权限。"""
 
+import random
+
 from fastapi import HTTPException
 from sqlalchemy import and_, or_
 
@@ -50,6 +52,7 @@ def frequent_query(db, user_id, bank_id, *columns):
 def study_deck(db, user, exam, scope, mastery, bank_id):
     context = study_context(db, user, exam, scope, bank_id)
     if scope == "frequent":
+        # 取词频最高的 TOP_FREQUENT_TERMS_LIMIT 个后立即截断，打乱不得越过这条边界。
         rows = frequent_query(
             db, user.id, bank_id, BankWordFrequency.term, UserBankWordProgress.is_mastered,
         ).order_by(BankWordFrequency.frequency.desc(), BankWordFrequency.term.asc()).limit(TOP_FREQUENT_TERMS_LIMIT).all()
@@ -60,8 +63,11 @@ def study_deck(db, user, exam, scope, mastery, bank_id):
         ).outerjoin(UserVocabProgress, and_(
             UserVocabProgress.vocabulary_id == Vocabulary.id, UserVocabProgress.user_id == user.id,
         )).all()
+        # 排序只为让成员集合不依赖数据库返回次序；学习顺序随后统一打乱。
         rows.sort(key=lambda row: (row.term.lower(), row.term, row.id))
         refs = [{"vocabulary_id": row.id} for row in rows if _matches_mastery(row.is_mastered, mastery)]
+    # 每轮开始时随机一次并冻结进 manifest；续学与再练都按已定顺序进行，不重新打乱。
+    random.shuffle(refs)
     return {
         "schema_version": 1, "context": context, "mastery": mastery, "refs": refs,
         "total": len(refs), "top_limit": TOP_FREQUENT_TERMS_LIMIT if scope == "frequent" else None,
