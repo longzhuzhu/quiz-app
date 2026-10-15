@@ -20,7 +20,22 @@ def add(api, term, scope="personal", exam="current", **content):
     return response.json()["id"]
 
 
-def test_personal_deck_is_complete_stable_and_has_no_project_identity(client):
+def deck_identity(deck):
+    """卡组上下文与成员集合；学习顺序刻意随机，不参与等值比较。"""
+    return {**deck, "refs": sorted(ref.get("vocabulary_id", ref.get("term")) for ref in deck["refs"])}
+
+
+def deck_order(deck):
+    return tuple(ref.get("vocabulary_id", ref.get("term")) for ref in deck["refs"])
+
+
+def assert_random_order(client, params, samples=4):
+    """同一卡组的成员固定，但每次开始学习的顺序必须真的变化。"""
+    orders = {deck_order(client.get("/api/vocab/study/deck", params=params).json()) for _ in range(samples)}
+    assert len(orders) > 1, "学习顺序必须随机，不能退化为固定顺序"
+
+
+def test_personal_deck_is_complete_random_and_has_no_project_identity(client):
     ids = [add(client, f"word{i:03}") for i in range(110)]
     upper = add(client, "Apple")
     lower = add(client, "apple")
@@ -32,15 +47,17 @@ def test_personal_deck_is_complete_stable_and_has_no_project_identity(client):
     response = client.get("/api/vocab/study/deck", params={"scope": "personal"})
     assert response.status_code == 200
     deck = response.json()
-    assert deck == {
+    assert deck_identity(deck) == {
         "schema_version": 1,
         "context": {"scope": "personal", "exam_id": None, "bank_id": None},
         "mastery": "unmastered", "top_limit": None, "total": 112,
-        "refs": [{"vocabulary_id": i} for i in [upper, duplicate, lower, *ids[1:]]],
+        "refs": sorted([upper, duplicate, lower, *ids[1:]]),
     }
+    assert_random_order(client, {"scope": "personal"})
     assert client.get("/api/vocab/study/deck", params={"scope": "personal", "mastery": "mastered"}).json()["refs"] == [{"vocabulary_id": marked}]
     assert client.get("/api/vocab/study/deck", params={"scope": "personal", "mastery": "all"}).json()["total"] == 113
-    assert client.get("/api/vocab/study/deck", params={"scope": "personal"}, headers={"X-Exam-Slug": "other"}).json() == deck
+    other_project = client.get("/api/vocab/study/deck", params={"scope": "personal"}, headers={"X-Exam-Slug": "other"}).json()
+    assert deck_identity(other_project) == deck_identity(deck)
 
 
 def seed_bank(api, count=3, exam="current"):
@@ -244,9 +261,10 @@ def test_frequent_top_limit_precedes_mastery_and_old_members_ignore_new_rank(cli
     assert client.put("/api/vocab/frequent-items/progress", json=progress).status_code == 200
     deck = client.get("/api/vocab/study/deck", params={"scope": "frequent", "bank_id": bank_id}).json()
     assert deck["total"] == 4999 and deck["top_limit"] == 5000
-    assert deck["refs"][0] == {"term": "term0001"}
-    assert deck["refs"][-1] == {"term": "term4999"}
+    # 截断先于打乱：最高频被排除后，成员仍是最频的 5000 个，只是学习顺序随机。
+    assert deck_identity(deck)["refs"] == [f"term{i:04}" for i in range(1, 5000)]
     assert deck["context"] == {"scope": "frequent", "exam_id": 1, "bank_id": bank_id}
+    assert_random_order(client, {"scope": "frequent", "bank_id": bank_id})
     db = client.app.dependency_overrides[get_db]()
     db.query(BankWordFrequency).filter_by(bank_id=bank_id, term="term0001").update({"frequency": 0})
     db.add(BankWordExclusion(bank_id=bank_id, term="term0002", created_by=1))
@@ -281,8 +299,9 @@ def test_project_snapshot_excludes_other_projects_and_uses_stable_exam_id(client
     add(client, "personal")
     add(client, "other", "exam_personal", "other")
     deck = client.get("/api/vocab/study/deck", params={"scope": "exam_personal"}).json()
-    assert deck["refs"] == [{"vocabulary_id": i} for i in ids]
+    assert deck_identity(deck)["refs"] == ids
     assert deck["context"] == {"scope": "exam_personal", "exam_id": 1, "bank_id": None}
+    assert_random_order(client, {"scope": "exam_personal"})
     assert client.get("/api/vocab/study/deck", params={"scope": "personal"}, headers={"X-Exam-Slug": "deleted"}).status_code == 404
 
 
