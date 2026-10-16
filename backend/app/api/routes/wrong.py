@@ -18,6 +18,7 @@ from app.schemas.wrong import WrongPracticeRequest
 from app.services.exam_service import get_bank_in_exam_or_404
 from app.services.explanation_service import input_fingerprint, summaries_for_questions
 from app.services.quiz_snapshot_service import snapshot_entries
+from app.services.settings_service import get_wrong_mastery_correct_streak
 
 router = APIRouter()
 
@@ -191,4 +192,9 @@ def wrong_stats(
     user_id = current_user.id
     total = _wrong_query(db, user_id, exam).filter(WrongAnswer.is_resolved.is_(False)).count()
     resolved = _wrong_query(db, user_id, exam).filter(WrongAnswer.is_resolved.is_(True)).count()
-    return {"unresolved": total, "resolved": resolved, "total": total + resolved}
+    return {
+        "unresolved": total,
+        "resolved": resolved,
+        "total": total + resolved,
+        "mastery_correct_streak": get_wrong_mastery_correct_streak(db),
+    }

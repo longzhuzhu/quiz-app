@@ -7,10 +7,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 
-# 连对达标阈值：一道错题连续答对达到此值即标记为已掌握，退出错题本。
-# 放在模型层是因为它属于数据语义，判分链路与错题接口都要引用。
-MASTERY_CORRECT_STREAK = 2
-
 
 class WrongAnswer(Base):
     __tablename__ = "wrong_answers"
@@ -28,7 +24,7 @@ class WrongAnswer(Base):
         default=lambda: datetime.now(timezone.utc),
     )
     is_resolved: Mapped[bool] = mapped_column(Boolean, default=False)
-    # 连对次数：连续答对的计数，达到 MASTERY_CORRECT_STREAK 即自动掌握。
+    # 连对次数：连续答对的计数，达到配置的连对阈值即自动掌握。
     # 任何一次答错（含本场改答到错）都归零；只有该场首次成功提交的答对才加一，
     # 模拟考试既不加入也不归零。server_default 让存量行取 0 而非 NULL，避免参与算术时被污染。
     correct_streak: Mapped[int] = mapped_column(

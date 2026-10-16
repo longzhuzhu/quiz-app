@@ -16,7 +16,7 @@ from app.models.exam_topic import ExamTopic, TOPIC_LEVEL_COMPETENCY, TOPIC_LEVEL
 from app.models.question import Question
 from app.models.question_bank import QuestionBank
 from app.models.quiz import QuizSession, QuizAnswer
-from app.models.wrong import MASTERY_CORRECT_STREAK, WrongAnswer, UserQuestionStat
+from app.models.wrong import WrongAnswer, UserQuestionStat
 from app.models.user import User
 from app.schemas.quiz import (
     QuizAnswerRequest,
@@ -37,6 +37,7 @@ from app.services.practice_service import (
 )
 from app.services.quiz_snapshot_service import freeze_final_answers, snapshot_entries
 from app.services.quiz_stats import session_stats
+from app.services.settings_service import get_wrong_mastery_correct_streak
 from app.services.topic_service import (
     list_question_ids_for_competency,
     list_question_ids_for_domain,
@@ -579,7 +580,10 @@ def submit_answer(
         and counted_as_new_attempt
     ):
         wrong.correct_streak += 1
-        if wrong.correct_streak >= MASTERY_CORRECT_STREAK:
+        # 阈值每次现读：不加进程内缓存，避免多 worker 下「改了阈值但部分请求仍用旧值」，
+        # 单行唯一索引点查相对本接口的延迟预算可忽略。放在分支内，不提前到函数开头——
+        # 只有走到这里才需要这个值，提前读会给每次答错也加一次往返。
+        if wrong.correct_streak >= get_wrong_mastery_correct_streak(db):
             wrong.is_resolved = True
 
     session_mode = session.mode

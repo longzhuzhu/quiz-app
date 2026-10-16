@@ -41,3 +41,5 @@ class WrongStatsResponse(BaseModel):
     unresolved: int
     resolved: int
     total: int
+    # 当前错题掌握连对阈值，供前端显示「连对 n/X」；随配置变化，不是常量。
+    mastery_correct_streak: int

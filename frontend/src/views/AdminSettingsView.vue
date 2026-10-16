@@ -126,6 +126,22 @@
             </span>
           </span>
         </label>
+
+        <label class="block rounded-card border border-gray-200 dark:border-slate-700 p-4">
+          <span class="block text-sm font-medium text-gray-700 dark:text-gray-300">错题掌握连对阈值</span>
+          <span class="mt-1 block text-xs text-gray-400 dark:text-gray-500">
+            一道错题连续答对达到该次数即自动标记为掌握、退出错题本，可在 1 到 9 之间调整。任何一次答错都会清零连对。
+          </span>
+          <input v-if="form.wrong_mastery_correct_streak !== null" v-model.number="form.wrong_mastery_correct_streak"
+            type="number" min="1" max="9" step="1"
+            class="mt-3 w-24 rounded-lg border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-gray-700 dark:text-gray-200" />
+          <span v-else class="mt-3 block text-xs text-rose-500 dark:text-rose-400">
+            当前值未加载成功，保存时不会改动此项；请重新加载页面后再调整。
+          </span>
+          <span class="mt-2 block text-xs text-amber-600 dark:text-amber-400">
+            修改后从下一次作答起生效，不会重新计算已有错题的掌握状态：已掌握的不会被取消，未掌握的也不会被立即标记为掌握。
+          </span>
+        </label>
       </div>
     </div>
   </div>
@@ -154,6 +170,9 @@ const form = ref({
   ai_translate_model: '',
   ai_explain_models: [],
   quiz_ai_prewarm_enabled: true,
+  // null 表示「尚未从后端读到」：加载失败时保存不提交该字段，避免用一个猜的默认值
+  // 覆盖管理员先前设定的非默认阈值（后端 is not None 语义即「不改动」）。
+  wrong_mastery_correct_streak: null,
 })
 
 onMounted(async () => {
@@ -169,6 +188,7 @@ onMounted(async () => {
       ai_translate_model: aiRes.data.ai_translate_model || '',
       ai_explain_models: aiRes.data.ai_explain_models || [{ model_id: aiRes.data.ai_explain_model || aiRes.data.ai_model || '', reasoning_effort: 'xhigh' }],
       quiz_ai_prewarm_enabled: quizRes.data.quiz_ai_prewarm_enabled !== false,
+      wrong_mastery_correct_streak: quizRes.data.wrong_mastery_correct_streak ?? null,
     }
     storedKeyMask.value = aiRes.data.ai_api_key || ''
     hasStoredKey.value = !!aiRes.data.ai_api_key_configured
@@ -191,6 +211,18 @@ function moveModel(index, direction) {
 }
 
 async function save() {
+  // null 表示设置没加载成功（见 onMounted 的 catch）。此时不提交该字段，让后端保持原值——
+  // 否则会用一个猜的默认值把管理员先前设定的阈值悄悄改回去。
+  let streak = null
+  if (form.value.wrong_mastery_correct_streak !== null) {
+    // 数字输入框可手打小数或非法内容；取整后若越界就先提示，不让它变成 NaN →
+    // 后端按「未提供」处理，否则用户会以为改了而实际没改（静默失败）。
+    streak = Math.trunc(Number(form.value.wrong_mastery_correct_streak))
+    if (!Number.isInteger(streak) || streak < 1 || streak > 9) {
+      toast.error('错题掌握连对阈值必须是 1 到 9 之间的整数')
+      return
+    }
+  }
   saving.value = true
   try {
     await client.put('/settings/ai', {
@@ -202,6 +234,7 @@ async function save() {
     })
     await client.put('/settings/quiz', {
       quiz_ai_prewarm_enabled: form.value.quiz_ai_prewarm_enabled,
+      wrong_mastery_correct_streak: streak,
     })
     if (form.value.ai_api_key.trim()) {
       storedKeyMask.value = ''

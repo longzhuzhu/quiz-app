@@ -13,10 +13,14 @@ from app.services.ai_service import build_chat_completion_payload
 from app.services.settings_service import (
     QUIZ_AI_PREWARM_ENABLED_SETTING,
     EXPLANATION_MODELS_SETTING,
+    WRONG_MASTERY_CORRECT_STREAK_MAX,
+    WRONG_MASTERY_CORRECT_STREAK_MIN,
+    WRONG_MASTERY_CORRECT_STREAK_SETTING,
     get_explanation_models,
     get_effective_ai_settings,
     get_key as get_setting,
     get_masked_effective_ai_api_key,
+    get_wrong_mastery_correct_streak,
     has_effective_ai_api_key,
     get_effective_ai_api_key,
     is_quiz_ai_prewarm_enabled,
@@ -85,7 +89,10 @@ def get_quiz_settings(
     _admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    return {"quiz_ai_prewarm_enabled": is_quiz_ai_prewarm_enabled(db)}
+    return {
+        "quiz_ai_prewarm_enabled": is_quiz_ai_prewarm_enabled(db),
+        "wrong_mastery_correct_streak": get_wrong_mastery_correct_streak(db),
+    }
 
 
 @router.put("/quiz")
@@ -94,8 +101,26 @@ def update_quiz_settings(
     _admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    streak = data.wrong_mastery_correct_streak
+    # 先校验全部输入再做任何写入：set_key 内部会 flush，若先写预热开关再校验阈值，
+    # 阈值被拒时预热开关已处于待提交状态，只能依赖事务关闭时的隐式回滚。
+    # 手写校验而非 Field(ge=..., le=...)：声明式约束返回 422 且 detail 是数组，
+    # 前端读不出可读文案（error-handling.md 有专门约定）。
+    if streak is not None and not (
+        WRONG_MASTERY_CORRECT_STREAK_MIN <= streak <= WRONG_MASTERY_CORRECT_STREAK_MAX
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"错题掌握连对阈值必须是 {WRONG_MASTERY_CORRECT_STREAK_MIN} 到 "
+                f"{WRONG_MASTERY_CORRECT_STREAK_MAX} 之间的整数"
+            ),
+        )
+
     if data.quiz_ai_prewarm_enabled is not None:
         set_bool_key(db, QUIZ_AI_PREWARM_ENABLED_SETTING, data.quiz_ai_prewarm_enabled)
+    if streak is not None:
+        set_setting(db, WRONG_MASTERY_CORRECT_STREAK_SETTING, str(streak))
     db.commit()
     return {"message": "设置已保存"}
 
