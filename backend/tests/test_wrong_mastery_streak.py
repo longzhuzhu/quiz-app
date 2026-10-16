@@ -36,6 +36,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.api.routes.quiz import router  # noqa: E402
+from app.api.routes.settings import router as settings_router  # noqa: E402
 from app.api.routes.wrong import router as wrong_router  # noqa: E402
 from app.core.database import Base, get_db  # noqa: E402
 from app.core.security import create_access_token  # noqa: E402
@@ -46,11 +47,21 @@ from app.models import (  # noqa: E402
     QuestionBank,
     QuestionTopic,
     QuizSession,
+    SystemSetting,
     User,
     WrongAnswer,
 )
 from app.models.exam_topic import TOPIC_LEVEL_COMPETENCY  # noqa: E402
-from app.models.wrong import MASTERY_CORRECT_STREAK  # noqa: E402
+from app.api.routes.settings import update_quiz_settings  # noqa: E402
+from app.schemas.settings import QuizSettingsUpdateRequest  # noqa: E402
+from app.services.settings_service import (  # noqa: E402
+    QUIZ_AI_PREWARM_ENABLED_SETTING,
+    WRONG_MASTERY_CORRECT_STREAK_DEFAULT,
+    WRONG_MASTERY_CORRECT_STREAK_SETTING,
+    get_bool_key,
+    get_wrong_mastery_correct_streak,
+)
+from fastapi import HTTPException  # noqa: E402
 from postgres_support import isolated_postgres  # noqa: E402
 
 OPTIONS = [{"key": "A", "text": "甲"}, {"key": "B", "text": "乙"}]
@@ -60,6 +71,13 @@ QUESTION_COUNT = 5
 @compiles(JSONB, "sqlite")
 def _compile_jsonb_for_sqlite(type_, compiler, **kw):
     return "JSON"
+
+
+def _stored_streak(api):
+    """直接读库中阈值键的原始值；None 表示从未配置过。"""
+    with api.sessions() as db:
+        row = db.query(SystemSetting).filter_by(key=WRONG_MASTERY_CORRECT_STREAK_SETTING).first()
+        return row.value if row else None
 
 
 @pytest.fixture
@@ -77,6 +95,12 @@ def api(tmp_path):
     with sessions() as db:
         user = User(username="streak", email="streak@example.com", password_hash="hash")
         db.add(user)
+        db.flush()
+        admin = User(
+            username="streakadmin", email="streakadmin@example.com",
+            password_hash="hash", is_admin=True,
+        )
+        db.add(admin)
         db.flush()
         exam = Exam(owner_id=user.id, slug="streak", name="Streak", short_name="S")
         db.add(exam)
@@ -102,7 +126,7 @@ def api(tmp_path):
         db.add(QuestionTopic(question_id=questions[0].id, topic_id=topic.id, source="manual"))
         db.commit()
         ids = SimpleNamespace(
-            user=user.id, exam=exam.id, bank=bank.id,
+            user=user.id, admin=admin.id, exam=exam.id, bank=bank.id,
             questions=[q.id for q in questions], topic=topic.id,
         )
 
@@ -113,6 +137,7 @@ def api(tmp_path):
     app = FastAPI()
     app.include_router(router, prefix="/api/quiz")
     app.include_router(wrong_router, prefix="/api/wrong")
+    app.include_router(settings_router, prefix="/api/settings")
     app.dependency_overrides[get_db] = get_test_db
     with TestClient(app) as client:
         client.headers.update({
@@ -179,6 +204,16 @@ def _wrong_stats(api):
     return response.json()
 
 
+def _put_streak(api, value, *, as_admin=True):
+    """以管理员身份改阈值；as_admin=False 用普通用户身份发同一请求验证 403。"""
+    token = create_access_token(str(api.ids.admin if as_admin else api.ids.user))
+    return api.client.put(
+        "/api/settings/quiz",
+        json={"wrong_mastery_correct_streak": value},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
 # --- 连对达标自动掌握 ---
 
 def test_two_correct_across_sessions_marks_mastered(api):
@@ -195,7 +230,7 @@ def test_two_correct_across_sessions_marks_mastered(api):
     before = _wrong_stats(api)
     _answer_in_new_session(api, question_id, "A")  # 第二次答对，达标
     row = _wrong_row(api, question_id)
-    assert row.correct_streak == MASTERY_CORRECT_STREAK
+    assert row.correct_streak == WRONG_MASTERY_CORRECT_STREAK_DEFAULT
     assert row.is_resolved is True
 
     assert question_id not in [item["question_id"] for item in _wrong_list(api)]
@@ -344,7 +379,7 @@ def test_random_and_topic_modes_count_toward_streak(api):
 
     _answer_in_new_session(api, question_id, "A", mode="topic", topic_id=api.ids.topic)
     row = _wrong_row(api, question_id)
-    assert row.correct_streak == MASTERY_CORRECT_STREAK
+    assert row.correct_streak == WRONG_MASTERY_CORRECT_STREAK_DEFAULT
     assert row.is_resolved is True
 
 
@@ -615,3 +650,165 @@ def test_migration_013_upgrades_empty_table():
 
         migrate("downgrade", "012")
         assert migration_columns(engine) == set()
+
+
+# --- 掌握阈值改为系统可配置 ---
+
+def test_missing_setting_falls_back_to_default_two(api):
+    """AC7：从未配置过阈值时行为与改动前一致——等效 2，且不预置数据库键。"""
+    assert _stored_streak(api) is None, "读取阈值不应顺手写库"
+    assert _wrong_stats(api)["mastery_correct_streak"] == WRONG_MASTERY_CORRECT_STREAK_DEFAULT
+
+    question_id = api.ids.questions[0]
+    _answer_in_new_session(api, question_id, "B")
+    _answer_in_new_session(api, question_id, "A")
+    assert _wrong_row(api, question_id).correct_streak == 1
+    assert _wrong_row(api, question_id).is_resolved is False
+
+    _answer_in_new_session(api, question_id, "A")
+    assert _wrong_row(api, question_id).is_resolved is True
+    assert _stored_streak(api) is None, "整条掌握链路都不应产生配置键"
+
+
+@pytest.mark.parametrize("threshold,correct_rounds,mastered", [
+    (1, 1, True),    # 收紧到 1：答对一次即掌握
+    (3, 1, False),   # 放宽到 3：一次不够
+    (3, 2, False),   # 两次也不够
+    (3, 3, True),    # 第三次才掌握
+])
+def test_configured_threshold_drives_mastery(api, threshold, correct_rounds, mastered):
+    """AC2：判定按配置值走，不再是硬编码 2。"""
+    assert _put_streak(api, threshold).status_code == 200
+    assert _wrong_stats(api)["mastery_correct_streak"] == threshold
+
+    question_id = api.ids.questions[0]
+    _answer_in_new_session(api, question_id, "B")
+    for _ in range(correct_rounds):
+        _answer_in_new_session(api, question_id, "A")
+
+    row = _wrong_row(api, question_id)
+    assert row.correct_streak == correct_rounds
+    assert row.is_resolved is mastered
+    listed = [item["question_id"] for item in _wrong_list(api)]
+    assert (question_id not in listed) is mastered
+
+
+@pytest.mark.parametrize("invalid", [0, 10, -1, 100])
+def test_invalid_threshold_rejected_with_readable_400(api, invalid):
+    """AC3：非法值返回 400 且 detail 是中文字符串。
+
+    断言 detail 为 str 而非数组是这条契约的核心：改回 Field(ge=..., le=...) 声明式
+    约束后状态码可能仍是 400/422，但形状变成数组，前端就读不出文案了。
+    """
+    response = _put_streak(api, invalid)
+    assert response.status_code == 400, response.text
+    body = response.json()
+    assert isinstance(body["detail"], str), f"detail 必须是字符串，实际 {type(body['detail'])}"
+    assert "1" in body["detail"] and "9" in body["detail"]
+    assert _stored_streak(api) is None, "被拒绝的值不能落库"
+
+
+def test_rejected_threshold_does_not_disturb_other_settings(api):
+    """校验必须先于任何写入：同一会话内，被拒时不得留下待提交的开关改动。
+
+    必须直接调路由函数并复用同一个会话，不能走 HTTP：TestClient 每次请求都是新会话，
+    未提交的事务在关闭时必然回滚，先写后校验与先校验后写的结果无法区分（这条断言曾
+    写成 HTTP 版本，用缺陷顺序的金丝雀验证过它并不会失败）。复用会话才能观察到
+    set_key 内部 flush 留下的未提交写入。
+    """
+    with api.sessions() as db:
+        admin = db.get(User, api.ids.admin)
+        # 先建立已知状态：预热开启、阈值已设
+        update_quiz_settings(QuizSettingsUpdateRequest(quiz_ai_prewarm_enabled=True), admin, db)
+        update_quiz_settings(QuizSettingsUpdateRequest(wrong_mastery_correct_streak=3), admin, db)
+        assert get_bool_key(db, QUIZ_AI_PREWARM_ENABLED_SETTING, True) is True
+        assert get_wrong_mastery_correct_streak(db) == 3
+
+        # 同一次请求：合法的开关翻转 + 非法阈值
+        with pytest.raises(HTTPException) as excinfo:
+            update_quiz_settings(
+                QuizSettingsUpdateRequest(
+                    quiz_ai_prewarm_enabled=False,
+                    wrong_mastery_correct_streak=99,
+                ),
+                admin,
+                db,
+            )
+        assert excinfo.value.status_code == 400
+
+        # 同一会话内读回：若写入发生在校验之前，这里会看到 False
+        assert get_bool_key(db, QUIZ_AI_PREWARM_ENABLED_SETTING, True) is True, (
+            "阈值被拒时预热开关已被改动，说明校验晚于写入"
+        )
+        assert get_wrong_mastery_correct_streak(db) == 3
+        assert not db.dirty, f"被拒的请求不应留下待提交改动：{db.dirty}"
+
+
+def test_non_admin_cannot_read_or_write_threshold(api):
+    """AC6：阈值对普通用户只经 /api/wrong/stats 只读下发，设置接口保持 admin-only。"""
+    user_token = create_access_token(str(api.ids.user))
+    user_headers = {"Authorization": f"Bearer {user_token}"}
+
+    assert api.client.get("/api/settings/quiz", headers=user_headers).status_code == 403
+    assert _put_streak(api, 3, as_admin=False).status_code == 403
+    # 但只读路径必须可达，否则前端无法显示 n/X
+    assert _wrong_stats(api)["mastery_correct_streak"] == WRONG_MASTERY_CORRECT_STREAK_DEFAULT
+    assert _stored_streak(api) is None, "普通用户的写入必须完全无效果"
+
+
+def test_threshold_change_does_not_recompute_existing_rows(api):
+    """AC4：改阈值零存量重算——掌握状态与连对次数一条都不动。"""
+    # 造三种存量：连对 0、连对 1 未掌握、已掌握
+    q0, q1, q2 = api.ids.questions[:3]
+    _answer_in_new_session(api, q0, "B")           # 连对 0，未掌握
+    _answer_in_new_session(api, q1, "B")
+    _answer_in_new_session(api, q1, "A")           # 连对 1，未掌握
+    _answer_in_new_session(api, q2, "B")
+    _answer_in_new_session(api, q2, "A")
+    _answer_in_new_session(api, q2, "A")           # 连对 2，已掌握
+
+    def snapshot():
+        with api.sessions() as db:
+            rows = db.query(WrongAnswer).order_by(WrongAnswer.question_id).all()
+            return {
+                "states": [(r.question_id, r.correct_streak, r.is_resolved) for r in rows],
+                "stats": _wrong_stats(api),
+            }
+
+    before = snapshot()
+    assert len(before["states"]) == 3
+
+    # 收紧到 1：若做「单向立即重算」，q1 会被批量标成已掌握
+    assert _put_streak(api, 1).status_code == 200
+    after_tighten = snapshot()
+    assert after_tighten["states"] == before["states"], "收紧阈值不应改动存量连对或掌握状态"
+    assert after_tighten["stats"]["resolved"] == before["stats"]["resolved"]
+    assert after_tighten["stats"]["unresolved"] == before["stats"]["unresolved"]
+
+    # 放宽到 3：q2 已掌握不应被取消
+    assert _put_streak(api, 3).status_code == 200
+    after_loosen = snapshot()
+    assert after_loosen["states"] == before["states"], "放宽阈值不应取消已掌握，也不应回退连对"
+    assert after_loosen["stats"]["resolved"] == before["stats"]["resolved"]
+
+    # 前瞻生效：改完之后的作答才按新阈值判定
+    _answer_in_new_session(api, q0, "A")
+    assert _wrong_row(api, q0).correct_streak == 1
+    assert _wrong_row(api, q0).is_resolved is False  # 阈值现为 3，一次不够
+
+
+def test_illegal_stored_value_falls_back_instead_of_failing(api):
+    """读取侧兜底：绕过接口写坏库时回落默认值，不让答题链路 500。"""
+    with api.sessions() as db:
+        db.add(SystemSetting(key=WRONG_MASTERY_CORRECT_STREAK_SETTING, value="abc"))
+        db.commit()
+
+    assert _wrong_stats(api)["mastery_correct_streak"] == WRONG_MASTERY_CORRECT_STREAK_DEFAULT
+
+    # 越界值同样回落
+    with api.sessions() as db:
+        db.query(SystemSetting).filter_by(
+            key=WRONG_MASTERY_CORRECT_STREAK_SETTING
+        ).one().value = "999"
+        db.commit()
+    assert _wrong_stats(api)["mastery_correct_streak"] == WRONG_MASTERY_CORRECT_STREAK_DEFAULT

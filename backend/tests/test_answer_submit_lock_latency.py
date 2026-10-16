@@ -32,6 +32,7 @@ from app.models.question import Question  # noqa: E402
 from app.models.question_bank import QuestionBank  # noqa: E402
 from app.models.quiz import QuizAnswer, QuizSession  # noqa: E402
 from app.models.user import User  # noqa: E402
+from app.models.wrong import WrongAnswer  # noqa: E402
 from app.schemas.quiz import QuizAnswerRequest  # noqa: E402
 
 
@@ -219,6 +220,68 @@ def test_submit_answer_still_writes_practice_stats_without_lock():
         )
         assert snapshot.sample_size >= 1
         assert snapshot.accuracy == 100.0
+    finally:
+        verify.close()
+        _cleanup(user.id)
+
+
+def test_submit_answer_with_wrong_row_reads_streak_within_budget():
+    """答对且存在错题行时，连对分支会现读掌握阈值，同样不得突破延迟预算。
+
+    上面两条用例的 _seed 只造「无错题行」的题，答对时 `wrong is None`，
+    连对分支整体跳过、阈值一次都不读，因此它们盯不住这条新增的读取路径。
+    这里预置一条错题行让分支真正走到，既验证预算，也验证读取只在答对时发生。
+    """
+    setup = SessionLocal()
+    user = exam = question = session = today = None
+    try:
+        user, exam, question, session, today = _seed(setup)
+        setup.add(WrongAnswer(
+            user_id=user.id,
+            question_id=question.id,
+            wrong_count=1,
+            correct_streak=1,
+            is_resolved=False,
+        ))
+        setup.commit()
+        # _seed 已 refresh 过一轮，但上面的 commit 让属性再次过期；
+        # 会话关闭后 submit_answer 会读这些属性，必须再 refresh（否则 DetachedInstanceError）。
+        setup.refresh(user)
+        setup.refresh(exam)
+        setup.refresh(question)
+        setup.refresh(session)
+    finally:
+        setup.close()
+
+    submit_db = SessionLocal()
+    try:
+        payload = QuizAnswerRequest(
+            session_id=session.id,
+            question_id=question.id,
+            user_answer="A",
+            local_date=today.isoformat(),
+        )
+        t0 = time.perf_counter()
+        result = submit_answer(payload, current_user=user, exam=exam, db=submit_db)
+        elapsed = time.perf_counter() - t0
+
+        assert result["is_correct"] is True
+        assert elapsed < SUBMIT_BUDGET_SECONDS, (
+            f"带错题行的答对提交耗时 {elapsed:.3f}s，预算 {SUBMIT_BUDGET_SECONDS}s"
+        )
+    finally:
+        submit_db.close()
+
+    verify = SessionLocal()
+    try:
+        row = (
+            verify.query(WrongAnswer)
+            .filter_by(user_id=user.id, question_id=question.id)
+            .one()
+        )
+        # 预置连对 1 + 本次答对 = 2，默认阈值 2 应恰好达标
+        assert row.correct_streak == 2
+        assert row.is_resolved is True
     finally:
         verify.close()
         _cleanup(user.id)
