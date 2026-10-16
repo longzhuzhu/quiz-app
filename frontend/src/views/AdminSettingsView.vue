@@ -126,6 +126,25 @@
             </span>
           </span>
         </label>
+
+        <div class="rounded-card border border-gray-200 dark:border-slate-700 p-4">
+          <span id="wrong-mastery-streak-label" class="block text-sm font-medium text-gray-700 dark:text-gray-300">错题掌握阈值</span>
+          <div role="group" aria-labelledby="wrong-mastery-streak-label" class="mt-3 flex items-center gap-2">
+            <button type="button" :disabled="form.wrong_mastery_correct_streak === null || form.wrong_mastery_correct_streak <= 1"
+              @click="stepStreak(-1)" aria-label="减少错题掌握阈值"
+              class="h-9 w-9 rounded-lg border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-200 text-lg leading-none disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-50 dark:hover:bg-slate-700">−</button>
+            <span v-if="form.wrong_mastery_correct_streak !== null" aria-live="polite"
+              class="w-12 text-center text-lg font-semibold tabular-nums text-gray-900 dark:text-white">{{ form.wrong_mastery_correct_streak }}</span>
+            <span v-else class="w-12 text-center text-sm text-rose-500 dark:text-rose-400">—</span>
+            <button type="button" :disabled="form.wrong_mastery_correct_streak === null || form.wrong_mastery_correct_streak >= 9"
+              @click="stepStreak(1)" aria-label="增加错题掌握阈值"
+              class="h-9 w-9 rounded-lg border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-200 text-lg leading-none disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-50 dark:hover:bg-slate-700">+</button>
+          </div>
+          <span v-if="form.wrong_mastery_correct_streak === null" class="mt-2 block text-xs text-rose-500 dark:text-rose-400">
+            当前值未加载成功，保存时不会改动此项；请重新加载页面后再调整。
+          </span>
+          <span v-else class="mt-2 block text-xs text-amber-600 dark:text-amber-400">修改后下一次作答生效</span>
+        </div>
       </div>
     </div>
   </div>
@@ -154,6 +173,9 @@ const form = ref({
   ai_translate_model: '',
   ai_explain_models: [],
   quiz_ai_prewarm_enabled: true,
+  // null 表示「尚未从后端读到」：加载失败时保存不提交该字段，避免用一个猜的默认值
+  // 覆盖管理员先前设定的非默认阈值（后端 is not None 语义即「不改动」）。
+  wrong_mastery_correct_streak: null,
 })
 
 onMounted(async () => {
@@ -169,6 +191,7 @@ onMounted(async () => {
       ai_translate_model: aiRes.data.ai_translate_model || '',
       ai_explain_models: aiRes.data.ai_explain_models || [{ model_id: aiRes.data.ai_explain_model || aiRes.data.ai_model || '', reasoning_effort: 'xhigh' }],
       quiz_ai_prewarm_enabled: quizRes.data.quiz_ai_prewarm_enabled !== false,
+      wrong_mastery_correct_streak: quizRes.data.wrong_mastery_correct_streak ?? null,
     }
     storedKeyMask.value = aiRes.data.ai_api_key || ''
     hasStoredKey.value = !!aiRes.data.ai_api_key_configured
@@ -178,6 +201,15 @@ onMounted(async () => {
     loading.value = false
   }
 })
+
+function stepStreak(delta) {
+  const current = form.value.wrong_mastery_correct_streak
+  // null 表示后端值未加载成功，此时不允许凭猜测写入（见 onMounted 注释）。
+  if (current === null) return
+  const next = current + delta
+  if (next < 1 || next > 9) return
+  form.value.wrong_mastery_correct_streak = next
+}
 
 function addModel() {
   if (form.value.ai_explain_models.length < 5) form.value.ai_explain_models.push({ model_id: '', reasoning_effort: 'xhigh' })
@@ -191,6 +223,14 @@ function moveModel(index, direction) {
 }
 
 async function save() {
+  // null 表示设置没加载成功（见 onMounted 的 catch）。此时不提交该字段，让后端保持原值——
+  // 否则会用一个猜的默认值把管理员先前设定的阈值悄悄改回去。
+  // 加减按钮已把范围约束在 1-9，这里只防御后端返回越界值，不再做输入解析。
+  const streak = form.value.wrong_mastery_correct_streak
+  if (streak !== null && (!Number.isInteger(streak) || streak < 1 || streak > 9)) {
+    toast.error('错题掌握阈值必须是 1 到 9 之间的整数')
+    return
+  }
   saving.value = true
   try {
     await client.put('/settings/ai', {
@@ -202,6 +242,7 @@ async function save() {
     })
     await client.put('/settings/quiz', {
       quiz_ai_prewarm_enabled: form.value.quiz_ai_prewarm_enabled,
+      wrong_mastery_correct_streak: streak,
     })
     if (form.value.ai_api_key.trim()) {
       storedKeyMask.value = ''

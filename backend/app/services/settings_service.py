@@ -23,6 +23,12 @@ SCENE_MODEL_SETTING_KEYS = {
 QUIZ_AI_PREWARM_ENABLED_SETTING = "quiz_ai_prewarm_enabled"
 EXPLANATION_MODELS_SETTING = "ai_explain_models"
 
+# 错题掌握连对阈值：一道错题连续答对达到该值即自动掌握、退出错题本。
+WRONG_MASTERY_CORRECT_STREAK_SETTING = "wrong_mastery_correct_streak"
+WRONG_MASTERY_CORRECT_STREAK_DEFAULT = 2
+WRONG_MASTERY_CORRECT_STREAK_MIN = 1
+WRONG_MASTERY_CORRECT_STREAK_MAX = 9
+
 
 def get_explanation_models(db: Session) -> list[ExplanationModelSettings]:
     stored = get_key(db, EXPLANATION_MODELS_SETTING)
@@ -56,6 +62,22 @@ def set_bool_key(db: Session, key: str, value: bool) -> None:
 
 def is_quiz_ai_prewarm_enabled(db: Session) -> bool:
     return get_bool_key(db, QUIZ_AI_PREWARM_ENABLED_SETTING, True)
+
+
+def get_wrong_mastery_correct_streak(db: Session) -> int:
+    """读取错题掌握连对阈值。
+
+    键缺失、空值或超出合法范围时一律回落到默认值，不抛异常：写入侧已验证过，
+    这里的兜底只针对绕过接口手工写库的情况，此时让答题链路 500 比按默认阈值判定更糟。
+    """
+    raw = get_key(db, WRONG_MASTERY_CORRECT_STREAK_SETTING, "").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return WRONG_MASTERY_CORRECT_STREAK_DEFAULT
+    if not (WRONG_MASTERY_CORRECT_STREAK_MIN <= value <= WRONG_MASTERY_CORRECT_STREAK_MAX):
+        return WRONG_MASTERY_CORRECT_STREAK_DEFAULT
+    return value
 
 DISALLOWED_AI_HOSTS = {"localhost"}
 

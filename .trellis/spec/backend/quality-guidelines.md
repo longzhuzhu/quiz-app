@@ -930,3 +930,40 @@ elif wrong is not None and ...:
 **相关**：同一段逻辑里如果某条件出现两次（如 `counted_as_new_attempt` 同时出现在查询条件与
 业务条件中），任一处单独失效都会被另一处兜住，行为仍然正确 —— 但这也意味着针对它的变异测试
 必须**同时**移除两处才会失败，单点变异不会。写变异测试时注意这类冗余守门。
+
+### 陷阱：守卫测试可能没走到你新加的那条路径
+
+`test_answer_submit_lock_latency.py` 的既有用例用 `_seed` 造数据，而 `_seed`
+**只建题目、不建错题行**。答对时 `wrong is None`，连对分支整体跳过。于是「在连对分支里现读配置」
+这类改动，虽然让守卫测试仍然全绿，却**一次都没执行到新代码**——绿是假的保障。
+
+```
+守卫测试通过 ≠ 新路径被覆盖
+```
+
+新增热路径代码时必须核对两件事：
+
+1. **新代码在既有用例的数据下会不会被执行？** 拿 `_seed` 造的数据走一遍分支，看是否命中。
+2. **它真的能失败么？** 注入一个已知的慢查询/错误值做金丝雀，确认用例转红。恒绿的守卫比没有守卫
+   更危险，因为它给人「已被保护」的错觉。
+
+本次的处理：给 `_seed` 数据补一行 `WrongAnswer`，让答对时确实进入连对分支，再用
+`pg_sleep(1.0)` 金丝雀确认新用例会因超预算而失败（实测 1.053s > 0.8s 预算）。
+
+```python
+# backend/tests/test_answer_submit_lock_latency.py
+# _seed 之后补一行错题记录，否则连对分支永远不执行
+setup.add(WrongAnswer(
+    user_id=user.id, question_id=question.id,
+    wrong_count=1, correct_streak=1, is_resolved=False,
+))
+setup.commit()
+# _seed 内部 refresh 过一轮，但这次 commit 让属性再次过期；
+# 会话关闭后 submit_answer 会读这些属性，必须再 refresh（否则 DetachedInstanceError）
+setup.refresh(user); setup.refresh(exam)
+setup.refresh(question); setup.refresh(session)
+```
+
+**同类陷阱**：断言恒真。例如「被拒绝的值没有落库」——若写入路径只 `flush` 不 `commit`、
+且测试走 HTTP（每次请求新会话，关闭时必然回滚），那么无论实现是否有缺陷该断言都成立。
+写契约测试后务必问一句：**把实现改成错误版本，这条断言会失败吗？**

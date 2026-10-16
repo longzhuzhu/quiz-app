@@ -50,10 +50,14 @@ class AISettingsUpdateRequest(BaseModel):
 
 class QuizSettingsResponse(BaseModel):
     quiz_ai_prewarm_enabled: bool
+    # 只声明类型，范围校验在路由内手写返回 400；声明式约束会返回 422 + detail 数组，
+    # 前端读不出文案（见 .trellis/spec/backend/error-handling.md）。
+    wrong_mastery_correct_streak: int
 
 
 class QuizSettingsUpdateRequest(BaseModel):
     quiz_ai_prewarm_enabled: bool | None = None
+    wrong_mastery_correct_streak: int | None = None
 
 
 class AITestRequest(BaseModel):

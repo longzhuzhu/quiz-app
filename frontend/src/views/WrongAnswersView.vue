@@ -99,10 +99,10 @@
                 <span class="inline-block h-1.5 w-1.5 rounded-full bg-rose-400"></span>
                 错误 {{ w.wrong_count }} 次
               </span>
-              <!-- 连对进度：阈值 2 与后端 app/models/wrong.py 的 MASTERY_CORRECT_STREAK 一致 -->
-              <span v-if="w.correct_streak >= 1" class="inline-flex items-center gap-1">
+              <!-- 连对进度：分母是配置阈值，由 /wrong/stats 下发；未取到时不显示，不猜默认值 -->
+              <span v-if="w.correct_streak >= 1 && masteryCorrectStreak" class="inline-flex items-center gap-1">
                 <span class="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
-                连对 {{ w.correct_streak }}/2
+                连对 {{ w.correct_streak }}/{{ masteryCorrectStreak }}
               </span>
               <span>正确答案: <span class="text-emerald-600 dark:text-emerald-400 font-medium">{{ w.question.correct_answer }}</span></span>
               <span v-if="w.question.question_type === 'multiple'" class="rounded-full bg-amber-100 dark:bg-amber-900/30 px-2 py-0.5 text-amber-600 dark:text-amber-400">多选</span>
@@ -216,6 +216,9 @@ const practiceQuestionCount = ref(null)
 const translationVisible = reactive({})
 const explanationPanels = new Map()
 const wrongStats = ref({ unresolved: 0, resolved: 0, total: 0 })
+// 掌握阈值来自后端配置，不再是固定 2。取到之前保持 null：宁可暂时不显示进度，
+// 也不在前端写死一个默认值制造第二个真值来源（后端改了阈值这里会显示错数字）。
+const masteryCorrectStreak = ref(null)
 
 const masteryRate = computed(() => {
   if (wrongStats.value.total === 0) return 0
@@ -267,6 +270,7 @@ async function fetchStats() {
   try {
     const res = await client.get('/wrong/stats')
     wrongStats.value = res.data
+    if (res.data.mastery_correct_streak) masteryCorrectStreak.value = res.data.mastery_correct_streak
   } catch {}
 }
 

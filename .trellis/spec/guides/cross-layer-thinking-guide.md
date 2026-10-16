@@ -85,6 +85,62 @@ For each boundary:
 判断方法：**改动前后各跑一次「谁读这个字段」的全仓搜索**，确认每个消费方都已在本次改动内完成切换。
 若有一个没有，就保留字段并在注释里写明「过渡字段 + 由谁删除」。
 
+收口（#63 最后一个子任务 `10-13-result-page`）：消费方切换完成后，完成态才真正不再输出 `answers`，
+判断条件是「结果页已改读 `questions`」。关键是不能一刀切删——**进行中会话必须保留 `answers`**，
+答题页刷新恢复依赖它。所以收口的是「完成态」这一个分支，不是整个字段。
+
+---
+
+### Mistake 5: 把「配置值」下发给拿不到配置接口的消费者
+
+平台参数通常只在管理员接口暴露（如 `GET /api/settings/quiz` 带 `Depends(require_admin)`），但需要显示
+它的界面往往**不是**管理员页面。这时不能顺手让前端去调那个 admin 接口——普通用户会拿到 403。
+
+正确做法是**沿已有的用户可见路径下发**：找一个该页面**已经在调用**的认证接口，把配置值作为只读字段
+带出去。本次是让 `/api/wrong/stats` 附带 `mastery_correct_streak`（错题页本就在调它），而不是
+让 `WrongAnswersView` 去请求 `/api/settings/quiz`。
+
+```javascript
+// Wrong：普通用户会 403，且给错题页新增一条与渲染无关的请求依赖
+const res = await client.get('/settings/quiz')
+const threshold = res.data.wrong_mastery_correct_streak
+
+// Correct：搭该页面已有的请求（backend/app/api/routes/wrong.py 的 /stats 响应里带该字段）
+const res = await client.get('/wrong/stats')
+threshold.value = res.data.mastery_correct_streak
+```
+
+命名也要跟着换：admin 接口用配置键名，用户只读路径用领域语义名（`mastery_correct_streak`）。
+
+### Mistake 6: 前端为「后端字段缺失」猜一个默认值
+
+后端返回值取不到时，前端若用 `?? 2` 之类的兜底填一个默认值，就制造了**第二个真值来源**——
+而且会把它写回去。实测案例：管理页加载失败后表单仍可保存，`?? 2` 让一次「只想改 AI 模型」的保存
+把管理员先前设定的阈值悄悄改回 2。后端 `is not None` 语义本来是「不改动」，但前端发的是
+一个具体的 2，后端无从区分。
+
+正确做法是让「未知」保持未知，并在 UI 上体现出来：
+
+```javascript
+// Wrong：猜默认值，且会写回后端
+form.value = { threshold: res.data.threshold ?? 2 }
+
+// Correct：null 表示未加载，不提交该字段（后端 is not None → 不改动）
+form.value = { threshold: res.data.threshold ?? null }
+// 保存时
+let threshold = null
+if (form.value.threshold !== null) {
+  threshold = Math.trunc(Number(form.value.threshold))
+  if (!Number.isInteger(threshold) || threshold < 1 || threshold > 9) {
+    toast.error('...'); return
+  }
+}
+```
+
+配套：输入框 `v-if="form.threshold !== null"`，未知时显示「当前值未加载成功，保存时不会改动此项」
+而不是渲染一个空输入框。参见 `frontend/src/views/AdminSettingsView.vue` 与
+`WrongAnswersView.vue`（后者同样保持 `null` 而非猜默认值）。
+
 ---
 
 ## Checklist for Cross-Layer Features
@@ -94,6 +150,9 @@ Before implementation:
 - [ ] Identified all layer boundaries
 - [ ] Defined format at each boundary
 - [ ] Decided where validation happens
+- [ ] **Config values**: 确认每个消费者都有权限读到它（别让用户页面调 admin 接口）
+- [ ] **Optional fields**: 前端取不到时是「不提交」还是「猜默认值」？后者会覆盖后端已有的值
+- [ ] **Config change semantics**: 改了配置，存量数据要不要重算？不重算的话 UI 有没有说明
 
 After implementation:
 - [ ] Tested with edge cases (null, empty, invalid)
@@ -101,6 +160,8 @@ After implementation:
 - [ ] Checked data survives round-trip
 - [ ] **New API route**: curl 验证端点可达（不只是 import 成功）
 - [ ] **New API route**: 确认后端进程已重启加载新路由
+- [ ] **New contract field**: 只增不删，老前端忽略新字段仍能工作
+- [ ] **Mutation check**: 把实现改成错误版本，新写的断言会失败吗？（恒真断言是假保障）
 
 ---
 
@@ -190,36 +251,23 @@ trend_for():
 ### Data Flow
 
 ```
-FileUpload.vue → POST /api/banks/{bank_id}/import
-  → create_smart_import_job() → ImportJob + BackgroundJob created
-  → Response: { import_job_id, background_job_id }
+Upload → ImportJob + BackgroundJob
+  → claim + immutable attempt + shared ImportJob lock
+  → initialize/reuse manifest
+  → persist response (cache/LLM) → atomic per-chunk persistence + checkpoint
+  → recount progress/stats/reconciliation → guarded terminal
 
-Worker: handle_question_import_llm()
-  → run_smart_import()
-    → file extraction → text normalization → chunk splitting
-    → for each chunk:
-      → LLM parse (or cache hit) → quality scoring
-      → high confidence → auto-insert Question
-      → low confidence → create ImportReviewItem
-    → _finalize_import() → update bank stats + word frequencies
-
-Frontend: ImportJobDetailView.vue polls GET /api/import-jobs/{id}
-  → displays progress, stats, chunk status
-
-Frontend: ImportReviewView.vue
-  → GET /api/import-jobs/{id}/review-items → display pending items
-  → POST accept → write Question as-is
-  → POST skip → mark review_item as skipped
-  → POST reparse → creates new BackgroundJob (async)
+Manual review / new reparse → same ImportJob writer coordination
 ```
 
-### Critical Consistency Points
+修改这条链路时读取[导入执行恢复合同](../backend/import-recovery.md)，并区分三个层次：单次模型L1/L2、同后台请求自动retry、新用户reparse请求。
 
-| Checkpoint | Risk | Mitigation |
-|-----------|------|-----------|
-| `config_json.answer_key_text` | Worker 中计算但未持久化 → `_process_chunk` 读空 | 提交前存储到 config_json |
-| `progress_total` 初始为 0 | 前端显示 0/0 进度条 | chunk 创建后立即设置 |
-| `heartbeat_job` 缺少 `success_increment` | progress_done 永远不增长 | 每次心跳传递 increment |
-| 单 chunk 异常中断整个 Worker | 所有后续 chunk 丢失 | 每个chunk独立 try-except |
-| review accept 重复执行 | 同一题目重复入库 | 检查 review_status 幂等拒绝 |
-| reparse 同步执行 | API 超时 | 必须创建 BackgroundJob 异步执行 |
+### 检查问题
+
+- 响应已解析与入库完成是否有独立证据，故障后既不重复也不漏题？
+- 领取、所有提交、心跳及终态是否验证同一个不可变attempt？失租控制流是否穿透泛化捕获？
+- HTTP期间是否结束业务事务，独立续约与finally是否释放线程/连接？
+- 人工accept/skip与reparse是否协调并刷新行，避免旧判断删除已接受来源？
+- 重跑是否保留manifest/expected基线并重算进度，而非再切片或累加次数？
+- 新请求审计与同请求幂等是否分离，同文件新job重导仍可用？
+- 词频等派生更新是否保留原ID/释义/学习事实，而非只重建计数？

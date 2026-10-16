@@ -406,3 +406,144 @@ op.add_column(
 存量行为 NULL。该契约必须由连真实 PostgreSQL 的迁移测试锁住，参考
 `backend/tests/test_wrong_mastery_streak.py::test_migration_013_adds_not_null_default_zero_for_existing_rows`
 （先升到前一版本 → 插入存量行 → 升到新版本 → 断言值非 NULL）。
+
+---
+
+## 场景：system_settings 平台参数（读取侧回落，不预置行）
+
+### 1. Scope / Trigger
+
+需要新增或修改 `system_settings` 里的平台级参数时（`backend/app/models/system_setting.py` 的
+`key`/`value` KV 表，无 schema 约束）。触发条件：新配置项、跨层下发、或改既有配置项的语义。
+
+### 2. Signatures
+
+```python
+# backend/app/services/settings_service.py
+WRONG_MASTERY_CORRECT_STREAK_SETTING = "wrong_mastery_correct_streak"
+WRONG_MASTERY_CORRECT_STREAK_DEFAULT = 2
+WRONG_MASTERY_CORRECT_STREAK_MIN = 1
+WRONG_MASTERY_CORRECT_STREAK_MAX = 9
+
+def get_wrong_mastery_correct_streak(db: Session) -> int: ...
+
+# 通用读写（已存在）
+def get_key(db: Session, key: str, default: str = "") -> str: ...
+def set_key(db: Session, key: str, value: str) -> None: ...
+```
+
+接口与读取路径：
+
+```python
+# backend/app/api/routes/settings.py  — 管理员读写
+GET  /api/settings/quiz   -> {"quiz_ai_prewarm_enabled": bool, "wrong_mastery_correct_streak": int}
+PUT  /api/settings/quiz   <  {"wrong_mastery_correct_streak": int | None}
+
+# backend/app/api/routes/wrong.py     — 认证用户只读（普通用户拿不到 /api/settings/quiz）
+GET  /api/wrong/stats     -> {..., "mastery_correct_streak": int}
+```
+
+### 3. Contracts
+
+- 存储：`value` 列存十进制整数字符串（`"2"`）。**不预置数据库行**——键不存在即「未配置」。
+- 缺省语义：键不存在 / 值为空 / 无法解析 / 超出合法范围 → 一律回落 `*_DEFAULT`。
+- 读取侧**永不抛异常**。校验只在写入侧做；读取侧的兜底针对绕过接口手工写库。
+- 判定点每次现读配置，**不加进程内缓存**：多 worker 下缓存会产生「改了配置但部分请求仍用旧值」
+  的静默偏差；单行唯一索引点查（`key` 有 `unique=True`）相对延迟预算可忽略。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+|---|---|
+| 键不存在 / 空串 | 200，回落默认值（不写库） |
+| 值为 `"abc"` / `"3.7"` / `"999"` | 200，回落默认值 |
+| `PUT` 传 `1..9` 整数 | 200，写入并立即生效 |
+| `PUT` 传 `0` / `10` / `-1` | **400**，`detail` 为中文**字符串** |
+| `PUT` 传 `1.5` / `"abc"` | **422**，`detail` 为**数组**（Pydantic 类型约束，既有行为，不改） |
+| `PUT` 传 `null` / 省略字段 | 200，该字段不改动（`is not None` 语义） |
+| 非 admin 访问 `GET/PUT /api/settings/quiz` | 403 |
+
+### 5. Good/Base/Bad Cases
+
+- Good：管理员在 `/admin/settings` 把阈值从 2 改成 3 → 保存 → 下一次作答即按 3 判定。
+- Base：从未配置过 → 全链路按默认 2，`system_settings` 里没有该键。
+- Bad：读取函数在解析失败时抛异常 → 答题提交热路径 500，一个坏配置打挂全站答题。
+
+### 6. Tests Required（断言点）
+
+`backend/tests/test_wrong_mastery_streak.py`：
+
+- 未配置回落 + **不预置数据库键**（`_stored_streak(api) is None`）
+- 配置值真实驱动判定（参数化 1/3，含「两次不达标、第三次达标」）
+- 越界值 400 且 **`isinstance(body["detail"], str)`**
+- 非 admin 403，且只读路径 `/api/wrong/stats` 仍可达
+- 存量零重算（改阈值前后逐行对比 `(question_id, correct_streak, is_resolved)`）
+- 坏值兜底（绕过接口写 `"abc"` / `"999"` 仍回落默认）
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+# 预置一行默认值：让「从未配置」与「显式配成默认值」不可区分，
+# 也让「读取不写库」的可测试性消失。
+db.add(SystemSetting(key=SETTING, value="2"))
+
+# 读取侧抛异常：一个坏配置打挂答题热路径
+def get_threshold(db):
+    raw = get_key(db, SETTING)
+    if not raw.isdigit():
+        raise ValueError("阈值未配置")
+    return int(raw)
+```
+
+#### Correct
+
+```python
+def get_wrong_mastery_correct_streak(db: Session) -> int:
+    """键缺失、空值或超范围一律回落默认值，不抛异常。"""
+    raw = get_key(db, WRONG_MASTERY_CORRECT_STREAK_SETTING, "").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return WRONG_MASTERY_CORRECT_STREAK_DEFAULT
+    if not (WRONG_MASTERY_CORRECT_STREAK_MIN <= value <= WRONG_MASTERY_CORRECT_STREAK_MAX):
+        return WRONG_MASTERY_CORRECT_STREAK_DEFAULT
+    return value
+```
+
+---
+
+## 多字段 PUT：先校验全部输入，再做任何写入
+
+`set_key` 内部会 `flush()`（`backend/app/services/settings_service.py`），即把 UPDATE 发给数据库。因此
+「先写合法字段、再校验后面的字段」会让被拒请求留下**已 flush 的未提交改动**。
+
+它当前**恰好安全**，但那只是侥幸：`get_db` 的 `finally` 只 `close()` 不 `rollback`
+（`backend/app/core/database.py:27-33`），未提交事务在连接归还时被回滚。一旦会话管理改成显式提交、
+或这段逻辑被搬到别处复用，就会变成真实的脏写。
+
+```python
+# Wrong：校验晚于写入
+if data.quiz_ai_prewarm_enabled is not None:
+    set_bool_key(db, QUIZ_AI_PREWARM_ENABLED_SETTING, data.quiz_ai_prewarm_enabled)  # 已 flush
+if streak is not None and not (MIN <= streak <= MAX):
+    raise HTTPException(status_code=400, detail="...")  # 开关已处于待提交状态
+```
+
+```python
+# Correct：validate-then-mutate
+if streak is not None and not (MIN <= streak <= MAX):
+    raise HTTPException(status_code=400, detail="...")
+if data.quiz_ai_prewarm_enabled is not None:
+    set_bool_key(db, QUIZ_AI_PREWARM_ENABLED_SETTING, data.quiz_ai_prewarm_enabled)
+if streak is not None:
+    set_setting(db, WRONG_MASTERY_CORRECT_STREAK_SETTING, str(streak))
+db.commit()
+```
+
+**测试陷阱（务必注意）**：这条契约**无法用 HTTP 层测试锁住**。`TestClient` 每次请求都是新会话，
+未提交事务在请求结束时必然回滚，先写后校验与先校验后写的结果完全一致——曾写过 HTTP 版本并用
+缺陷顺序的金丝雀验证过它**不会失败**。必须直接调路由函数并**复用同一个会话**，断言
+`db.dirty` 为空或读回未改动的字段值。参考
+`backend/tests/test_wrong_mastery_streak.py::test_rejected_threshold_does_not_disturb_other_settings`。
