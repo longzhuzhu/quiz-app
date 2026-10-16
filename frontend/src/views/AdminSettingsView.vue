@@ -127,21 +127,24 @@
           </span>
         </label>
 
-        <label class="block rounded-card border border-gray-200 dark:border-slate-700 p-4">
-          <span class="block text-sm font-medium text-gray-700 dark:text-gray-300">错题掌握连对阈值</span>
-          <span class="mt-1 block text-xs text-gray-400 dark:text-gray-500">
-            一道错题连续答对达到该次数即自动标记为掌握、退出错题本，可在 1 到 9 之间调整。任何一次答错都会清零连对。
-          </span>
-          <input v-if="form.wrong_mastery_correct_streak !== null" v-model.number="form.wrong_mastery_correct_streak"
-            type="number" min="1" max="9" step="1"
-            class="mt-3 w-24 rounded-lg border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-gray-700 dark:text-gray-200" />
-          <span v-else class="mt-3 block text-xs text-rose-500 dark:text-rose-400">
+        <div class="rounded-card border border-gray-200 dark:border-slate-700 p-4">
+          <span id="wrong-mastery-streak-label" class="block text-sm font-medium text-gray-700 dark:text-gray-300">错题掌握阈值</span>
+          <div role="group" aria-labelledby="wrong-mastery-streak-label" class="mt-3 flex items-center gap-2">
+            <button type="button" :disabled="form.wrong_mastery_correct_streak === null || form.wrong_mastery_correct_streak <= 1"
+              @click="stepStreak(-1)" aria-label="减少错题掌握阈值"
+              class="h-9 w-9 rounded-lg border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-200 text-lg leading-none disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-50 dark:hover:bg-slate-700">−</button>
+            <span v-if="form.wrong_mastery_correct_streak !== null" aria-live="polite"
+              class="w-12 text-center text-lg font-semibold tabular-nums text-gray-900 dark:text-white">{{ form.wrong_mastery_correct_streak }}</span>
+            <span v-else class="w-12 text-center text-sm text-rose-500 dark:text-rose-400">—</span>
+            <button type="button" :disabled="form.wrong_mastery_correct_streak === null || form.wrong_mastery_correct_streak >= 9"
+              @click="stepStreak(1)" aria-label="增加错题掌握阈值"
+              class="h-9 w-9 rounded-lg border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-200 text-lg leading-none disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-50 dark:hover:bg-slate-700">+</button>
+          </div>
+          <span v-if="form.wrong_mastery_correct_streak === null" class="mt-2 block text-xs text-rose-500 dark:text-rose-400">
             当前值未加载成功，保存时不会改动此项；请重新加载页面后再调整。
           </span>
-          <span class="mt-2 block text-xs text-amber-600 dark:text-amber-400">
-            修改后从下一次作答起生效，不会重新计算已有错题的掌握状态：已掌握的不会被取消，未掌握的也不会被立即标记为掌握。
-          </span>
-        </label>
+          <span v-else class="mt-2 block text-xs text-amber-600 dark:text-amber-400">修改后下一次作答生效</span>
+        </div>
       </div>
     </div>
   </div>
@@ -199,6 +202,15 @@ onMounted(async () => {
   }
 })
 
+function stepStreak(delta) {
+  const current = form.value.wrong_mastery_correct_streak
+  // null 表示后端值未加载成功，此时不允许凭猜测写入（见 onMounted 注释）。
+  if (current === null) return
+  const next = current + delta
+  if (next < 1 || next > 9) return
+  form.value.wrong_mastery_correct_streak = next
+}
+
 function addModel() {
   if (form.value.ai_explain_models.length < 5) form.value.ai_explain_models.push({ model_id: '', reasoning_effort: 'xhigh' })
 }
@@ -213,15 +225,11 @@ function moveModel(index, direction) {
 async function save() {
   // null 表示设置没加载成功（见 onMounted 的 catch）。此时不提交该字段，让后端保持原值——
   // 否则会用一个猜的默认值把管理员先前设定的阈值悄悄改回去。
-  let streak = null
-  if (form.value.wrong_mastery_correct_streak !== null) {
-    // 数字输入框可手打小数或非法内容；取整后若越界就先提示，不让它变成 NaN →
-    // 后端按「未提供」处理，否则用户会以为改了而实际没改（静默失败）。
-    streak = Math.trunc(Number(form.value.wrong_mastery_correct_streak))
-    if (!Number.isInteger(streak) || streak < 1 || streak > 9) {
-      toast.error('错题掌握连对阈值必须是 1 到 9 之间的整数')
-      return
-    }
+  // 加减按钮已把范围约束在 1-9，这里只防御后端返回越界值，不再做输入解析。
+  const streak = form.value.wrong_mastery_correct_streak
+  if (streak !== null && (!Number.isInteger(streak) || streak < 1 || streak > 9)) {
+    toast.error('错题掌握阈值必须是 1 到 9 之间的整数')
+    return
   }
   saving.value = true
   try {
