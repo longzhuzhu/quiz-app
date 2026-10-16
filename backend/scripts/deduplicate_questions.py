@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""nianyu/CIPT 专用审计 CLI。默认只读，AI/apply/rollback 全部显式。"""
+"""nianyu/CIPT 专用审计 CLI。默认只读，AI/apply/rollback 全部显式。
+
+学习历史、原题重做、后台引用与答案/题型冲突、未知引用等均属于 `blockers`，
+不能随题删除。`cascades` 仅为报告格式兼容保留，当前为空；旧计划须重新审计。"""
 from __future__ import annotations
 
 import argparse
