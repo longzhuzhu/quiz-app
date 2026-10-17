@@ -213,7 +213,7 @@ def semantic_groups(results: list[dict]) -> list[dict]:
 def confirmed_semantic_plan(base: dict, state: dict, ai_report: dict, confirmed_groups: list[list[int]]) -> dict:
     """将用户明确列出的语义清单转成可确认计划；保留全部关联/答案门禁。"""
     from copy import deepcopy
-    from app.services.question_dedup_service import finalize_plan, group_plan, word_changes
+    from app.services.question_dedup_service import finalize_plan, group_plan, split_blockers, word_changes
     if ai_report.get("audit_id") != base["audit_id"] or ai_report.get("model") != MODEL or ai_report.get("rule_version") != AI_RULE_VERSION or not 0 <= ai_report.get("requests_total", -1) <= LIMIT or not 0 <= ai_report.get("pairs_total", -1) <= LIMIT:
         raise DedupError("SEMANTIC_REPORT_MISMATCH")
     questions = {q["id"]: q for q in state["questions"]}
@@ -259,7 +259,9 @@ def confirmed_semantic_plan(base: dict, state: dict, ai_report: dict, confirmed_
     proposal["semantic_confirmation"] = {"groups": confirmed_groups, "ai_report": ai_report}
     _, blockers = word_changes(state, {i for g in proposal["groups"] if not g["blockers"] for i in g["remove"]})
     if blockers:
+        hard, cascades = split_blockers(blockers)
         for group in proposal["groups"]:
             if not group["blockers"]:
-                group["blockers"] = blockers
+                group["blockers"] = sorted(set(group["blockers"]) | set(hard))
+                group["cascades"] = sorted(set(group["cascades"]) | set(cascades))
     return finalize_plan(proposal)

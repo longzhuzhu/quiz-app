@@ -16,8 +16,11 @@ from sqlalchemy.orm import Session
 from app.services.import_service import build_bank_word_frequencies
 
 RULE_VERSION = "cipt-surface-v1"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 QUESTION_ID_KEYS = ("question_id", "subject_question_id", "imported_question_id", "existing_question_id", "matched_question_id")
+# ADR-0009：学习历史、原题重做及后台引用均硬阻断；保留报告字段兼容，
+# 不允许通过级联影响白名单绕过保护。
+CASCADE_REASONS = frozenset()
 # ImportJob 不是 BackgroundJob：_finalize_import 的四种输出均已停止执行；
 # review_required 仅等待人工。集合由 IMPORT_JOB_STATUSES/终态写入合同测试锁定。
 IMPORT_JOB_QUIESCENT_STATUSES = frozenset({
@@ -232,7 +235,47 @@ def _safe_background_payload(payload: Any) -> dict[str, Any]:
     return projected
 
 
-def collect_state(db: Session, scope: Scope, *, lock: bool = False, tracked_ids: set[int] | None = None) -> tuple[dict, dict]:
+def _session_reference_rows(db: Session) -> tuple[list[dict], bool]:
+    """只读投影并校验全库会话引用，避免维护脚本复制快照/冻结答案合同。"""
+    # 在数据库端投影快照 ID 和整行摘要，不取无关用户历史题面/作答全文。
+    sessions = [dict(row) for row in db.execute(text("""
+        SELECT id, user_id, bank_id, is_completed, question_ids,
+               CASE WHEN question_snapshot IS NULL OR question_snapshot = 'null'::jsonb THEN NULL
+                    WHEN jsonb_typeof(question_snapshot) = 'array'
+                    THEN CASE WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(question_snapshot) AS entry
+                                          WHERE jsonb_typeof(entry) != 'object' OR NOT (entry ? 'question_id'))
+                              THEN jsonb_build_object('unknown_structure', true)
+                              ELSE jsonb_path_query_array(question_snapshot, '$[*].question_id') END
+                    ELSE jsonb_build_object('unknown_structure', true) END AS snapshot_ids,
+               CASE WHEN final_answers IS NULL OR final_answers = 'null'::jsonb THEN NULL
+                    WHEN jsonb_typeof(final_answers) = 'object'
+                    THEN (SELECT jsonb_agg(key) FROM jsonb_object_keys(final_answers) AS key)
+                    ELSE jsonb_build_object('unknown_structure', true) END AS frozen_ids,
+               encode(sha256(convert_to(row_to_json(s)::text, 'UTF8')), 'hex') AS row_digest
+        FROM quiz_sessions AS s
+    """)).mappings()]
+    malformed = False
+    valid_sessions = []
+    for session in sessions:
+        try:
+            members = _json(session["question_ids"])
+            if members is None:
+                members = []
+            if not isinstance(members, list) or any(type(i) is not int for i in members):
+                raise DedupError("UNKNOWN_REFERENCE_STRUCTURE")
+            snapshots = session["snapshot_ids"]
+            frozen = session["frozen_ids"]
+            if snapshots is not None and (not isinstance(snapshots, list) or any(type(i) is not int for i in snapshots)):
+                raise DedupError("UNKNOWN_REFERENCE_STRUCTURE")
+            if frozen is not None and (not isinstance(frozen, list) or any(not isinstance(k, str) or not k.isdecimal() for k in frozen)):
+                raise DedupError("UNKNOWN_REFERENCE_STRUCTURE")
+            valid_sessions.append(session)
+        except DedupError:
+            malformed = True
+    return valid_sessions, malformed
+
+
+def collect_state(db: Session, scope: Scope, *, lock: bool = False, tracked_ids: set[int] | None = None, tracked_job_ids: set[int] | None = None) -> tuple[dict, dict]:
     scope.validate()
     ts = tables(db)
     user = _rows(db, ts["users"], ts["users"].c.username == scope.username)
@@ -265,48 +308,16 @@ def collect_state(db: Session, scope: Scope, *, lock: bool = False, tracked_ids:
             columns.add("imported_question_id")
         if columns:
             predicate = or_(*(table.c[column].in_(ids) for column in columns))
+            if name == "background_jobs" and tracked_job_ids:
+                # ON DELETE SET NULL 会把指向被删题的指针清空，之后按指针就查不到该行；
+                # 显式跟踪既有行才能让附录图像与 pre 逐行可比。
+                predicate = or_(predicate, table.c.id.in_(tracked_job_ids))
             known = name in {"quiz_answers", "wrong_answers", "user_question_stats", "practice_day_questions", "question_topics", "question_explanations", "background_jobs", "import_parsed_questions"}
             state[name] = _rows(db, table, predicate) if known else _reference_rows(db, table, sorted(columns), predicate)
             if not known and state[name]:
                 unknown_schema.append(name)
-    # 在数据库端投影快照 ID 和整行摘要，不取无关用户历史题面/作答全文。
-    sessions = [dict(row) for row in db.execute(text("""
-        SELECT id, user_id, bank_id, is_completed, question_ids,
-               CASE WHEN question_snapshot IS NULL OR question_snapshot = 'null'::jsonb THEN NULL
-                    WHEN jsonb_typeof(question_snapshot) = 'array'
-                    THEN CASE WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(question_snapshot) AS entry
-                                          WHERE jsonb_typeof(entry) != 'object' OR NOT (entry ? 'question_id'))
-                              THEN jsonb_build_object('unknown_structure', true)
-                              ELSE jsonb_path_query_array(question_snapshot, '$[*].question_id') END
-                    ELSE jsonb_build_object('unknown_structure', true) END AS snapshot_ids,
-               CASE WHEN final_answers IS NULL OR final_answers = 'null'::jsonb THEN NULL
-                    WHEN jsonb_typeof(final_answers) = 'object'
-                    THEN (SELECT jsonb_agg(key) FROM jsonb_object_keys(final_answers) AS key)
-                    ELSE jsonb_build_object('unknown_structure', true) END AS frozen_ids,
-               encode(sha256(convert_to(row_to_json(s)::text, 'UTF8')), 'hex') AS row_digest
-        FROM quiz_sessions AS s
-    """)).mappings()]
-    malformed = False
-    relevant_sessions = []
-    for session in sessions:
-        try:
-            members = _json(session["question_ids"])
-            if members is None:
-                members = []
-            if not isinstance(members, list) or any(type(i) is not int for i in members):
-                raise DedupError("UNKNOWN_REFERENCE_STRUCTURE")
-            snapshots = session["snapshot_ids"]
-            frozen = session["frozen_ids"]
-            if snapshots is not None and (not isinstance(snapshots, list) or any(type(i) is not int for i in snapshots)):
-                raise DedupError("UNKNOWN_REFERENCE_STRUCTURE")
-            if frozen is not None and (not isinstance(frozen, list) or any(not isinstance(k, str) or not k.isdecimal() for k in frozen)):
-                raise DedupError("UNKNOWN_REFERENCE_STRUCTURE")
-            refs = set(members) | set(snapshots or []) | {int(k) for k in frozen or []}
-            if refs & ids:
-                relevant_sessions.append(session)
-        except DedupError:
-            malformed = True
-    state["quiz_sessions"] = relevant_sessions
+    sessions, malformed = _session_reference_rows(db)
+    state["quiz_sessions"] = [session for session in sessions if _session_refs(session) & ids]
     for name in ("bank_word_frequencies", "bank_word_exclusions", "user_bank_word_progress", "import_jobs"):
         state[name] = _rows(db, ts[name], ts[name].c.bank_id.in_(scope.bank_ids))
     vector = ts["vector_index"]
@@ -332,7 +343,10 @@ def collect_state(db: Session, scope: Scope, *, lock: bool = False, tracked_ids:
             safe_payload = _safe_background_payload(_json(row["payload_json"]))
         except DedupError:
             safe_payload = {"unknown_structure": True}
-        safe_jobs.append({key: row[key] for key in ("id", "created_by", "status", "subject_question_id", "job_type") } | {"payload_json": canonical(safe_payload), "row_digest": digest(row)})
+        # 指针列已在投影中单独呈现，且删题会把它 SET NULL；把它排除出行摘要才能让
+        # post-image 与预期图像逐行可比，否则每次清理都会被自己制造的差异判为漂移。
+        digest_source = {key: value for key, value in row.items() if key != "subject_question_id"}
+        safe_jobs.append({key: row[key] for key in ("id", "created_by", "status", "subject_question_id", "job_type") } | {"payload_json": canonical(safe_payload), "row_digest": digest(digest_source)})
     state["background_jobs"] = safe_jobs
     state["import_jobs"] = [{key: row[key] for key in ("id", "bank_id", "status", "background_job_id")} | {"row_digest": digest(row)} for row in state["import_jobs"]]
     source_table = ts["import_parsed_questions"]
@@ -357,6 +371,13 @@ def collect_state(db: Session, scope: Scope, *, lock: bool = False, tracked_ids:
 
 def _session_refs(row: dict) -> set[int]:
     return set(_json(row["question_ids"]) or []) | set(row.get("snapshot_ids") or []) | {int(k) for k in row.get("frozen_ids") or []}
+
+
+def split_blockers(reasons: Any) -> tuple[list[str], list[str]]:
+    """按语义拆分阻断原因：返回 (硬阻断, 级联影响)，两者均去重排序。"""
+    ordered = sorted(set(reasons))
+    return ([reason for reason in ordered if reason not in CASCADE_REASONS],
+            [reason for reason in ordered if reason in CASCADE_REASONS])
 
 
 def group_plan(rows: list[dict], state: dict, context: dict, *, semantic: bool = False) -> dict:
@@ -428,7 +449,8 @@ def group_plan(rows: list[dict], state: dict, context: dict, *, semantic: bool =
                 blockers.append("unknown_import_reference")
     if semantic:
         blockers.append("semantic_confirmation_required")
-    return {"bank_id": bank_id, "members": sorted(ids), "keep": keep, "remove": sorted(remove), "answer_conflict": "answer_conflict" in blockers, "type_conflict": "type_conflict" in blockers, "raw_equal": len({surface(q, normalize=False) for q in rows}) == 1, "blockers": sorted(set(blockers)), "kind": "semantic" if semantic else "exact"}
+    hard, cascades = split_blockers(blockers)
+    return {"bank_id": bank_id, "members": sorted(ids), "keep": keep, "remove": sorted(remove), "answer_conflict": "answer_conflict" in blockers, "type_conflict": "type_conflict" in blockers, "raw_equal": len({surface(q, normalize=False) for q in rows}) == 1, "blockers": hard, "cascades": cascades, "kind": "semantic" if semantic else "exact"}
 
 
 def word_changes(state: dict, remove: set[int]) -> tuple[dict[int, int | None], list[str]]:
@@ -444,8 +466,16 @@ def word_changes(state: dict, remove: set[int]) -> tuple[dict[int, int | None], 
             blockers.append("invalid_bank_surface")
             continue
         frequencies = {r["term"]: r["frequency"] for r in build_bank_word_frequencies(remaining)}
+        # 用户主动排除的词不会写入 bank_word_frequencies（见 _update_bank_stats 的
+        # excluded_terms 过滤），而 build_bank_word_frequencies 只分词、不做排除。
+        # 比对「重算是否多出词条」时必须剔掉它们，否则被排除的词会被误报
+        # missing_derived_terms。注意只影响这一处缺失判定：下面的 changes 仍按未过滤的
+        # frequencies 计算，否则会把库内已有的排除词行判成"应删除"。
+        excluded = {
+            row["term"] for row in state["bank_word_exclusions"] if row["bank_id"] == bank_id
+        }
         words = [r for r in state["bank_word_frequencies"] if r["bank_id"] == bank_id]
-        if set(frequencies) - {r["term"] for r in words}:
+        if set(frequencies) - excluded - {r["term"] for r in words}:
             blockers.append("missing_derived_terms")
         for word in words:
             frequency = frequencies.get(word["term"])
@@ -492,9 +522,11 @@ def audit(db: Session, scope: Scope = Scope(), *, audit_id: str, lock: bool = Fa
     eligible = {i for group in plans if not group["blockers"] for i in group["remove"]}
     _, word_blockers = word_changes(state, eligible)
     if word_blockers:
+        word_hard, word_cascades = split_blockers(word_blockers)
         for group in plans:
             if not group["blockers"]:
-                group["blockers"] = word_blockers
+                group["blockers"] = sorted(set(group["blockers"]) | set(word_hard))
+                group["cascades"] = sorted(set(group["cascades"]) | set(word_cascades))
     plan = {"schema_version": SCHEMA_VERSION, "rule_version": RULE_VERSION, "audit_id": audit_id, "scope": asdict(scope), "exam_id": context["exam_id"], "owner_id": context["owner_id"], "fingerprint": digest(state), "groups": plans, "invalid_question_ids": invalid, "question_total": len(state["questions"]), "association_context": context, "raw_equal_summary": raw_equal_summary}
     return finalize_plan(plan), state
 
@@ -508,8 +540,10 @@ def finalize_plan(plan: dict) -> dict:
         "redundant": sum(len(group["remove"]) for group in plans),
         "answer_conflicts": sum(group["answer_conflict"] for group in plans),
         "type_conflicts": sum(group["type_conflict"] for group in plans),
-        "blocked_groups": sum(bool(group["blockers"]) for group in plans),
+        "hard_blocked_groups": sum(bool(group["blockers"]) for group in plans),
         "eligible_remove": sum(len(group["remove"]) for group in plans if not group["blockers"]),
+        "cascade_groups": sum(bool(group["cascades"]) for group in plans),
+        "cascade_removed": sum(len(group["remove"]) for group in plans if not group["blockers"] and group["cascades"]),
     }
     plan.pop("approval_digest", None)
     plan["approval_digest"] = digest(plan)
