@@ -117,6 +117,16 @@ def api(tmp_path):
         ]
         db.add_all(questions)
         db.flush()
+        # 第二个题库：仅用于验证错题练习可跨题库并逐题下发题库归属
+        other_bank = QuestionBank(exam_id=exam.id, name="副库", question_count=1)
+        db.add(other_bank)
+        db.flush()
+        other_question = Question(
+            bank_id=other_bank.id, question_type="single", content="跨库题",
+            options=OPTIONS, correct_answer="B", order_index=1,
+        )
+        db.add(other_question)
+        db.flush()
         topic = ExamTopic(
             exam_id=exam.id, level=TOPIC_LEVEL_COMPETENCY, code="I.A",
             name_en="Privacy", name_zh="隐私", short_name_zh="隐私", source_version="test",
@@ -128,6 +138,7 @@ def api(tmp_path):
         ids = SimpleNamespace(
             user=user.id, admin=admin.id, exam=exam.id, bank=bank.id,
             questions=[q.id for q in questions], topic=topic.id,
+            other_bank=other_bank.id, other_question=other_question.id,
         )
 
     def get_test_db():
@@ -521,6 +532,33 @@ def test_practice_session_snapshot_unaffected_by_later_mastery(api):
         stored = json.loads(session.question_ids)
         assert stored == original_ids
         assert session.total_questions == len(original_ids)
+
+
+def test_practice_exposes_each_question_bank(api):
+    """跨题库错题练习逐题下发 bank_id/bank_name，刷新用 session_detail 与之一致。"""
+    main_question = api.ids.questions[0]
+    other_question = api.ids.other_question
+    _answer_in_new_session(api, main_question, "B")
+    # 副库正确答案为 B，答 A 沉淀错题；答卷须开在副库，否则题目不属于该会话
+    _answer_in_new_session(api, other_question, "A", bank_id=api.ids.other_bank)
+
+    response = _practice(api)
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    session_id = payload["session"]["id"]
+    expected = {
+        main_question: (api.ids.bank, "主库"),
+        other_question: (api.ids.other_bank, "副库"),
+    }
+    assert {question["id"] for question in payload["questions"]} == set(expected)
+    for question in payload["questions"]:
+        assert (question["bank_id"], question["bank_name"]) == expected[question["id"]]
+
+    detail_response = api.client.get(f"/api/quiz/session/{session_id}")
+    assert detail_response.status_code == 200, detail_response.text
+    detail = detail_response.json()
+    for question in detail["questions"]:
+        assert (question["bank_id"], question["bank_name"]) == expected[question["id"]]
 
 
 # --- 013 迁移（AC9）---

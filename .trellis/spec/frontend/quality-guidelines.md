@@ -563,3 +563,85 @@ assert.ok(controlCaptured, '网络记录通道必须能抓到请求，否则「�
   而不是整卡 `outerHTML` 全等——后者会因渲染时序产生间歇性失败。
 
 ---
+
+## 答题页标题与当前题库徽章
+
+### 1. Scope / Trigger
+
+- Trigger: 修改 `QuizView.vue` 顶部信息栏，或调整答题页的题库归属展示。
+- Scope: 只适用于答题页 `/exams/:examSlug/quiz/:sessionId`；不改变复盘页与结果页。
+
+### 2. Signatures
+
+- 标题：`<h1 data-testid="quiz-title">{{ pageTitle }}</h1>`
+- 徽章：`<span data-testid="quiz-bank-badge">{{ currentQuestionBankName }}</span>`
+- 数据来源：`GET /api/quiz/session/{id}` 进行中分支的 `questions[].bank_id` / `bank_name`。
+- 计算属性：
+  ```javascript
+  const isWrongPracticeMode = computed(() => quizStore.session?.mode === 'wrong_practice')
+  const pageTitle = computed(() => (
+    isWrongPracticeMode.value
+      ? sessionModeLabel(quizStore.session)
+      : (quizStore.session?.bank_name || '答题')
+  ))
+  const currentQuestionBankName = computed(() => currentQuestion.value?.bank_name || '')
+  ```
+
+### 3. Contracts
+
+- 错题练习（`mode === 'wrong_practice'`）**主标题固定为「错题练习」**，不得使用会话级
+  `session.bank_name`：错题会话可跨题库，会话级字段只是首个题库，会误导归属。
+- 当前题库徽章只在错题练习模式渲染，样式复用专项练习徽章
+  （`max-w-[12rem] truncate rounded-full bg-sky-100 ...`），随 `currentQuestion` 变化。
+- 徽章门控必须**同时校验模式与名称**：`isWrongPracticeMode && currentQuestionBankName`。
+  只校验名称会让普通练习误显示；只校验模式会渲染空 pill。
+- `bank_name` 缺失时隐藏徽章，**不回退** `session.bank_name`——那会再次显示错误归属。
+- 其他模式（顺序/随机/专项/模拟）的标题与徽章行为保持不变。
+- `QuizView` 挂载时总会请求 `session_detail` 并覆盖 store，因此刷新/重做后徽章仍正确；
+  `/quiz/start`、`/quiz/retry` 不下发逐题题库字段，不构成依赖。
+
+### 4. Validation & Error Matrix
+
+| 条件 | 表现 |
+|------|------|
+| 会话加载中（`sessionReady=false`） | 整页「加载中…」，不渲染标题与徽章 |
+| 错题练习 + `bank_name` 非空 | 标题「错题练习」，徽章显示当前题题库名 |
+| 错题练习 + `bank_name` 缺失/空串 | 标题「错题练习」，徽章隐藏 |
+| 非错题练习模式 | 标题沿用会话级题库名，不出现 `quiz-bank-badge` |
+| 刷新页面 | `session_detail` 重新下发逐题字段，徽章与恢复后的当前题一致 |
+
+### 5. Good/Base/Bad Cases
+
+- Good: 跨题库错题练习第 1 题属 `Review Bank`、第 2 题属 `Second Bank`，切题时徽章随之切换。
+- Base: 单题库错题练习，标题仍为「错题练习」，徽章显示该题库名。
+- Bad: 标题继续用 `session.bank_name`，跨题库时始终显示首个题库。
+- Bad: 徽章条件只写 `currentQuestion?.bank_name`，顺序练习也出现题库徽章。
+
+### 6. Tests Required
+
+- `frontend/tests/quizIntegrationAcceptance.test.js::错题练习标题与徽章显示当前题目所属题库`：
+  标题、徽章随题切换、刷新后一致、顺序练习无徽章。
+- 后端契约：`test_practice_exposes_each_question_bank` 与 `test_quiz_review_api.py` 的
+  进行中精确键集合断言必须同批通过。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```javascript
+const pageTitle = computed(() => quizStore.session?.bank_name || '答题')
+<span v-if="currentQuestion?.bank_name">{{ currentQuestion.bank_name }}</span>
+```
+
+#### Correct
+
+```javascript
+const pageTitle = computed(() => (
+  isWrongPracticeMode.value
+    ? sessionModeLabel(quizStore.session)
+    : (quizStore.session?.bank_name || '答题')
+))
+<span v-else-if="isWrongPracticeMode && currentQuestionBankName">{{ currentQuestionBankName }}</span>
+```
+
+---
