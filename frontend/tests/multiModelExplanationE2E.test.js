@@ -187,6 +187,8 @@ test('多模型解析：真实登录、预热、独立答案、移动Tab、更�
   assert.equal(JSON.parse(await browser('eval', 'document.querySelector("[role=tab][aria-selected=true]").textContent.trim()')), 'model-b')
   await browser('open', origin + '/admin/settings')
   await browser('wait', '--text', 'AI API 配置')
+  // 模型行来自 onMounted 的设置请求，标题先于数据出现；高负载下立刻计数会读到 0 行。
+  await browser('wait', '--fn', 'document.querySelectorAll("[data-model-row]").length === 5')
   assert.equal(JSON.parse(await browser('eval', 'document.querySelectorAll("[data-model-row]").length')), 5)
   await browser('click', '[data-model-row="4"] summary')
   await browser('fill', '#explain-effort-4', 'high')

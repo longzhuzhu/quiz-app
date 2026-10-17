@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -487,8 +488,11 @@ def test_retry_starts_new_session_with_own_snapshot_and_fresh_state(quiz_api):
 
 def test_retry_does_not_write_practice_stats(quiz_api):
     session_id = _start(quiz_api, mode="sequential")
+    # 练习日只接受 UTC 今天 ±1 天（practice_service.is_acceptable_local_date）；
+    # 硬编码日期会随真实时间推移被静默拒绝，导致练习日断言变成假失败。
     assert _answer(
-        quiz_api, session_id, quiz_api.ids.questions[0], "B", local_date="2026-10-13",
+        quiz_api, session_id, quiz_api.ids.questions[0], "B",
+        local_date=datetime.now(timezone.utc).date().isoformat(),
     ).status_code == 200
     _finish(quiz_api, session_id)
 
