@@ -124,6 +124,23 @@ def practice_wrong(
     ordered_questions = [question_map[qid] for qid in question_ids if qid in question_map]
     counts = _get_user_question_counts(user_id, question_ids, db)
 
+    # 错题练习可跨题库，逐题下发题库归属；必须在 commit 前用一次列查询建立映射，
+    # 否则 commit 过期后逐题访问 ORM 关系会触发 N+1。
+    bank_rows = (
+        db.query(Question.id, QuestionBank.id, QuestionBank.name)
+        .join(QuestionBank, Question.bank_id == QuestionBank.id)
+        .filter(Question.id.in_(question_ids))
+        .all()
+    )
+    banks_by_question_id = {
+        question_id: (question_bank_id, bank_name)
+        for question_id, question_bank_id, bank_name in bank_rows
+    }
+    # 归属映射在 commit 前定型：commit 后 ORM 属性过期，循环里再读 q.bank_id 会逐题触发查询
+    question_banks = {
+        q.id: banks_by_question_id.get(q.id, (q.bank_id, "")) for q in ordered_questions
+    }
+
     first_bank_id = bank_id or ordered_questions[0].bank_id
     session = QuizSession(
         user_id=user_id,
@@ -141,8 +158,11 @@ def practice_wrong(
     questions_out = []
     summaries = summaries_for_questions(db, ordered_questions, exam.id)
     for q in ordered_questions:
+        question_bank_id, question_bank_name = question_banks[q.id]
         questions_out.append({
             "id": q.id,
+            "bank_id": question_bank_id,
+            "bank_name": question_bank_name,
             "question_type": q.question_type,
             "content": q.content,
             "content_zh": q.content_zh,

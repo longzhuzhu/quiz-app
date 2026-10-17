@@ -786,6 +786,7 @@ if isinstance(entry, dict) and entry.get("question_id") == question_id:
 ### 2. Signatures
 
 - `GET /api/quiz/session/{session_id}`
+- 进行中 `questions[]`：`{id, bank_id, bank_name, question_type, content, content_zh, options, answered, user_answer_count, ai_explanations, ai_input_fingerprint, explanation, explanation_zh}`
 - 完成态 `questions[]`：`{id, index, question_type, content, options, user_answer, is_correct, correct_answer, status, status_unknown}`
 - 完成态 `session`：额外含 `wrong_count`、`unanswered_count`、`accuracy_basis`、`has_snapshot`
 - `session_stats(total, answered, correct, mode)` — `backend/app/services/quiz_stats.py`
@@ -806,6 +807,15 @@ if isinstance(entry, dict) and entry.get("question_id") == question_id:
   删掉会让刷新续答丢失判定。两侧都有测试锁定（`test_quiz_review_api.py` 的进行中用例、
   `frontend/tests/quizResultE2E.test.js` 的回归门禁用例）。
 - 内容优先取 `question_snapshot`；无快照的旧会话退回题库当前值并置 `has_snapshot=false`。
+- **进行中 `questions[]` 必须逐题下发 `bank_id` / `bank_name`**：错题练习可跨题库，
+  会话级 `session.bank_id` 只是首个题库，答题页按题展示题库归属只能依赖逐题字段。
+  该分支用 `joinedload(Question.bank)` 一次预加载；`bank` 为空时 `bank_name=""`，
+  前端据此隐藏徽章而不是回退会话级题库名。
+- `POST /wrong/practice` 同样逐题下发这两个字段；它先 `db.commit()` 再构造 payload，
+  因此必须在 commit **之前**用一次列查询建立 `question_id -> (bank_id, bank_name)` 映射，
+  不能在循环里访问 `q.bank.name`（`expire_on_commit=True` 会触发逐题 SELECT）。
+- `/quiz/start`、`/quiz/retry` 不下发逐题题库字段：答题页渲染前必先请求本接口并覆盖 store，
+  标题与徽章不消费这两个响应，避免扩大契约面。
 - `C + E + U = T` 守恒：`wrong = answered - correct`，`unanswered = total - answered`。
 
 ### 4. Validation & Error Matrix
@@ -835,7 +845,10 @@ if isinstance(entry, dict) and entry.get("question_id") == question_id:
 
 - `backend/tests/test_quiz_review_api.py`：完成态释放与原场顺序、进行中六字段逐键隐藏、
   两模式分母对照、零作答不抛异常、旧会话不重判、只读拒绝、`history` 同口径、
-  随机模式题号、冻结整列损坏不崩。
+  随机模式题号、冻结整列损坏不崩；进行中题目精确键集合含 `bank_id`/`bank_name`。
+- `backend/tests/test_wrong_mastery_streak.py::test_practice_exposes_each_question_bank`：
+  跨题库错题练习中 `/wrong/practice` 与 `/quiz/session/{id}` 的逐题
+  `(bank_id, bank_name)` 一致，覆盖两个题库。
 - 回归门禁：未完成会话的 `resume_index` 与 `questions` 结构未变（答题页刷新恢复）。
 
 ### 7. Wrong vs Correct

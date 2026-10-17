@@ -8,7 +8,7 @@ import { startStudyBackend } from './helpers/studyBackend.js'
  * 前三项 E2E（quizReviewE2E / quizResultE2E）未覆盖的场景。
  *
  * 覆盖：多选题完整渲染、越权与跨项目拒绝、跨题库重做保留全部原题、
- * 新场刷新不继承原场、完成后删除原题仍可复盘。
+ * 新场刷新不继承原场、完成后删除原题仍可复盘、错题练习标题与题库徽章。
  */
 
 const api = (browser, path, options = {}) => browser('eval', `(async () => {
@@ -268,4 +268,95 @@ test('删除原题后复盘仍可读，重做整场失败且无部分会话', { 
   assert.ok(String(retried.data.detail).includes(String(victim.id)), `失败提示应列出不可用题目 ID，实际: ${retried.data.detail}`)
   assert.equal(JSON.parse(await api(browser, '/api/quiz/history?per_page=100')).data.total, sessionsBefore,
     '整场失败不得留下部分会话')
+})
+
+test('错题练习标题与徽章显示当前题目所属题库', { timeout: 240000 }, async t => {
+  const apiTarget = await startStudyBackend(t, { script: 'run_quiz_review_backend.py' })
+  const { browser, origin } = await startStudyBrowser(t, { apiTarget })
+  await browser('set', 'viewport', '1280', '900')
+  await signIn(browser, origin)
+
+  // 主库第 1 题答错（正确答案 A，答 D），副库的单选题也答错（正确答案 B，答 A）
+  await buildSession(browser, {
+    mode: 'sequential', bankId: 1, questionCount: 1,
+    answers: () => 'D',
+  })
+  const second = JSON.parse(await api(browser, '/api/quiz/start', {
+    method: 'POST', body: { bank_id: 2, mode: 'sequential' },
+  }))
+  assert.equal(second.status, 200, JSON.stringify(second))
+  const secondSession = second.data.session.id
+  const crossBankQuestion = second.data.questions.find(q => q.question_type === 'single')
+  assert.ok(crossBankQuestion, '副库夹具必须含一道单选题')
+  assert.equal(JSON.parse(await api(browser, '/api/quiz/answer', {
+    method: 'POST',
+    body: { session_id: secondSession, question_id: crossBankQuestion.id, user_answer: 'A' },
+  })).status, 200)
+  assert.equal(JSON.parse(await api(browser, '/api/quiz/finish', {
+    method: 'POST', body: { session_id: secondSession },
+  })).status, 200)
+
+  const practice = JSON.parse(await api(browser, '/api/wrong/practice', { method: 'POST', body: {} }))
+  assert.equal(practice.status, 200, JSON.stringify(practice))
+  const practiceSession = practice.data.session.id
+  const practiceQuestions = practice.data.questions
+  const bankIds = new Set(practiceQuestions.map(q => q.bank_id))
+  assert.ok(bankIds.has(1) && bankIds.has(2), `错题练习必须跨两个题库，实际: ${JSON.stringify(practiceQuestions.map(q => [q.bank_id, q.bank_name]))}`)
+  const bankNameById = Object.fromEntries(practiceQuestions.map(q => [q.bank_id, q.bank_name]))
+  assert.equal(bankNameById[1], 'Review Bank')
+  assert.equal(bankNameById[2], 'Second Bank')
+
+  const title = async () => JSON.parse(await browser('eval',
+    `document.querySelector('[data-testid=quiz-title]')?.textContent.trim() ?? null`))
+  const badge = async () => JSON.parse(await browser('eval',
+    `document.querySelector('[data-testid=quiz-bank-badge]')?.textContent.trim() ?? null`))
+  const waitForBadge = expected => browser('wait', '--fn',
+    `document.querySelector('[data-testid=quiz-bank-badge]')?.textContent.trim() === ${JSON.stringify(expected)}`)
+
+  await browser('open', `${origin}/exams/current/quiz/${practiceSession}`)
+  await browser('wait', '--fn', `Boolean(document.querySelector('[data-testid=quiz-title]'))`)
+
+  // 主标题固定为「错题练习」，徽章为当前题所属题库（恢复索引对应题）
+  assert.equal(await title(), '错题练习', '错题练习主标题不得使用会话级题库名')
+  const detail = JSON.parse(await api(browser, `/api/quiz/session/${practiceSession}`)).data
+  const resumeQuestion = detail.questions[detail.session.resume_index]
+  assert.ok(resumeQuestion, '恢复索引必须指向有效题目')
+  assert.equal(await badge(), resumeQuestion.bank_name, '首次打开徽章必须与恢复题目一致')
+
+  // 切到另一题库的题：徽章随当前题目切换
+  const targetIndex = practiceQuestions.findIndex(q => q.bank_id !== resumeQuestion.bank_id)
+  assert.ok(targetIndex >= 0, '夹具必须包含另一题库的题')
+  const expectedBankName = practiceQuestions[targetIndex].bank_name
+  const clicked = JSON.parse(await browser('eval', `(() => {
+    const buttons = Array.from(document.querySelectorAll('button'));
+    const target = buttons.find(button => button.textContent.trim().includes('第 ${targetIndex + 1} 题'));
+    if (!target) return false;
+    target.click();
+    return true;
+  })()`))
+  assert.equal(clicked, true, `未找到第 ${targetIndex + 1} 题的导航按钮`)
+  // 目标题属另一题库，徽章文本变化即可确认切题完成
+  await waitForBadge(expectedBankName)
+  assert.equal(await badge(), expectedBankName, '切换题目后徽章必须显示当前题目所属题库')
+  assert.equal(await title(), '错题练习', '切换题目后主标题保持「错题练习」')
+
+  // 刷新后徽章与当前题保持一致
+  await browser('eval', '(() => { location.reload(); return true })()')
+  await browser('wait', '--fn', `Boolean(document.querySelector('[data-testid=quiz-title]'))`)
+  await browser('wait', '--fn', `Boolean(document.querySelector('[data-testid=quiz-bank-badge]'))`)
+  const refreshed = JSON.parse(await api(browser, `/api/quiz/session/${practiceSession}`)).data
+  const refreshedQuestion = refreshed.questions[refreshed.session.resume_index]
+  assert.ok(refreshedQuestion, '刷新后题号必须指向有效题目')
+  assert.equal(await title(), '错题练习', '刷新后主标题保持「错题练习」')
+  assert.equal(await badge(), refreshedQuestion.bank_name, '刷新后徽章必须与当前题目所属题库一致')
+
+  // 顺序练习不显示题库徽章（模式门控）
+  const sequential = JSON.parse(await api(browser, '/api/quiz/start', {
+    method: 'POST', body: { bank_id: 1, mode: 'sequential', question_count: 1 },
+  }))
+  assert.equal(sequential.status, 200, JSON.stringify(sequential))
+  await browser('open', `${origin}/exams/current/quiz/${sequential.data.session.id}`)
+  await browser('wait', '--fn', `Boolean(document.querySelector('[data-testid=quiz-title]'))`)
+  assert.equal(await title(), 'Review Bank', '顺序练习标题仍取会话题库名')
+  assert.equal(await badge(), null, '非错题练习不得出现题库徽章')
 })

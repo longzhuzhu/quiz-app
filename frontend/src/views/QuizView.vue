@@ -5,8 +5,8 @@
     <!-- 顶部信息栏 -->
     <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
       <div class="flex items-center gap-2 min-w-0">
-        <h1 class="text-base md:text-lg font-bold text-gray-900 dark:text-white truncate">
-          {{ quizStore.session.bank_name || '答题' }}
+        <h1 data-testid="quiz-title" class="text-base md:text-lg font-bold text-gray-900 dark:text-white truncate">
+          {{ pageTitle }}
         </h1>
         <span class="rounded-full bg-primary-100 dark:bg-primary-900/30 px-2 py-0.5 text-xs font-medium text-primary-700 dark:text-primary-400 flex-shrink-0">
           {{ quizStore.currentIndex + 1 }} / {{ quizStore.questions.length }}
@@ -19,6 +19,12 @@
           class="max-w-[12rem] truncate rounded-full bg-sky-100 dark:bg-sky-900/30 px-2 py-0.5 text-xs font-medium text-sky-700 dark:text-sky-400"
           :title="topicModeLabel"
         >{{ topicModeLabel }}</span>
+        <span
+          v-else-if="isWrongPracticeMode && currentQuestionBankName"
+          data-testid="quiz-bank-badge"
+          class="max-w-[12rem] truncate rounded-full bg-sky-100 dark:bg-sky-900/30 px-2 py-0.5 text-xs font-medium text-sky-700 dark:text-sky-400"
+          :title="currentQuestionBankName"
+        >{{ currentQuestionBankName }}</span>
         <label class="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 cursor-pointer select-none">
           <input type="checkbox" v-model="autoNext"
             class="h-3.5 w-3.5 rounded border-gray-300 dark:border-slate-600 text-primary-600 dark:text-primary-500" />
@@ -183,6 +189,14 @@ const prewarmKeys = new Set()
 const isExamMode = computed(() => quizStore.session?.mode === 'exam')
 const isTopicMode = computed(() => quizStore.session?.mode === 'topic')
 const topicModeLabel = computed(() => sessionModeLabel(quizStore.session))
+// 错题练习可跨题库，标题不能取会话级 bank_name，改为展示当前题所属题库
+const isWrongPracticeMode = computed(() => quizStore.session?.mode === 'wrong_practice')
+const pageTitle = computed(() => (
+  isWrongPracticeMode.value
+    ? sessionModeLabel(quizStore.session)
+    : (quizStore.session?.bank_name || '答题')
+))
+const currentQuestionBankName = computed(() => currentQuestion.value?.bank_name || '')
 const totalAnsweredCount = computed(() => Object.keys(answerResults).length)
 const correctCount = computed(() => Object.values(answerResults).filter(v => v === true).length)
 const wrongCount = computed(() => Object.values(answerResults).filter(v => v === false).length)

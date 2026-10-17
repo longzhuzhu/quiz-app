@@ -405,7 +405,7 @@ def test_in_progress_session_keeps_resume_fields_for_answering_page(quiz_api):
     assert len(detail["questions"]) == QUESTION_COUNT
     resumed = detail["questions"][2]
     assert set(resumed) == {
-        "id", "question_type", "content", "content_zh", "options",
+        "id", "bank_id", "bank_name", "question_type", "content", "content_zh", "options",
         "answered", "user_answer_count", "ai_explanations",
         "ai_input_fingerprint", "explanation", "explanation_zh",
     }

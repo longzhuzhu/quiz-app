@@ -872,7 +872,13 @@ def session_detail(
         q_ids = session_question_ids
         counts = _get_user_question_counts(user_id, q_ids, db)
         answered_ids = {a.question_id for a in answers}
-        all_questions = db.query(Question).filter(Question.id.in_(q_ids)).all()
+        # 错题练习可跨题库，答题页按题展示题库归属，这里预加载避免逐题 N+1
+        all_questions = (
+            db.query(Question)
+            .options(joinedload(Question.bank))
+            .filter(Question.id.in_(q_ids))
+            .all()
+        )
         summaries = summaries_for_questions(db, all_questions, exam.id) if not is_exam else {}
         q_map = {q.id: q for q in all_questions}
         for qid in q_ids:
@@ -880,6 +886,8 @@ def session_detail(
             if q:
                 question_data = {
                     "id": q.id,
+                    "bank_id": q.bank_id,
+                    "bank_name": q.bank.name if q.bank else "",
                     "question_type": q.question_type,
                     "content": q.content,
                     "content_zh": q.content_zh,
