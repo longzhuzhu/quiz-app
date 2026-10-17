@@ -8,7 +8,7 @@
         <h1 data-testid="quiz-title" class="text-base md:text-lg font-bold text-gray-900 dark:text-white truncate">
           {{ pageTitle }}
         </h1>
-        <span class="rounded-full bg-primary-100 dark:bg-primary-900/30 px-2 py-0.5 text-xs font-medium text-primary-700 dark:text-primary-400 flex-shrink-0">
+        <span data-testid="quiz-position" class="rounded-full bg-primary-100 dark:bg-primary-900/30 px-2 py-0.5 text-xs font-medium text-primary-700 dark:text-primary-400 flex-shrink-0">
           {{ quizStore.currentIndex + 1 }} / {{ quizStore.questions.length }}
         </span>
       </div>
@@ -26,7 +26,7 @@
           :title="currentQuestionBankName"
         >{{ currentQuestionBankName }}</span>
         <label class="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 cursor-pointer select-none">
-          <input type="checkbox" v-model="autoNext"
+          <input type="checkbox" v-model="autoNext" data-testid="auto-next"
             class="h-3.5 w-3.5 rounded border-gray-300 dark:border-slate-600 text-primary-600 dark:text-primary-500" />
           自动下一题
         </label>
@@ -129,6 +129,7 @@
           :answer-count="currentQuestion?.user_answer_count ?? 0"
           :exam-mode="isExamMode"
           :session-id="quizStore.session?.id"
+          :auto-advance-on-select="autoAnswerOnSelect"
           @submit="handleSubmit"
           @next="quizStore.nextQuestion()"
           @prev="quizStore.prevQuestion()"
@@ -157,6 +158,7 @@ import { useQuizStore } from '../stores/quiz'
 import { currentExamPath } from '../utils/examRoutes'
 import { sessionModeLabel } from '../utils/quizMode'
 import { createQuestionTimer, formatQuestionDuration } from '../utils/questionTimer'
+import { useQuizAutoNext } from '../composables/useQuizAutoNext'
 import { useToast } from '../composables/useToast'
 import QuestionCard from '../components/QuestionCard.vue'
 import client from '../api/client'
@@ -183,10 +185,13 @@ const answerResults = reactive({})
 const questionAnswerMap = reactive({})
 // 会话恢复映射：questionId -> { is_correct, correct_answer, explanation, explanation_zh }
 const questionResultMap = reactive({})
-const autoNext = ref(false)
+const { autoNext } = useQuizAutoNext()
 const prewarmKeys = new Set()
+let prewarmTimer = null
 
 const isExamMode = computed(() => quizStore.session?.mode === 'exam')
+// 模拟考试不展示对错，点击选项即提交会让用户无法确认答案，故只对普通练习生效。
+const autoAnswerOnSelect = computed(() => autoNext.value && !isExamMode.value)
 const isTopicMode = computed(() => quizStore.session?.mode === 'topic')
 const topicModeLabel = computed(() => sessionModeLabel(quizStore.session))
 // 错题练习可跨题库，标题不能取会话级 bank_name，改为展示当前题所属题库
@@ -218,7 +223,7 @@ function clearReactiveMap(map) {
   Object.keys(map).forEach((k) => delete map[k])
 }
 
-function triggerAiPrewarm() {
+function sendAiPrewarm() {
   if (!sessionReady.value) return
   const sessionId = quizStore.session?.id
   if (!sessionId || !currentQuestion.value?.id) return
@@ -232,6 +237,12 @@ function triggerAiPrewarm() {
   prewarmKeys.add(key)
 
   client.post('/ai/prewarm', { session_id: sessionId, question_ids: ids }).catch(() => {})
+}
+
+// 连续快速切题只发最后一次预热；请求仍是非阻塞的，不影响下一题渲染。
+function triggerAiPrewarm() {
+  clearTimeout(prewarmTimer)
+  prewarmTimer = setTimeout(sendAiPrewarm, 150)
 }
 
 function restoreSessionState(sessionData) {
@@ -345,6 +356,7 @@ onMounted(() => {
 onUnmounted(() => {
   sessionGeneration += 1
   clearInterval(timerInterval)
+  clearTimeout(prewarmTimer)
   autoNextTimeouts.forEach(clearTimeout)
   document.removeEventListener('visibilitychange', syncVisibility)
   window.removeEventListener('pagehide', onPageHide)
@@ -384,6 +396,9 @@ async function handleSubmit(answer, callback) {
     const submitIndex = quizStore.currentIndex
     const canAutoNext = autoNext.value
     const hasNext = submitIndex < quizStore.questions.length - 1
+    // 改答与多选提交后需要短暂停留展示结果；单选/判断首次提交无需等待。
+    const slowAutoNext = currentQuestion.value.question_type === 'multiple'
+      || !!questionResultMap[submitQuestionId]
     const submission = questionTimer.captureSubmission(submitQuestionId)
 
     const res = await quizStore.submitAnswer(submitQuestionId, answer, submission.elapsedMs)
@@ -426,7 +441,7 @@ async function handleSubmit(answer, callback) {
     callback(resultPayload)
 
     if (canAutoNext && hasNext) {
-      scheduleAutoNext(submitIndex, generation, 1500)
+      scheduleAutoNext(submitIndex, generation, slowAutoNext ? 300 : 0)
     }
   } catch (e) {
     if (generation !== sessionGeneration) return
