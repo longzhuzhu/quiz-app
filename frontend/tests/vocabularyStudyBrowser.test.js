@@ -226,7 +226,14 @@ test('未缓存词先显示加载状态，正文到达后保留导航方向入�
       for(let i=0;i<600&&next.disabled;i++)await new Promise(requestAnimationFrame);
       next.click();await new Promise(requestAnimationFrame);
     }
-    const loadingText=card.textContent,loadingAnimations=card.getAnimations({subtree:true}).length,frames=[];
+    // 切词到未缓存词时 loading 标志由异步落盘后的 showCurrent 置位；
+    // 高负载下下一帧可能仍是导航中间态，必须等加载文案出现再采样。
+    let loadingText='';
+    for(let i=0;i<600&&!loadingText;i++){
+      await new Promise(requestAnimationFrame);
+      if(card.textContent.includes('正在加载单词'))loadingText=card.textContent;
+    }
+    const loadingAnimations=card.getAnimations({subtree:true}).length,frames=[];
     for(let i=0;i<600;i++){
       await new Promise(requestAnimationFrame);
       const content=card.querySelector('.study-card-content'),style=getComputedStyle(content);
