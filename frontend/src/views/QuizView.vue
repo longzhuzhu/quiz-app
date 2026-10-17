@@ -396,9 +396,11 @@ async function handleSubmit(answer, callback) {
     const submitIndex = quizStore.currentIndex
     const canAutoNext = autoNext.value
     const hasNext = submitIndex < quizStore.questions.length - 1
-    // 改答与多选提交后需要短暂停留展示结果；单选/判断首次提交无需等待。
-    const slowAutoNext = currentQuestion.value.question_type === 'multiple'
+    // 跳转前留出对错反馈的可见时间：单选/判断首次 500ms，多选与改答 300ms。
+    const autoNextDelay = currentQuestion.value.question_type === 'multiple'
       || !!questionResultMap[submitQuestionId]
+      ? 300
+      : 500
     const submission = questionTimer.captureSubmission(submitQuestionId)
 
     const res = await quizStore.submitAnswer(submitQuestionId, answer, submission.elapsedMs)
@@ -441,7 +443,7 @@ async function handleSubmit(answer, callback) {
     callback(resultPayload)
 
     if (canAutoNext && hasNext) {
-      scheduleAutoNext(submitIndex, generation, slowAutoNext ? 300 : 0)
+      scheduleAutoNext(submitIndex, generation, autoNextDelay)
     }
   } catch (e) {
     if (generation !== sessionGeneration) return

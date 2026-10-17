@@ -40,18 +40,19 @@
     <!-- 选项 -->
     <div class="space-y-3">
       <label v-for="option in question.options" :key="option.key"
-        :class="optionClass(option.key)" @pointerdown="onOptionPointerDown">
+        :class="[optionClass(option.key), submitting ? 'pointer-events-none' : '']" @pointerdown="onOptionPointerDown">
         <!-- 状态同步挂在 change 上：点击 label 文本时浏览器会把点击转发给 input，
              在 label 或 input 的 click 上监听都会一次点击触发两遍（多选会被切换回原状）。
              change 同时覆盖键盘方向键，是否自动提交由 pointerdown 标记区分。
-             提交期间禁用 input，避免原生勾选状态与选答模型漂移。 -->
+             提交期间用 pointer-events + keydown 拦截交互，不用 disabled：
+             原生 disabled 会把选中圆圈渲染成灰色，用户提交瞬间看不到已选项。 -->
         <input v-if="question.question_type === 'multiple'"
-          type="checkbox" :checked="isOptionChecked(option.key)" :disabled="submitting"
-          @keydown="onOptionKeyDown" @click="onOptionClick(option.key)" @change="toggleOption(option.key)"
+          type="checkbox" :checked="isOptionChecked(option.key)" :aria-disabled="submitting"
+          @keydown="onOptionKeyDown" @click="onOptionClick(option.key)" @change="toggleOption(option.key, $event)"
            class="mt-0.5 h-4 w-4 rounded text-primary-600 dark:text-primary-500" />
         <input v-else
-          type="radio" :checked="isOptionChecked(option.key)" :disabled="submitting"
-          @keydown="onOptionKeyDown" @click="onOptionClick(option.key)" @change="toggleOption(option.key)"
+          type="radio" :checked="isOptionChecked(option.key)" :aria-disabled="submitting"
+          @keydown="onOptionKeyDown" @click="onOptionClick(option.key)" @change="toggleOption(option.key, $event)"
            class="mt-0.5 h-4 w-4 text-primary-600 dark:text-primary-500" />
         <div>
           <span class="font-medium text-gray-900 dark:text-white">{{ option.key }}.</span>
@@ -285,15 +286,27 @@ function onOptionClick(key) {
 }
 
 function onOptionKeyDown(event) {
+  if (submitting.value) {
+    // 提交期间阻止方向键/空格改变原生选中态，替代已移除的 disabled。
+    if ([' ', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
+      event.preventDefault()
+    }
+    return
+  }
   if (event.key !== ' ' && event.key !== 'Enter') return
   // 键盘操作不参与自动提交，只同步选择；清除可能残留的指针标记。
   pointerInitiated = false
 }
 
-function toggleOption(key) {
-  if (!props.question || submitting.value) return
+function toggleOption(key, event) {
+  if (!props.question) return
   const fromPointer = pointerInitiated
   pointerInitiated = false
+  if (submitting.value) {
+    // 提交在途时浏览器可能已先行改变原生选中态；按模型值写回，避免 UI 与选答漂移。
+    if (event?.target) event.target.checked = isOptionChecked(key)
+    return
+  }
 
   if (correctionMode.value) {
     if (props.question.question_type === 'multiple') {

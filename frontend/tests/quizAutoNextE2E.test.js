@@ -256,24 +256,58 @@ test('自动下一题关闭时解析仍自动展开（阳性对照）', { timeou
   await noScriptErrors(browser)
 })
 
-test('自动下一题：提交期间选项被禁用，不会出现勾选状态漂移', { timeout: 180000 }, async t => {
+test('自动下一题：提交期间不出灰圈、不漂移，跳转前可见对错反馈', { timeout: 180000 }, async t => {
   const apiTarget = await startStudyBackend(t, { script: 'run_quiz_auto_next_backend.py' })
   const { browser, origin } = await startStudyBrowser(t, { apiTarget })
   await signIn(browser, origin)
   const sessionId = await startSession(browser)
   await openQuiz(browser, origin, sessionId)
   await browser('check', autoNextBox)
-  await browser('click', optionRadio)
-  await waitForPosition(browser, 2)
 
-  // 第 2 题提交期间（mock 延迟由浏览器路由拦截注入）选项必须禁用。
-  const before = await API(browser, `/api/quiz/session/${sessionId}`)
-  assert.equal(await evalJson(browser,
-    `Array.from(document.querySelectorAll('.space-y-3 > label > input')).every(input => !input.checked) || true`),
-  true)
+  // 注入 1.2s 的作答延迟，让“提交在途”状态可稳定观察。
+  await browser('eval', `(() => {
+    const OrigOpen = XMLHttpRequest.prototype.open;
+    const OrigSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+      this.__testUrl = url;
+      return OrigOpen.call(this, method, url, ...rest);
+    };
+    XMLHttpRequest.prototype.send = function (...args) {
+      if (String(this.__testUrl || '').includes('/api/quiz/answer')) {
+        return setTimeout(() => OrigSend.apply(this, args), 1200);
+      }
+      return OrigSend.apply(this, args);
+    };
+    return true;
+  })()`)
+
+  await browser('click', optionRadio)
   await browser('wait', '300')
-  const after = await API(browser, `/api/quiz/session/${sessionId}`)
-  assert.equal(after.data.answers.length, before.data.answers.length, '仅第 1 题已提交')
-  assert.equal(await headingPosition(browser), '2')
+
+  const inFlight = await evalJson(browser, `(() => {
+    const input = document.querySelector('.space-y-3 > label > input');
+    return {
+      position: document.querySelector('[data-testid=quiz-position]')?.textContent.trim(),
+      disabled: input.disabled,
+      ariaDisabled: input.getAttribute('aria-disabled'),
+      checked: input.checked,
+    };
+  })()`)
+  assert.equal(inFlight.disabled, false, '不得使用原生 disabled（会把选中圆圈渲染成灰色）')
+  assert.equal(inFlight.ariaDisabled, 'true', '提交期间必须向辅助技术标明不可操作')
+  assert.equal(inFlight.checked, true, '提交在途时已选项必须保持可见的选中态')
+  assert.equal(inFlight.position, '1 / 6', '提交在途时不得提前跳题')
+
+  // 提交在途期间点击其他选项不得改变选择。
+  await browser('eval', `document.querySelector('.space-y-3 > label:nth-child(2)').click()`)
+  await browser('wait', '150')
+  assert.equal(await evalJson(browser,
+    `document.querySelector('.space-y-3 > label:nth-child(2) > input').checked`), false,
+  '提交在途期间不得改变原生选中态')
+
+  // 响应返回后必须先在本题出现对错反馈，再切到下一题。
+  await browser('wait', '--text', '回答正确')
+  assert.equal(await headingPosition(browser), '1', '反馈必须在跳转前可见')
+  await browser('wait', '--fn', `document.querySelector('[data-testid=quiz-position]')?.textContent.trim().startsWith('2 /')`)
   await noScriptErrors(browser)
 })
