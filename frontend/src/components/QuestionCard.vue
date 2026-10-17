@@ -40,13 +40,19 @@
     <!-- 选项 -->
     <div class="space-y-3">
       <label v-for="option in question.options" :key="option.key"
-        :class="optionClass(option.key)"
-        @click="toggleOption(option.key)">
+        :class="[optionClass(option.key), submitting ? 'pointer-events-none' : '']" @pointerdown="onOptionPointerDown">
+        <!-- 状态同步挂在 change 上：点击 label 文本时浏览器会把点击转发给 input，
+             在 label 或 input 的 click 上监听都会一次点击触发两遍（多选会被切换回原状）。
+             change 同时覆盖键盘方向键，是否自动提交由 pointerdown 标记区分。
+             提交期间用 pointer-events + keydown 拦截交互，不用 disabled：
+             原生 disabled 会把选中圆圈渲染成灰色，用户提交瞬间看不到已选项。 -->
         <input v-if="question.question_type === 'multiple'"
-          type="checkbox" :checked="isOptionChecked(option.key)"
+          type="checkbox" :checked="isOptionChecked(option.key)" :aria-disabled="submitting"
+          @keydown="onOptionKeyDown" @click="onOptionClick(option.key)" @change="toggleOption(option.key, $event)"
            class="mt-0.5 h-4 w-4 rounded text-primary-600 dark:text-primary-500" />
         <input v-else
-          type="radio" :checked="isOptionChecked(option.key)"
+          type="radio" :checked="isOptionChecked(option.key)" :aria-disabled="submitting"
+          @keydown="onOptionKeyDown" @click="onOptionClick(option.key)" @change="toggleOption(option.key, $event)"
            class="mt-0.5 h-4 w-4 text-primary-600 dark:text-primary-500" />
         <div>
           <span class="font-medium text-gray-900 dark:text-white">{{ option.key }}.</span>
@@ -92,13 +98,13 @@
     </div>
 
     <QuestionExplanation v-if="!examMode" ref="explanationPanel" :key="question.id"
-      :question="question" :auto-reveal="answered" />
+      :question="question" :auto-reveal="explanationAutoReveal" />
 
     <!-- 操作栏 -->
     <div class="mt-6 flex flex-wrap justify-between items-center gap-2">
       <BaseButton variant="secondary" size="sm" @click="$emit('prev')" :disabled="currentIndex === 0">上一题</BaseButton>
       <div class="flex items-center gap-2">
-        <BaseButton variant="primary" size="sm" @click="handleSubmit" :disabled="selectedAnswers.length === 0 || submitting || correctionMode" :loading="submitting">提交答案</BaseButton>
+        <BaseButton variant="primary" size="sm" @click="handleSubmit" :disabled="selectedAnswers.length === 0 || submitting || correctionMode" :loading="submitting">{{ autoAdvanceOnSelect && !answered && question.question_type !== 'multiple' && currentIndex < total - 1 ? '提交并下一题' : '提交答案' }}</BaseButton>
         <BaseButton v-if="answered && currentIndex < total - 1" variant="primary" size="sm" @click="$emit('next')">下一题</BaseButton>
         <BaseButton v-else-if="answered" variant="primary" size="sm" @click="$emit('finish')" class="!bg-emerald-600 hover:!bg-emerald-700">完成答题</BaseButton>
       </div>
@@ -138,6 +144,8 @@ const props = defineProps({
   examMode: { type: Boolean, default: false },
   answerCount: { type: Number, default: 0 },
   sessionId: { type: Number, default: null },
+  // 开启后未作答的单选/判断题点击选项即提交；多选仍需手动提交。
+  autoAdvanceOnSelect: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['submit', 'next', 'prev', 'finish', 'translated', 'answer-corrected'])
@@ -154,11 +162,17 @@ const pendingCorrectKeys = ref([])
 const confirmCorrectOpen = ref(false)
 const correcting = ref(false)
 let correctionGeneration = 0
+// 指针点击后到 change 之间置位；键盘触发的 change 不置位，从而不自动提交。
+let pointerInitiated = false
 
 const hasFullTranslation = computed(() => {
   if (!props.question?.content_zh) return false
   return (props.question.options || []).every(opt => opt.text_zh)
 })
+
+// 自动下一题开启时，答完不再自动展开解析，避免切题瞬间拉取解析正文；
+// 组件按题目 id 重建，用户切回本题后仍可手动展开。
+const explanationAutoReveal = computed(() => answered.value && !props.autoAdvanceOnSelect)
 
 const confirmCorrectMessage = computed(() => {
   const oldAnswer = result.value?.correct_answer || ''
@@ -260,8 +274,39 @@ async function submitCorrectAnswer() {
   }
 }
 
-function toggleOption(key) {
+function onOptionPointerDown() {
+  pointerInitiated = true
+}
+
+function onOptionClick(key) {
+  // 指针点击已由 change 处理；这里只兜底键盘 Space/Enter 对 checkbox 的切换。
+  // radio 的键盘选择走方向键（只触发 change），不需要在此处理。
+  if (props.question?.question_type !== 'multiple' || pointerInitiated) return
+  toggleOption(key)
+}
+
+function onOptionKeyDown(event) {
+  if (submitting.value) {
+    // 提交期间阻止方向键/空格改变原生选中态，替代已移除的 disabled。
+    if ([' ', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
+      event.preventDefault()
+    }
+    return
+  }
+  if (event.key !== ' ' && event.key !== 'Enter') return
+  // 键盘操作不参与自动提交，只同步选择；清除可能残留的指针标记。
+  pointerInitiated = false
+}
+
+function toggleOption(key, event) {
   if (!props.question) return
+  const fromPointer = pointerInitiated
+  pointerInitiated = false
+  if (submitting.value) {
+    // 提交在途时浏览器可能已先行改变原生选中态；按模型值写回，避免 UI 与选答漂移。
+    if (event?.target) event.target.checked = isOptionChecked(key)
+    return
+  }
 
   if (correctionMode.value) {
     if (props.question.question_type === 'multiple') {
@@ -277,11 +322,8 @@ function toggleOption(key) {
     return
   }
 
-  if (answered.value) {
-    answered.value = false
-    result.value = null
-  }
-
+  // 必须在清除 answered 之前捕获：已答题点击选项只进入改答选择，不自动提交。
+  const wasAnswered = answered.value
   if (props.question.question_type === 'multiple') {
     const idx = selectedAnswers.value.indexOf(key)
     if (idx >= 0) {
@@ -291,6 +333,21 @@ function toggleOption(key) {
     }
   } else {
     selectedAnswers.value = [key]
+  }
+
+  if (
+    props.autoAdvanceOnSelect
+    && fromPointer
+    && !wasAnswered
+    && props.question.question_type !== 'multiple'
+  ) {
+    handleSubmit()
+    return
+  }
+
+  if (wasAnswered) {
+    answered.value = false
+    result.value = null
   }
 }
 

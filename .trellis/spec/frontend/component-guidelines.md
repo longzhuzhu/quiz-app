@@ -128,6 +128,29 @@ async function handleClick() {
 
 父组件写回时，`QuestionCard` 的 `result` 必须与 `QuizView.questionResultMap[questionId]` 是**同一对象**。若 submit 回调传入 API 响应、映射表另存一份拷贝，更新解析后切题再切回会显示旧文案。`answer-corrected` 也必须就地改这份映射，不能另存拷贝。
 
+### 选项控件事件约定（QuestionCard 及任何 label 包 input 的表单）
+
+**事件挂 `input` 的 `change`，不要挂 `label` 或 `input` 的 `click`。** 点击 `<label>` 文本时浏览器会把点击转发给内部 `input`；若在 `label` 上监听会一次点击触发两遍，多选会被切换回原状，已答题第二次会被误判为“未作答”。
+
+```vue
+<!-- Correct: change 只触发一次，且覆盖键盘方向键 -->
+<label :class="optionClass(option.key)">
+  <input type="radio" :checked="isOptionChecked(option.key)" :disabled="submitting"
+    @keydown="onOptionKeyDown" @click="onOptionClick(option.key)" @change="toggleOption(option.key)" />
+</label>
+
+<!-- Wrong: label@click + 浏览器 label 转发 -> 每次点击执行两遍 -->
+<label @click="toggleOption(option.key)">
+  <input type="radio" :checked="isOptionChecked(option.key)" />
+</label>
+```
+
+**`change` 无法区分指针与键盘。** 方向键切换 radio 也触发 `change`。若业务要求“仅点击自动提交”，用 `pointerdown` 置位、`change` 读取并立即复位；键盘事件里清位。`pointerInitiated` 是模块/组件内一次性标记，不能用 `click` 事件的时间窗口推断。
+
+**提交期间必须 `:disabled="submitting"`。** 只在处理函数里 `return` 不够：浏览器在 `change` 触发前已改变原生 `checked`，而 `:checked` 的 diff 前后值相同，Vue 不会重写 DOM，界面与选答模型会永久漂移。禁用控件是唯一可靠的兜底。
+
+**否定断言必须带阳性对照。** 验证“不自动展开 / 不自动提交”时，必须有另一个用例验证关闭开关后该行为确实发生，否则实现退化为恒不发生时测试仍绿。
+
 ---
 
 ## 日期序列化
