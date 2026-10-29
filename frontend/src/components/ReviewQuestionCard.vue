@@ -45,6 +45,13 @@
       </div>
     </div>
 
+    <!-- AI 按钮区：与答题卡保持一致，紧跟在选项下方 -->
+    <div class="mt-4 flex flex-wrap items-center gap-2">
+      <TranslateButton :key="question.id" :question-id="question.id" :has-translation="hasFullTranslation" :show="showTranslation"
+        @translated="onTranslated" @toggle="showTranslation = !showTranslation" />
+      <AddVocabButton :initial-term="question.content || ''" />
+    </div>
+
     <!-- 作答证据：不推断未保存的状态 -->
     <div class="mt-4 rounded-xl p-4 border" :class="verdictClass">
       <p class="font-medium" :class="verdictTextClass">{{ statusText }}</p>
@@ -55,13 +62,6 @@
       <p v-if="question.correct_answer" class="mt-2 text-sm text-gray-600 dark:text-gray-300">
         当场正确答案: {{ question.correct_answer }}
       </p>
-    </div>
-
-    <!-- AI 按钮区 -->
-    <div class="mt-4 flex flex-wrap items-center gap-2">
-      <TranslateButton :key="question.id" :question-id="question.id" :has-translation="hasFullTranslation" :show="showTranslation"
-        @translated="onTranslated" @toggle="showTranslation = !showTranslation" />
-      <AddVocabButton :initial-term="question.content || ''" />
     </div>
 
     <QuestionExplanation :key="question.id" :question="question" auto-reveal />
