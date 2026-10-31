@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, Index, Integer, String
-from sqlalchemy.dialects.postgresql import JSONB
+from app.core.db_types import JSONType
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -19,8 +19,8 @@ class LlmParseCache(Base):
     prompt_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     chunk_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
-    request_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    response_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    request_json: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+    response_json: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)

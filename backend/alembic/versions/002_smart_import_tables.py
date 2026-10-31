@@ -9,7 +9,11 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
+from sqlalchemy import JSON, text
+from sqlalchemy.dialects.postgresql import JSONB
+
+# 迁移文件保持自包含：不导入会随应用演进的模型或默认常量。
+JSONType = JSON().with_variant(JSONB(), "postgresql")
 
 # revision identifiers, used by Alembic.
 revision: str = '002'
@@ -36,8 +40,8 @@ def upgrade() -> None:
         sa.Column('imported_questions', sa.Integer(), nullable=False),
         sa.Column('review_questions', sa.Integer(), nullable=False),
         sa.Column('failed_chunks', sa.Integer(), nullable=False),
-        sa.Column('config_json', postgresql.JSONB(), nullable=True),
-        sa.Column('summary_json', postgresql.JSONB(), nullable=True),
+        sa.Column('config_json', JSONType, nullable=True),
+        sa.Column('summary_json', JSONType, nullable=True),
         sa.Column('error_message', sa.Text(), nullable=True),
         sa.Column('created_by', sa.Integer(), nullable=True),
         sa.Column('created_at', sa.DateTime(), nullable=False),
@@ -63,9 +67,9 @@ def upgrade() -> None:
         sa.Column('normalized_text', sa.Text(), nullable=True),
         sa.Column('chunk_hash', sa.String(length=64), nullable=False),
         sa.Column('status', sa.String(length=32), nullable=False),
-        sa.Column('llm_request_json', postgresql.JSONB(), nullable=True),
-        sa.Column('llm_response_json', postgresql.JSONB(), nullable=True),
-        sa.Column('issues_json', postgresql.JSONB(), nullable=True),
+        sa.Column('llm_request_json', JSONType, nullable=True),
+        sa.Column('llm_response_json', JSONType, nullable=True),
+        sa.Column('issues_json', JSONType, nullable=True),
         sa.Column('created_at', sa.DateTime(), nullable=False),
         sa.Column('updated_at', sa.DateTime(), nullable=False),
         sa.ForeignKeyConstraint(['import_job_id'], ['import_jobs.id']),
@@ -85,15 +89,15 @@ def upgrade() -> None:
         sa.Column('question_type', sa.String(length=32), nullable=True),
         sa.Column('scenario_text', sa.Text(), nullable=True),
         sa.Column('content', sa.Text(), nullable=False),
-        sa.Column('options_json', postgresql.JSONB(), nullable=False),
-        sa.Column('correct_answer', postgresql.JSONB(), nullable=True),
+        sa.Column('options_json', JSONType, nullable=False),
+        sa.Column('correct_answer', JSONType, nullable=True),
         sa.Column('explanation', sa.Text(), nullable=True),
-        sa.Column('references_json', postgresql.JSONB(), nullable=True),
-        sa.Column('source_evidence_json', postgresql.JSONB(), nullable=True),
+        sa.Column('references_json', JSONType, nullable=True),
+        sa.Column('source_evidence_json', JSONType, nullable=True),
         sa.Column('llm_confidence', sa.Numeric(precision=5, scale=4), nullable=True),
         sa.Column('final_confidence', sa.Numeric(precision=5, scale=4), nullable=True),
-        sa.Column('issues_json', postgresql.JSONB(), nullable=True),
-        sa.Column('duplicate_json', postgresql.JSONB(), nullable=True),
+        sa.Column('issues_json', JSONType, nullable=True),
+        sa.Column('duplicate_json', JSONType, nullable=True),
         sa.Column('review_status', sa.String(length=32), nullable=False),
         sa.Column('import_status', sa.String(length=32), nullable=False),
         sa.Column('imported_question_id', sa.Integer(), nullable=True),
@@ -115,8 +119,8 @@ def upgrade() -> None:
         sa.Column('parsed_question_id', sa.Integer(), nullable=False),
         sa.Column('review_type', sa.String(length=64), nullable=True),
         sa.Column('severity', sa.String(length=32), nullable=True),
-        sa.Column('before_json', postgresql.JSONB(), nullable=True),
-        sa.Column('after_json', postgresql.JSONB(), nullable=True),
+        sa.Column('before_json', JSONType, nullable=True),
+        sa.Column('after_json', JSONType, nullable=True),
         sa.Column('status', sa.String(length=32), nullable=False),
         sa.Column('reviewer_id', sa.Integer(), nullable=True),
         sa.Column('reviewed_at', sa.DateTime(), nullable=True),
@@ -136,8 +140,8 @@ def upgrade() -> None:
         sa.Column('model_name', sa.String(length=128), nullable=True),
         sa.Column('prompt_version', sa.String(length=64), nullable=True),
         sa.Column('chunk_hash', sa.String(length=64), nullable=True),
-        sa.Column('request_json', postgresql.JSONB(), nullable=True),
-        sa.Column('response_json', postgresql.JSONB(), nullable=True),
+        sa.Column('request_json', JSONType, nullable=True),
+        sa.Column('response_json', JSONType, nullable=True),
         sa.Column('created_at', sa.DateTime(), nullable=False),
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('cache_key'),
@@ -152,7 +156,7 @@ def upgrade() -> None:
         sa.Column('ref_id', sa.String(length=128), nullable=False),
         sa.Column('bank_id', sa.Integer(), nullable=True),
         sa.Column('text_content', sa.Text(), nullable=False),
-        sa.Column('metadata_json', postgresql.JSONB(), nullable=True),
+        sa.Column('metadata_json', JSONType, nullable=True),
         sa.Column('created_at', sa.DateTime(), nullable=False),
         sa.ForeignKeyConstraint(['bank_id'], ['question_banks.id']),
         sa.PrimaryKeyConstraint('id'),

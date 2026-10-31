@@ -12,7 +12,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from app.core.db_types import JSONType
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -44,7 +44,7 @@ class ExamTopic(Base):
     blueprint_min: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     blueprint_max: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # 表现指标原文，只用于拼装 AI 打标 prompt，不作为可选考点暴露
-    indicators_en: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    indicators_en: Mapped[list] = mapped_column(JSONType, nullable=False, default=list)
     order_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     source_version: Mapped[str] = mapped_column(String(20), nullable=False)
     created_at: Mapped[datetime] = mapped_column(

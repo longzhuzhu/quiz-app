@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSONB
+from app.core.db_types import JSONType
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -19,7 +19,7 @@ class QuestionExplanation(Base):
     judged_answer: Mapped[str] = mapped_column(Text)
     explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
     explanation_zh: Mapped[str] = mapped_column(Text)
-    analysis: Mapped[dict] = mapped_column(JSONB)
+    analysis: Mapped[dict] = mapped_column(JSONType)
     generation_id: Mapped[int] = mapped_column(Integer)
     generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 

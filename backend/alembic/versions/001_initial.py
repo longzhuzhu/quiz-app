@@ -9,7 +9,18 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
+from sqlalchemy import JSON, text
+from sqlalchemy.dialects.postgresql import JSONB
+
+# 迁移文件保持自包含：不导入会随应用演进的模型或默认常量。
+JSONType = JSON().with_variant(JSONB(), "postgresql")
+
+
+def _json_default(value: str):
+    """JSON 列服务端默认值：PostgreSQL 保留原 ``'...'::jsonb``，SQLite 使用 JSON 文本。"""
+    if op.get_bind().dialect.name == "postgresql":
+        return text(f"'{value}'::jsonb")
+    return text(f"'{value}'")
 
 # revision identifiers, used by Alembic.
 revision: str = '001'
@@ -109,7 +120,7 @@ def upgrade() -> None:
     sa.Column('question_type', sa.String(length=20), nullable=False),
     sa.Column('content', sa.Text(), nullable=False),
     sa.Column('content_zh', sa.Text(), nullable=True),
-    sa.Column('options', postgresql.JSONB(), nullable=False),
+    sa.Column('options', JSONType, nullable=False),
     sa.Column('correct_answer', sa.String(length=20), nullable=False),
     sa.Column('explanation', sa.Text(), nullable=True),
     sa.Column('explanation_zh', sa.Text(), nullable=True),

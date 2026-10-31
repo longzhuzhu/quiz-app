@@ -18,7 +18,7 @@ CIPT（Certified Information Privacy Technologist）认证信息隐私技术师�
 
 | 层级 | 技术 |
 |------|------|
-| 后端 | Python / FastAPI + uvicorn + SQLAlchemy 2.x + PostgreSQL + JWT |
+| 后端 | Python / FastAPI + uvicorn + SQLAlchemy 2.x + PostgreSQL 或 SQLite + JWT |
 | 前端 | Vue 3 (`<script setup>`) + Vite + Pinia + Tailwind CSS 4 + Headless UI |
 | AI | OpenAI 兼容 API（可配置其他服务） |
 
@@ -48,13 +48,17 @@ cp .env.example backend/.env
 编辑 `backend/.env` 文件。后端配置统一从该文件读取：
 
 ```env
+# 二选一：默认 PostgreSQL；SQLite 用于单机轻量部署，必须使用绝对路径。
 DATABASE_URL=your-postgresql-sqlalchemy-url
+# DATABASE_URL=sqlite:////absolute/path/quiz.db
 SECRET_KEY=your-secret-key
 JWT_SECRET_KEY=your-jwt-secret-key
 AI_API_BASE_URL=https://api.openai.com/v1
 AI_API_KEY=your-api-key
 AI_MODEL=gpt-4o-mini
 ```
+
+> SQLite 部署的边界、初始化、备份与并发限制见 [部署说明](docs/deployment.md#sqlite-单机部署可选)。每个部署只使用一种数据库，不会自动回退。
 
 > AI 相关配置为可选项。不配置时，翻译和解析功能不可用，其他功能正常使用。
 > AI 配置也可在启动后通过管理后台页面修改，无需重启服务。
@@ -66,7 +70,7 @@ pip install -r backend/requirements.txt
 python run.py
 ```
 
-`python run.py` 会以 uvicorn reload 模式启动 FastAPI，默认监听 `http://localhost:5003`，并通过 `backend/.env` 中的 `DATABASE_URL` 连接 PostgreSQL。
+`python run.py` 会以 uvicorn reload 模式启动 FastAPI，默认监听 `http://localhost:5003`，并通过 `backend/.env` 中的 `DATABASE_URL` 连接 PostgreSQL 或 SQLite。
 
 ### 4. 启动后台任务 worker
 

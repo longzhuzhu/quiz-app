@@ -14,6 +14,15 @@ from sqlalchemy import case, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.core.config import settings
+from app.core.database import is_sqlite_bind
+from app.core.db_locks import (
+    EXPLANATION_SLOT_NAMESPACE,
+    LockBackendUnavailable,
+    backend_lock_held,
+    engine_for_session,
+    release_backend_lock,
+    try_backend_lock,
+)
 
 from app.models.background_job import BackgroundJob
 from app.models.bank_word import BankWordExclusion, BankWordFrequency
@@ -35,7 +44,6 @@ JOB_TYPE_QUESTION_TOPIC_TAG = "question_topic_tag"
 ACTIVE_STATUSES = {"queued", "running"}
 DEFAULT_JOB_LEASE_SECONDS = 180
 DEFAULT_REQUEUE_DELAY_SECONDS = 15
-EXPLANATION_SLOT_NAMESPACE = 540066
 # 解析任务执行期间不续约，租约须覆盖「单次调用超时 × 2（含格式纠正重试）」的最坏耗时：
 # 默认 120s × 2 = 240s，取 360s 留余量。否则租约先过期，recover_stale_jobs 会把
 # 仍在进行的解析判为「执行已中断」。
@@ -43,17 +51,12 @@ EXPLANATION_JOB_LEASE_SECONDS = 360
 
 
 def _acquire_explanation_slot(db: Session):
-    # 自动提交连接持有 session lock，不跨网络持有数据库事务。
-    connection = db.get_bind().engine.connect().execution_options(isolation_level="AUTOCOMMIT")
-    try:
-        for slot in range(settings.AI_EXPLANATION_CONCURRENCY):
-            if connection.exec_driver_sql("SELECT pg_try_advisory_lock(%s, %s)", (EXPLANATION_SLOT_NAMESPACE, slot)).scalar():
-                return connection, slot
-    except Exception:
-        connection.invalidate()
-        connection.close()
-        raise
-    connection.close()
+    """获取解析并发槽；PostgreSQL 用 advisory lock，SQLite 用同机文件锁。"""
+    engine = engine_for_session(db)
+    for slot in range(settings.AI_EXPLANATION_CONCURRENCY):
+        handle = try_backend_lock(engine, EXPLANATION_SLOT_NAMESPACE, slot)
+        if handle is not None:
+            return handle, slot
     return None
 
 
@@ -61,13 +64,10 @@ def release_explanation_slot(job: BackgroundJob | None) -> None:
     reservation = getattr(job, "_explanation_slot", None)
     if reservation is None:
         return
-    connection, slot = reservation
+    handle, slot = reservation
     try:
-        connection.exec_driver_sql("SELECT pg_advisory_unlock(%s, %s)", (EXPLANATION_SLOT_NAMESPACE, slot))
-    except Exception:
-        connection.invalidate()
+        release_backend_lock(handle, EXPLANATION_SLOT_NAMESPACE, slot)
     finally:
-        connection.close()
         setattr(job, "_explanation_slot", None)
 
 
@@ -285,6 +285,8 @@ def invalidate_active_scope(
 
 def recover_stale_jobs(db: Session, now: datetime | None = None) -> int:
     now = now or utc_now()
+    if is_sqlite_bind(db):
+        return _recover_stale_jobs_sqlite(db, now)
     recovered = 0
     candidate_ids = db.execute(
         select(BackgroundJob.id).where(
@@ -293,6 +295,7 @@ def recover_stale_jobs(db: Session, now: datetime | None = None) -> int:
     ).scalars().all()
     for job_id in candidate_ids:
         # fail_job 会提交，因此逐项锁定并刷新；不能依赖一次性批量锁的旧快照。
+        # SQLite 没有行锁，恢复改为在短写事务内重新核对 lease 后更新。
         job = (
             db.query(BackgroundJob)
             .filter(BackgroundJob.id == job_id, BackgroundJob.status == "running", BackgroundJob.lease_until < now)
@@ -318,6 +321,59 @@ def recover_stale_jobs(db: Session, now: datetime | None = None) -> int:
         job.status_message = "检测到 worker 中断，任务已重新排队"
         recovered += 1
     if recovered:
+        db.commit()
+    return recovered
+
+
+def _recover_stale_jobs_sqlite(db: Session, now: datetime) -> int:
+    """SQLite 没有行锁：用条件 UPDATE（CAS）代替 FOR UPDATE SKIP LOCKED 重读。
+
+    逐条推进，避免一次事务里长时间持有写权限；并发恢复者只有 CAS 成功者计数。
+    """
+    recovered = 0
+    while True:
+        job_id = db.execute(
+            select(BackgroundJob.id).where(
+                BackgroundJob.status == "running",
+                BackgroundJob.lease_until.is_not(None),
+                BackgroundJob.lease_until < now,
+            ).order_by(BackgroundJob.id.asc()).limit(1)
+        ).scalar()
+        if job_id is None:
+            break
+        expired = (
+            BackgroundJob.id == job_id,
+            BackgroundJob.status == "running",
+            BackgroundJob.lease_until.is_not(None),
+            BackgroundJob.lease_until < now,
+        )
+        job_type = db.execute(
+            select(BackgroundJob.job_type).where(BackgroundJob.id == job_id)
+        ).scalar()
+        if job_type == JOB_TYPE_AI_EXPLANATION:
+            values = {
+                "status": "failed",
+                "progress_done": BackgroundJob.success_count + BackgroundJob.skipped_count,
+                "last_error": "执行已中断，请手动重试",
+                "status_message": "解析失败，可手动重试",
+                "finished_at": now,
+                "next_run_at": None,
+                "lease_until": None,
+                "active_scope_key": None,
+            }
+        else:
+            values = {
+                "status": "queued",
+                "lease_until": None,
+                "heartbeat_at": None,
+                "status_message": "检测到 worker 中断，任务已重新排队",
+            }
+        result = db.execute(
+            update(BackgroundJob).where(*expired).values(**values),
+            execution_options={"synchronize_session": False},
+        )
+        if result.rowcount == 1:
+            recovered += 1
         db.commit()
     return recovered
 

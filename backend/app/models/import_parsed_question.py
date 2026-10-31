@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
+from app.core.db_types import JSONType
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -26,18 +26,18 @@ class ImportParsedQuestion(Base):
 
     scenario_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    options_json: Mapped[list] = mapped_column(JSONB, nullable=False)
-    correct_answer: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    options_json: Mapped[list] = mapped_column(JSONType, nullable=False)
+    correct_answer: Mapped[list | None] = mapped_column(JSONType, nullable=True)
     explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
-    references_json: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    references_json: Mapped[list | None] = mapped_column(JSONType, nullable=True)
 
-    source_evidence_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    source_evidence_json: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
 
     llm_confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
     final_confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
 
-    issues_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    duplicate_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    issues_json: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+    duplicate_json: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
 
     review_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     import_status: Mapped[str] = mapped_column(String(32), nullable=False, default="waiting")

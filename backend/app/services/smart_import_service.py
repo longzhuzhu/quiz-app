@@ -18,6 +18,7 @@ import httpx
 from pydantic import ValidationError
 from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -2285,11 +2286,19 @@ def _store_llm_cache(
             cache_key=cache_key, model_name=None, prompt_version=PROMPT_VERSION,
             chunk_hash=chunk_hash, request_json=request_json, response_json=response_json,
         ).on_conflict_do_nothing(index_elements=[LlmParseCache.cache_key]))
-    else:
-        existing = db.query(LlmParseCache).filter_by(cache_key=cache_key).first()
-        if existing is None:
-            db.add(cache_entry)
-    db.flush()
+        db.flush()
+        return
+    # 其他后端先查后插；并发唯一冲突以 savepoint 吞掉，不破坏调用方事务。
+    existing = db.query(LlmParseCache.id).filter_by(cache_key=cache_key).first()
+    if existing is not None:
+        return
+    nested = db.begin_nested()
+    try:
+        db.add(cache_entry)
+        db.flush()
+        nested.commit()
+    except IntegrityError:
+        nested.rollback()
 
 
 # ─── ImportJob 状态管理 ──────────────────────────────────
