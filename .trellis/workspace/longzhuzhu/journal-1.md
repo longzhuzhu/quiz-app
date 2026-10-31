@@ -692,3 +692,25 @@ Merged latest main into PR 32 branch and resolved the HomeView quiz button varia
 ### Next Steps
 
 - None - task complete
+
+
+## Session 21: 支持 PostgreSQL 与 SQLite 可选部署
+
+**Date**: 2026-10-31
+**Task**: 支持 PostgreSQL 与 SQLite 可选部署
+**Branch**: `main`
+
+### Summary
+
+实现单部署选择 PG 或 SQLite：JSONType 跨库列类型、单迁移链方言分支、SQLite 原生文件锁与 BEGIN IMMEDIATE 写事务、导入 ownership 不再非 PG 放行、worker 并发钳制、DISTINCT ON 改写；新增 SQLite 部署文档与双库测试。PR #83 已合并。生产未重启、未迁移，本机配置未改。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e89cd26` | (see git log) |
+| `945ec41` | (see git log) |
+
+### Status
+
+[OK] **Completed**

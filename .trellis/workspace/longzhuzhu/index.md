@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 20
-- **Last Active**: 2026-09-01
+- **Total Sessions**: 21
+- **Last Active**: 2026-10-31
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~694 | Active |
+| `journal-1.md` | ~716 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 21 | 2026-10-31 | 支持 PostgreSQL 与 SQLite 可选部署 | `e89cd26`, `945ec41` | `main` |
 | 20 | 2026-09-01 | 改进 AI 解析 prompt：输出题干结构拆解与干扰项类型 | `f6fd18c` | `cursor/structured-ai-explanation-prompt-3106` |
 | 19 | 2026-05-29 | Resolve PR 32 merge conflicts | `0265a8b` | `feat/user-owned-exams-backend-foundation` |
 | 18 | 2026-05-29 | Unify sequential quiz button style | `6518414` | `feat/user-owned-exams-backend-foundation` |
