@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String
-from sqlalchemy.dialects.postgresql import JSONB
+from app.core.db_types import JSONType
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -23,8 +23,8 @@ class ImportReviewItem(Base):
     review_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     severity: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
-    before_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    after_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    before_json: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+    after_json: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
 
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     reviewer_id: Mapped[int | None] = mapped_column(

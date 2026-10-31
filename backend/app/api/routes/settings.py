@@ -143,6 +143,7 @@ def test_ai_connection(
     db: Session = Depends(get_db),
 ):
     import httpx
+    from app.services.ai_service import _end_read_transaction
 
     try:
         ai_config = get_effective_ai_settings(
@@ -181,6 +182,7 @@ def test_ai_connection(
     )
 
     try:
+        _end_read_transaction(db)
         resp = httpx.post(api_url, json=payload, headers=headers, timeout=15.0, verify=True)
         if not resp.is_success:
             detail = resp.text[:200] if resp.text else resp.reason_phrase

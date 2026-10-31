@@ -26,6 +26,19 @@ from app.services.exam_service import (
 from app.services.settings_service import get_effective_ai_settings, validate_ai_base_url
 
 
+def _end_read_transaction(db) -> None:
+    """网络调用前结束只读事务；有未提交业务改动时保留会话状态。
+
+    调用方约定「先提交业务改动，再联网」。这里只处理干净的会话，避免在 SQLite
+    单写者部署上把数据库事务跨度拉到网络请求上。
+    """
+    if db is None or not hasattr(db, "rollback"):
+        return
+    if db.new or db.dirty or db.deleted:
+        return
+    db.rollback()
+
+
 SECTION_STEM_BREAKDOWN = "【题干拆解】"
 SECTION_ANSWER_ANALYSIS = "【知识点解析】"
 SECTION_DISTRACTORS = "【干扰项分析】"
@@ -152,6 +165,8 @@ def call_ai_api(
     ai = ai_config if ai_config is not None else get_effective_ai_settings(db, scene=scene)
     if not ai["api_key"]:
         raise ValueError("AI API Key 未配置，请在管理后台设置")
+
+    _end_read_transaction(db)
 
     base = ai["base_url"].rstrip("/")
     # 智能拼接：支持多种 Base URL 格式
@@ -301,6 +316,7 @@ def translate_term(
     ]
 
     payload = build_chat_completion_payload(model, messages, reasoning_effort)
+    _end_read_transaction(db)
     resp = httpx.post(api_url, json=payload, headers=headers, timeout=60.0, verify=True)
     if not resp.is_success:
         raise ValueError(f"AI API 错误: {resp.status_code}")
@@ -664,6 +680,7 @@ def explain_question(db, question: Question, *, force: bool = False) -> dict:
         raise ValueError("AI 未返回解析内容")
 
     if not force:
+        # call_ai_api 已结束只读事务；重新读取当前题目，避免用联网前的旧快照判断缓存。
         db.refresh(question)
         if has_question_explanation(question):
             return build_question_explanation_payload(question)

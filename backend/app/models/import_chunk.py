@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
+from app.core.db_types import JSONType
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -27,9 +27,9 @@ class ImportChunk(Base):
 
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
 
-    llm_request_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    llm_response_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    issues_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    llm_request_json: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+    llm_response_json: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+    issues_json: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)

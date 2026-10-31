@@ -25,6 +25,22 @@ class _ImportTerminalKwargs(TypedDict, total=False):
 DEFAULT_WORKER_ID = "job-worker"
 DEFAULT_POLL_INTERVAL = 2.0
 DEFAULT_CONCURRENCY = 10
+# SQLite 单机部署只允许一个业务执行线程；API 与 worker 仍是两个进程。
+SQLITE_CONCURRENCY = 1
+
+
+def _effective_concurrency(requested: int, db_engine=None) -> int:
+    if db_engine is None:
+        from app.core.database import engine as db_engine
+
+    if db_engine.dialect.name == "sqlite":
+        if requested > SQLITE_CONCURRENCY:
+            logger.warning(
+                "SQLite 部署将 worker 并发从 %s 限制为 %s（配置文件中的值未修改）",
+                requested, SQLITE_CONCURRENCY,
+            )
+        return SQLITE_CONCURRENCY
+    return requested
 
 
 def process_one_job(worker_id: str = DEFAULT_WORKER_ID) -> bool:
@@ -92,7 +108,7 @@ def run_worker(
     once: bool = False,
     concurrency: int = DEFAULT_CONCURRENCY,
 ) -> int:
-    concurrency = max(int(concurrency or 1), 1)
+    concurrency = _effective_concurrency(max(int(concurrency or 1), 1))
 
     if concurrency == 1:
         worker_loop(worker_id=worker_id, poll_interval=poll_interval, once=once)

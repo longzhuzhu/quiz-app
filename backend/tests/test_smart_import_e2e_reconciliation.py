@@ -155,7 +155,7 @@ def make_fake_call_ai_api(behavior: str = "ALL_OK"):
     """
     state: dict = {"l1_chunk27_calls": 0}
 
-    def fake(messages, db, scene="default", timeout=60.0):
+    def fake(messages, db, scene="default", timeout=60.0, **kwargs):
         qnos = extract_qnos_from_messages(messages)
         qno_set = set(qnos)
         is_chunk_27_l1 = qno_set == CHUNK_27_QNOS
@@ -463,13 +463,21 @@ def test_run_reparse_recovers_partial_chunk(
             "chunk_id": chunk_27.id,
             "bank_id": job.bank_id,
         }),
-        status="running",
+        status="queued",
         created_by=1,
     )
     db_session.add(bg_job)
     db_session.commit()
+    # 导入执行必须先领取不可变 attempt；这里走真实 claim 而不是伪造 running 状态。
+    from app.services.job_service import try_claim_job_by_id
+    from app.services.import_execution import release_import_execution
+    claimed = try_claim_job_by_id(db_session, bg_job.id, worker_id="reparse-test")
+    assert claimed is not None
 
-    svc.run_reparse(db_session, bg_job)
+    try:
+        svc.run_reparse(db_session, claimed)
+    finally:
+        release_import_execution(db_session, claimed)
 
     db_session.refresh(job)
     recon_after = (job.config_json or {})["reconciliation"]

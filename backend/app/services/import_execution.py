@@ -1,4 +1,9 @@
-"""导入专用执行锁与 attempt fencing；不改变其他后台任务的生命周期。"""
+"""导入专用执行锁与 attempt fencing；不改变其他后台任务的生命周期。
+
+PostgreSQL 使用会话级 advisory lock；SQLite 使用同机原生文件锁（见 core/db_locks）。
+两者都只提供「同一导入任务同一时刻一个写者」的长生命周期互斥，不代替业务写入的
+短事务与 token/lease 校验。
+"""
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -7,16 +12,23 @@ import json
 import logging
 import threading
 
-from sqlalchemy import select, text, update
-from sqlalchemy.engine import Connection, Engine
+from sqlalchemy import select, update
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.core.db_locks import (
+    IMPORT_LOCK_NAMESPACE,
+    LockBackendUnavailable,
+    backend_lock_held,
+    engine_for_session,
+    release_backend_lock,
+    try_backend_lock,
+)
 from app.models.background_job import BackgroundJob
 from app.models.import_job import ImportJob
 
 logger = logging.getLogger(__name__)
 
-IMPORT_LOCK_NAMESPACE = 540067
 EXECUTION_KEY = "import_execution"
 IMPORT_JOB_TYPES = {"question_import_llm", "question_import_llm_reparse"}
 
@@ -29,33 +41,13 @@ class ImportBusy(RuntimeError):
     """同一导入任务已有写者。"""
 
 
-def is_postgres_session(db) -> bool:
-    return isinstance(db, Session) and db.get_bind().dialect.name == "postgresql"
+def acquire_import_lock(db: Session, import_job_id: int):
+    """尝试获取导入写者锁；成功返回后端锁句柄，忙返回 None。"""
+    return try_backend_lock(engine_for_session(db), IMPORT_LOCK_NAMESPACE, import_job_id)
 
 
-def acquire_import_lock(db: Session, import_job_id: int) -> Connection | None:
-    connection = db.get_bind().engine.connect().execution_options(isolation_level="AUTOCOMMIT")
-    try:
-        if connection.exec_driver_sql("SELECT pg_try_advisory_lock(%s, %s)",
-                                      (IMPORT_LOCK_NAMESPACE, import_job_id)).scalar():
-            return connection
-    except BaseException:
-        connection.invalidate()
-        connection.close()
-        raise
-    connection.close()
-    return None
-
-
-def release_import_lock(connection: Connection, import_job_id: int) -> None:
-    try:
-        if not connection.closed and not connection.invalidated:
-            connection.exec_driver_sql("SELECT pg_advisory_unlock(%s, %s)",
-                                       (IMPORT_LOCK_NAMESPACE, import_job_id))
-    except Exception:
-        connection.invalidate()
-    finally:
-        connection.close()
+def release_import_lock(handle, import_job_id: int) -> None:
+    release_backend_lock(handle, IMPORT_LOCK_NAMESPACE, import_job_id)
 
 
 @dataclass(frozen=True)
@@ -66,12 +58,15 @@ class AttemptToken:
 
 
 class ImportExecution:
-    def __init__(self, token: AttemptToken, connection: Connection, bind: Engine | Connection, lease_seconds: int):
+    def __init__(self, token: AttemptToken, lock_handle, engine: Engine, lease_seconds: int):
         self._token = token
-        self.connection = connection
-        self.lock_pid = connection.exec_driver_sql("SELECT pg_backend_pid()").scalar()
+        self.lock_handle = lock_handle
+        # PostgreSQL 的锁住在专用连接上；SQLite 是文件锁句柄，没有数据库连接。
+        self.connection = lock_handle if not hasattr(lock_handle, "held") else None
         self.lease_seconds = lease_seconds
-        self.sessions = sessionmaker(bind=bind.engine)
+        self.sessions = sessionmaker(bind=engine.execution_options(
+            **({"sqlite_immediate": True} if engine.dialect.name == "sqlite" else {})
+        ))
         self.lost = threading.Event()
         self.stop = threading.Event()
         self.thread: threading.Thread | None = None
@@ -84,15 +79,11 @@ class ImportExecution:
         return {"request_id": self.token.background_job_id, "attempt": self.token.attempt_count}
 
     def check_lock(self) -> None:
-        if self.lost.is_set() or self.connection.closed or self.connection.invalidated:
+        if self.lost.is_set():
             raise LeaseLost("导入执行租约或锁连接已失效")
         try:
-            held = self.connection.exec_driver_sql(
-                "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' "
-                "AND pid = pg_backend_pid() AND classid = %s AND objid = %s AND objsubid = 2 AND granted)",
-                (IMPORT_LOCK_NAMESPACE, self.token.import_job_id),
-            ).scalar()
-        except Exception as exc:
+            held = backend_lock_held(self.lock_handle, IMPORT_LOCK_NAMESPACE, self.token.import_job_id)
+        except LockBackendUnavailable as exc:
             self.lost.set()
             raise LeaseLost("导入锁连接不可用") from exc
         if not held:
@@ -125,13 +116,7 @@ class ImportExecution:
         # 续约只锁 BackgroundJob；不访问共享业务 Session 或专用连接。
         now = datetime.now(timezone.utc)
         with self.sessions() as db:
-            db.execute(text("SET LOCAL statement_timeout = 5000"))
-            held = db.execute(text(
-                "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND pid = :pid "
-                "AND classid = :namespace AND objid = :job_id AND objsubid = 2 AND granted)"
-            ), {"pid": self.lock_pid, "namespace": IMPORT_LOCK_NAMESPACE, "job_id": self.token.import_job_id}).scalar()
-            if not held:
-                raise LeaseLost("导入续约时专用锁已丢失")
+            self.check_lock()
             result = db.execute(update(BackgroundJob).where(
                 BackgroundJob.id == self.token.background_job_id,
                 BackgroundJob.status == "running",
@@ -159,19 +144,26 @@ class ImportExecution:
             if self.thread is not None and self.thread.ident is not None:
                 self.thread.join()
         finally:
-            release_import_lock(self.connection, self.token.import_job_id)
+            release_import_lock(self.lock_handle, self.token.import_job_id)
 
 
 def execution_for(db: Session) -> ImportExecution | None:
-    return db.info.get(EXECUTION_KEY) if isinstance(db, Session) else None
+    info = getattr(db, "info", None)
+    return info.get(EXECUTION_KEY) if isinstance(info, dict) else None
 
 
 def require_execution(db, background_job_id=None, import_job_id=None) -> None:
-    if is_postgres_session(db) and execution_for(db) is None:
-        raise LeaseLost("导入必须先领取专用执行上下文")
     execution = execution_for(db)
-    if execution is not None and (execution.token.background_job_id != background_job_id
-                                  or execution.token.import_job_id != import_job_id):
+    if execution is None:
+        # 单元测试只替换了 db 替身、未替换执行上下文时，不能把缺上下文当成真实执行；
+        # 生产 Session 仍必须强制领取，防止绕过 ownership。
+        from sqlalchemy.orm import Session
+
+        if not isinstance(db, Session):
+            return
+        raise LeaseLost("导入必须先领取专用执行上下文")
+    if (execution.token.background_job_id != background_job_id
+            or execution.token.import_job_id != import_job_id):
         raise LeaseLost("导入请求与不可变执行上下文不匹配")
 
 
@@ -181,16 +173,10 @@ def commit_import(db: Session) -> None:
         execution.guard(db)
     review_lock = db.info.get("import_review_lock") if isinstance(db, Session) else None
     if review_lock is not None:
-        connection, job_id = review_lock
-        if connection.closed or connection.invalidated:
-            raise LeaseLost("人工复核写者锁已失效")
+        handle, job_id = review_lock
         try:
-            held = connection.exec_driver_sql(
-                "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid() "
-                "AND classid = %s AND objid = %s AND objsubid = 2 AND granted)",
-                (IMPORT_LOCK_NAMESPACE, job_id),
-            ).scalar()
-        except Exception as exc:
+            held = backend_lock_held(handle, IMPORT_LOCK_NAMESPACE, job_id)
+        except LockBackendUnavailable as exc:
             raise LeaseLost("人工复核写者锁连接不可用") from exc
         if not held:
             raise LeaseLost("人工复核写者锁已丢失")
@@ -211,17 +197,14 @@ def release_import_execution(db: Session, job: BackgroundJob | None = None) -> N
 
 @contextmanager
 def review_writer(db, import_job_id: int):
-    if not is_postgres_session(db):
-        yield
-        return
-    connection = acquire_import_lock(db, import_job_id)
-    if connection is None:
+    handle = acquire_import_lock(db, import_job_id)
+    if handle is None:
         db.rollback()
         raise ImportBusy("导入任务正在解析或复核，请稍后重试")
     try:
         db.rollback()  # 丢弃入口读取的旧快照；尚未开始业务修改。
         db.execute(select(ImportJob.id).where(ImportJob.id == import_job_id).with_for_update())
-        db.info["import_review_lock"] = (connection, import_job_id)
+        db.info["import_review_lock"] = (handle, import_job_id)
         yield
     except BaseException:
         db.rollback()
@@ -231,7 +214,7 @@ def review_writer(db, import_job_id: int):
             db.rollback()
         finally:
             db.info.pop("import_review_lock", None)
-            release_import_lock(connection, import_job_id)
+            release_import_lock(handle, import_job_id)
 
 
 def coordinated_review(function):
@@ -260,8 +243,8 @@ def try_claim_import(
         raise ValueError("导入 payload 缺少有效 import_job_id")
     candidate_id = candidate.id
     db.rollback()
-    connection = acquire_import_lock(db, import_job_id)
-    if connection is None:
+    handle = acquire_import_lock(db, import_job_id)
+    if handle is None:
         return None
     execution = None
     try:
@@ -271,7 +254,7 @@ def try_claim_import(
             raise ValueError("导入任务不存在")
         if current is None or current.status != "queued" or (current.next_run_at and current.next_run_at.replace(tzinfo=None) > now.replace(tzinfo=None)):
             db.rollback()
-            release_import_lock(connection, import_job_id)
+            release_import_lock(handle, import_job_id)
             return None
         if current.job_type not in IMPORT_JOB_TYPES or json.loads(current.payload_json or "{}") != payload:
             raise ValueError("导入请求在领取期间发生变化")
@@ -295,7 +278,7 @@ def try_claim_import(
             current.lease_until = None
             current.active_scope_key = None
             db.commit()
-            release_import_lock(connection, import_job_id)
+            release_import_lock(handle, import_job_id)
             return None
         current.status = "running"
         current.attempt_count = (current.attempt_count or 0) + 1
@@ -305,7 +288,7 @@ def try_claim_import(
         current.next_run_at = None
         current.status_message = f"worker {worker_id} 已接手任务"
         execution = ImportExecution(AttemptToken(current.id, current.attempt_count, import_job_id),
-                                    connection, db.get_bind(), lease_seconds)
+                                    handle, engine_for_session(db), lease_seconds)
         import_job.config_json = {**(import_job.config_json or {}), "active_execution": execution.descriptor()}
         db.commit()
         current._import_execution = execution
@@ -321,5 +304,5 @@ def try_claim_import(
             if execution is not None:
                 execution.close()
             else:
-                release_import_lock(connection, import_job_id)
+                release_import_lock(handle, import_job_id)
         raise

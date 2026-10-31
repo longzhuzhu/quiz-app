@@ -9,7 +9,18 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
+from sqlalchemy import JSON, text
+from sqlalchemy.dialects.postgresql import JSONB
+
+# 迁移文件保持自包含：不导入会随应用演进的模型或默认常量。
+JSONType = JSON().with_variant(JSONB(), "postgresql")
+
+
+def _json_default(value: str):
+    """JSON 列服务端默认值：PostgreSQL 保留原 ``'...'::jsonb``，SQLite 使用 JSON 文本。"""
+    if op.get_bind().dialect.name == "postgresql":
+        return text(f"'{value}'::jsonb")
+    return text(f"'{value}'")
 
 revision: str = "005"
 down_revision: Union[str, None] = "004"
@@ -32,9 +43,9 @@ def upgrade() -> None:
         sa.Column("blueprint_max", sa.Integer(), nullable=False, server_default="0"),
         sa.Column(
             "indicators_en",
-            postgresql.JSONB(),
+            JSONType,
             nullable=False,
-            server_default=sa.text("'[]'::jsonb"),
+            server_default=_json_default("[]"),
         ),
         sa.Column("order_index", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("source_version", sa.String(length=20), nullable=False),
@@ -83,20 +94,37 @@ def upgrade() -> None:
         unique=False,
     )
 
-    op.add_column("quiz_sessions", sa.Column("topic_id", sa.Integer(), nullable=True))
-    op.create_foreign_key(
-        "fk_quiz_sessions_topic_id_exam_topics",
-        "quiz_sessions",
-        "exam_topics",
-        ["topic_id"],
-        ["id"],
-        ondelete="SET NULL",
-    )
+    if op.get_bind().dialect.name == "sqlite":
+        # SQLite 不支持 ALTER ADD CONSTRAINT，列与外键一起通过 batch 重建。
+        with op.batch_alter_table("quiz_sessions") as batch:
+            batch.add_column(sa.Column("topic_id", sa.Integer(), nullable=True))
+            batch.create_foreign_key(
+                "fk_quiz_sessions_topic_id_exam_topics",
+                "exam_topics",
+                ["topic_id"],
+                ["id"],
+                ondelete="SET NULL",
+            )
+    else:
+        op.add_column("quiz_sessions", sa.Column("topic_id", sa.Integer(), nullable=True))
+        op.create_foreign_key(
+            "fk_quiz_sessions_topic_id_exam_topics",
+            "quiz_sessions",
+            "exam_topics",
+            ["topic_id"],
+            ["id"],
+            ondelete="SET NULL",
+        )
 
 
 def downgrade() -> None:
-    op.drop_constraint("fk_quiz_sessions_topic_id_exam_topics", "quiz_sessions", type_="foreignkey")
-    op.drop_column("quiz_sessions", "topic_id")
+    if op.get_bind().dialect.name == "sqlite":
+        with op.batch_alter_table("quiz_sessions") as batch:
+            batch.drop_constraint("fk_quiz_sessions_topic_id_exam_topics", type_="foreignkey")
+            batch.drop_column("topic_id")
+    else:
+        op.drop_constraint("fk_quiz_sessions_topic_id_exam_topics", "quiz_sessions", type_="foreignkey")
+        op.drop_column("quiz_sessions", "topic_id")
 
     op.drop_index("idx_question_topics_topic_question", table_name="question_topics")
     op.drop_table("question_topics")

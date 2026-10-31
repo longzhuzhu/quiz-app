@@ -554,13 +554,13 @@ def test_run_reparse_writes_full_scenario_content(db_session, bank_and_job, monk
         scope_key=f"import_reparse:{chunk.id}",
         active_scope_key=f"import_reparse:{chunk.id}",
         payload_json=json.dumps({"import_job_id": job.id, "chunk_id": chunk.id, "bank_id": bank.id}),
-        status="running",
+        status="queued",
         created_by=1,
     )
     db_session.add(bg_job)
     db_session.commit()
 
-    def fake_call_ai_api(messages, db, scene="default", timeout=60.0):
+    def fake_call_ai_api(messages, db, scene="default", timeout=60.0, **kwargs):
         return json.dumps({
             "questions": [{
                 "source_question_no": "247",
@@ -586,7 +586,14 @@ def test_run_reparse_writes_full_scenario_content(db_session, bank_and_job, monk
     monkeypatch.setattr(svc, "heartbeat_job", lambda db, bg_job, **kw: None)
     monkeypatch.setattr(svc, "_update_bank_stats", lambda db, bank_id: None)
 
-    svc.run_reparse(db_session, bg_job)
+    from app.services.import_execution import release_import_execution
+    from app.services.job_service import try_claim_job_by_id
+    bg_job = try_claim_job_by_id(db_session, bg_job.id, worker_id="reparse-test")
+    assert bg_job is not None
+    try:
+        svc.run_reparse(db_session, bg_job)
+    finally:
+        release_import_execution(db_session, bg_job)
 
     question = db_session.query(Question).one()
     parsed = db_session.query(ImportParsedQuestion).one()

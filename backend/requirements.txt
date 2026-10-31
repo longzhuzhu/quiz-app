@@ -15,3 +15,5 @@ python-docx>=1.1.2
 requests==2.32.3
 python-dotenv>=1.0.1
 cryptography>=41.0.7
+# SQLite 部署的同机跨进程锁；PostgreSQL 部署也安装但只使用 advisory lock。
+filelock>=3.12,<4.0

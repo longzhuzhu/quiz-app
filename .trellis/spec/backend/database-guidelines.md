@@ -264,27 +264,11 @@ WHERE ai_profile->>'explanation_system_prompt' = :old_prompt   -- 逐字节相�
 
 ---
 
-## JSONB on SQLite（仅测试用）
+## JSON 列类型
 
-测试场景下用 in-memory SQLite 跑真 ORM（避免 fixture 走 mock 失真），但 `JSONB` 是 PostgreSQL 专属类型，SQLite 无法识别。约定通过 `@compiles(JSONB, "sqlite")` 钩子把 JSONB 编译成 SQLite 的 `JSON`，**仅作用于该测试文件，不污染生产模型**：
+跨后端列类型统一使用 `app/core/db_types.py` 的 `JSONType`（PostgreSQL 编译为 JSONB，SQLite 为 JSON）。后端选择、迁移分支与并发契约见 [数据库后端可选部署](database-backends.md)。
 
-```python
-# backend/tests/test_smart_import_e2e_reconciliation.py（示例）
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
-
-@compiles(JSONB, "sqlite")
-def _compile_jsonb_for_sqlite(type_, compiler, **kw):
-    return "JSON"
-```
-
-适用条件：
-
-- 仅 in-memory SQLite 测试需要（`sqlite:///:memory:`）
-- 同一 ORM 模型在生产（PG）和测试（SQLite）共用
-- **不适用于** Alembic 迁移文件（迁移必须在真实 PG 上跑 `upgrade head`）
-
-不要把这段写到生产代码或 `app/models/*.py`；写到具体测试文件顶部即可。
+历史测试文件里的 `@compiles(JSONB, "sqlite")` 只是旧测试的本地兼容钩子，**不是**生产兼容方案，也不适用于 Alembic 迁移；新增代码不要复制该写法。迁移必须由真实 SQLite 文件库与真实 PostgreSQL 各自执行 `upgrade head` 验证。
 
 ---
 

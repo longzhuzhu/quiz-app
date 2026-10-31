@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy.orm import Session, defer
+from sqlalchemy.orm import Session, aliased, defer
 
 from app.core.config import settings
 from app.models.background_job import BackgroundJob
@@ -90,10 +90,26 @@ def summaries_for_questions(db: Session, questions: list[Question], exam_id: int
         (q.id, model.model_id): explanation_scope(exam_id, q.id, model.model_id, input_fingerprint(q))
         for q in questions for model in models
     }
-    jobs = db.query(BackgroundJob).filter(
-        BackgroundJob.job_type == JOB_TYPE_AI_EXPLANATION,
-        BackgroundJob.scope_key.in_(list(scopes.values())),
-    ).distinct(BackgroundJob.scope_key).order_by(BackgroundJob.scope_key, BackgroundJob.id.desc()).all()
+    # 每个 scope 只需最新（id 最大）的任务。DISTINCT ON 只有 PostgreSQL 支持，
+    # SQLite 会静默忽略；相关子查询在两种后端保持同一语义。
+    job_row = aliased(BackgroundJob)
+    newer_job = aliased(BackgroundJob)
+    newest_job_id = (
+        db.query(newer_job.id)
+        .filter(
+            newer_job.job_type == JOB_TYPE_AI_EXPLANATION,
+            newer_job.scope_key == job_row.scope_key,
+        )
+        .order_by(newer_job.id.desc())
+        .limit(1)
+        .correlate(job_row)
+        .scalar_subquery()
+    )
+    jobs = db.query(job_row).filter(
+        job_row.scope_key.in_(list(scopes.values())),
+        job_row.job_type == JOB_TYPE_AI_EXPLANATION,
+        job_row.id == newest_job_id,
+    ).all()
     by_scope = {job.scope_key: job for job in jobs}
     return {
         q.id: [{

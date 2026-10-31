@@ -7,7 +7,7 @@ Phase 3 迁移将添加 pgvector 扩展和 embedding VECTOR(1536) 列。
 from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
+from app.core.db_types import JSONType
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -25,7 +25,7 @@ class VectorIndex(Base):
     )
 
     text_content: Mapped[str] = mapped_column(Text, nullable=False)
-    metadata_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
 
     # embedding VECTOR(1536) — Phase 3 迁移添加
 

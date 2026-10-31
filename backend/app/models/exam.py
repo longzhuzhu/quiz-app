@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSONB
+from app.core.db_types import JSONType
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -22,8 +22,8 @@ class Exam(Base):
     locale: Mapped[str] = mapped_column(String(10), nullable=False, default="en-US")
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     importer_profile: Mapped[str] = mapped_column(String(50), nullable=False, default="examtopics-pdf")
-    ai_profile: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    quiz_profile: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    ai_profile: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
+    quiz_profile: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=lambda: datetime.now(timezone.utc),

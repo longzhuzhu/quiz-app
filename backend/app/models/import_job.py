@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
+from app.core.db_types import JSONType
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -34,8 +34,8 @@ class ImportJob(Base):
     review_questions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     failed_chunks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
-    config_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    summary_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    config_json: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
+    summary_json: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_by: Mapped[int | None] = mapped_column(

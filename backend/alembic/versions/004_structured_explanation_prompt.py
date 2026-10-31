@@ -69,7 +69,38 @@ _SWAP_SQL = sa.text(
 )
 
 
+def _swap_prompts_sqlite(pairs: Sequence[tuple[str, str]]) -> None:
+    """SQLite 没有 jsonb_set：读出 JSON、按精确匹配替换、整字段写回。
+
+    只改从未被用户改动过的行；比较与写入都在 Python 侧完成，避免依赖 JSON1 函数。
+    """
+    import json
+
+    bind = op.get_bind()
+    for old_prompt, new_prompt in pairs:
+        rows = bind.execute(sa.text("SELECT id, ai_profile FROM exams")).mappings().all()
+        for row in rows:
+            profile = row["ai_profile"]
+            if isinstance(profile, str):
+                profile = json.loads(profile)
+            if not isinstance(profile, dict) or profile.get("explanation_system_prompt") != old_prompt:
+                continue
+            profile["explanation_system_prompt"] = new_prompt
+            bind.execute(
+                sa.text("UPDATE exams SET ai_profile = :profile WHERE id = :id"),
+                {"profile": json.dumps(profile, ensure_ascii=False), "id": row["id"]},
+            )
+
+
+def _is_sqlite() -> bool:
+    dialect = getattr(op.get_bind(), "dialect", None)
+    return getattr(dialect, "name", None) == "sqlite"
+
+
 def _swap_prompts(pairs: Sequence[tuple[str, str]]) -> None:
+    if _is_sqlite():
+        _swap_prompts_sqlite(pairs)
+        return
     bind = op.get_bind()
     for old_prompt, new_prompt in pairs:
         bind.execute(_SWAP_SQL, {"old_prompt": old_prompt, "new_prompt": new_prompt})

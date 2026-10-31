@@ -178,6 +178,69 @@ bash scripts/start-worker.sh
 
 不建议长期依赖手动前台/后台 shell 进程，因为终端退出或会话回收时，服务可能被带掉。
 
+
+## SQLite 单机部署（可选）
+
+同一份代码可以部署为 PostgreSQL 或 SQLite，但每个部署只使用一种数据库。默认仍为 PostgreSQL；只有显式把 `DATABASE_URL` 配成文件型 SQLite 时才切换到 SQLite。
+
+适用边界：
+
+- 单机、单个 API 进程 + 一个 worker 进程，面向个人或少量用户。
+- 不承诺高并发写入；不支持多个应用实例共享同一个 SQLite 文件，也不支持网络文件系统上的数据库文件。
+- 业务功能与 PostgreSQL 部署一致；专用离线判重／清理 CLI（`backend/scripts/deduplicate_questions.py`）仍只支持 PostgreSQL。
+
+### 配置
+
+```dotenv
+# backend/.env 中二选一。SQLite 必须使用绝对路径。
+# PostgreSQL 示例：连接串形如 postgresql+psycopg://...（凭据由部署者填写，勿写入文档）
+DATABASE_URL=sqlite:////var/lib/quiz-app/quiz.db
+# 可选：与数据库同一锁域；默认 <数据库目录>/.db-locks/
+# SQLITE_LOCK_DIR=/var/lib/quiz-app/.db-locks
+```
+
+要求：
+
+- 数据库文件所在目录及锁目录必须可写，且 API 与 worker 使用完全相同的配置。
+- 不要依赖启动目录的相对路径；配置解析会拒绝非绝对路径，避免误连另一个数据库文件。
+- 不要与旧 Flask／测试遗留的 `backend/quiz.db` 混用，那不是一个受支持的部署数据库。
+
+### 初始化与管理员
+
+```bash
+cd backend
+../.venv/bin/python -m alembic upgrade head
+```
+
+全新 SQLite 空库会完成全部结构迁移；随后启动 API 与 worker：
+
+```bash
+systemctl --user start quiz-app quiz-app-worker
+```
+
+首个通过 `/api/auth/register` 注册的用户自动成为管理员。之后新增考试项目、题库与导入都使用现有页面和接口。若非空旧库缺少迁移 `003` 要求的 `nianyu` 管理员，迁移会明确失败，这是避免错误归属历史数据的保护，不得跳过。
+
+### 并发与运行边界
+
+- worker 在 SQLite 下强制一个业务执行线程，即使 `JOB_WORKER_CONCURRENCY` 更大也不会并行消费；配置值本身不会被修改。
+- 解析并发槽位与单个导入任务的写者互斥使用同机原生文件锁；API 与 worker 是两个进程，不能用进程内线程锁替代。
+- SQLite 没有 `FOR UPDATE`，关键写入由 `BEGIN IMMEDIATE` 取得写权限；网络请求（AI 调用）前必须先结束本地事务。
+- WAL 未默认启用。启用前须验证运行库版本、备份与恢复流程；不能把 WAL 当作多写者能力。
+
+### 升级与备份
+
+```bash
+# 维护窗口内先停止两个服务
+systemctl --user stop quiz-app quiz-app-worker
+# 备份一致性数据库文件与上传/导入原件存储（STORAGE_ROOT）
+# 再执行迁移并重启
+(cd backend && ../.venv/bin/python -m alembic upgrade head)
+systemctl --user start quiz-app quiz-app-worker
+```
+
+- 运行期不要只复制主 `.db` 文件就当作在线备份；停写后备份，或使用 SQLite backup API。恢复时先恢复到新目录并验证，再切换。
+- 数据库迁移与 PG 共用 001→013 一条链；不要用 `create_all` 或手工 stamp 代替升级。
+
 ## 多模型 AI 解析（迁移 011）
 
 升级必须安排维护窗口：停止 API 与全部旧 worker，备份数据库，在后端虚拟环境执行 `python -m alembic upgrade head`，构建前端后再启动配套版本。迁移保留来源未知的旧解析，终结旧单解析预热任务；不能代替停止仍在运行的旧进程。
