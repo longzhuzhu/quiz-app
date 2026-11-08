@@ -14,6 +14,7 @@ from app.models.import_chunk import ImportChunk
 from app.models.import_job import ImportJob
 from app.models.import_parsed_question import ImportParsedQuestion
 from app.models.import_review_item import ImportReviewItem
+from app.models.practice import PracticeAccuracyDay, PracticeDayQuestion
 from app.models.question import Question
 from app.models.question_bank import QuestionBank
 from app.models.quiz import QuizAnswer, QuizSession
@@ -248,7 +249,11 @@ def delete_bank_data(db: Session, bank: QuestionBank) -> None:
     db.delete(bank)
 
 
-def delete_exam_data(db: Session, exam: Exam) -> None:
+def delete_exam_data(db: Session, exam: Exam, *, commit: bool = True) -> None:
+    """删除考试项目及其全部数据。
+
+    commit=False 供 delete_user_data 复用，由调用方把多个项目并入同一事务。
+    """
     try:
         if db.query(Exam.id).filter_by(id=exam.id, owner_id=exam.owner_id).with_for_update().first() is None:
             raise HTTPException(status_code=404, detail="考试项目不存在")
@@ -259,7 +264,71 @@ def delete_exam_data(db: Session, exam: Exam) -> None:
         db.query(Vocabulary).filter_by(user_id=exam.owner_id, exam_id=exam.id).delete(synchronize_session=False)
         db.query(User).filter_by(active_exam_id=exam.id).update({User.active_exam_id: None}, synchronize_session=False)
         db.delete(exam)
-        db.commit()
+        db.flush()
+        if commit:
+            db.commit()
     except SQLAlchemyError:
         db.rollback()
         raise HTTPException(status_code=500, detail="删除考试项目失败，请稍后重试")
+
+
+def delete_user_data(db: Session, user: User) -> None:
+    """删除用户及其全部自有数据。
+
+    题目、题库、导入任务等属于用户的考试项目，走 delete_exam_data 的既有清理路径；
+    用户维度的答题记录、词汇进度和后台任务在该事务内一并清除。
+    有运行中的后台任务时拒绝删除：worker 完成时会重新读取该行，行不存在会让线程退出。
+    """
+    try:
+        if db.query(User.id).filter_by(id=user.id).with_for_update().first() is None:
+            raise HTTPException(status_code=404, detail="用户不存在")
+
+        if (
+            db.query(BackgroundJob.id)
+            .filter(BackgroundJob.created_by == user.id, BackgroundJob.status == "running")
+            .first()
+            is not None
+        ):
+            raise HTTPException(status_code=409, detail="该用户有正在执行的后台任务，请稍后重试")
+
+        for exam in db.query(Exam).filter_by(owner_id=user.id).all():
+            delete_exam_data(db, exam, commit=False)
+
+        # 跨考试项目个人词汇不属于任何考试项目，需单独清理。
+        vocab_ids = db.query(Vocabulary.id).filter_by(user_id=user.id)
+        db.query(UserVocabProgress).filter(UserVocabProgress.vocabulary_id.in_(vocab_ids)).delete(synchronize_session=False)
+        db.query(Vocabulary).filter_by(user_id=user.id).delete(synchronize_session=False)
+
+        db.query(UserBankWordProgress).filter_by(user_id=user.id).delete(synchronize_session=False)
+        db.query(BankWordExclusion).filter_by(created_by=user.id).delete(synchronize_session=False)
+        db.query(QuizAnswer).filter(
+            QuizAnswer.session_id.in_(db.query(QuizSession.id).filter_by(user_id=user.id))
+        ).delete(synchronize_session=False)
+        db.query(QuizSession).filter_by(user_id=user.id).delete(synchronize_session=False)
+        db.query(WrongAnswer).filter_by(user_id=user.id).delete(synchronize_session=False)
+        db.query(UserQuestionStat).filter_by(user_id=user.id).delete(synchronize_session=False)
+        db.query(PracticeDayQuestion).filter_by(user_id=user.id).delete(synchronize_session=False)
+        db.query(PracticeAccuracyDay).filter_by(user_id=user.id).delete(synchronize_session=False)
+
+        # 导入流水连带删除；先删任务行再删其后台任务，否则外键挡住。
+        import_job_ids = db.query(ImportJob.id).filter_by(created_by=user.id)
+        db.query(ImportReviewItem).filter(ImportReviewItem.import_job_id.in_(import_job_ids)).delete(synchronize_session=False)
+        db.query(ImportParsedQuestion).filter(ImportParsedQuestion.import_job_id.in_(import_job_ids)).delete(synchronize_session=False)
+        db.query(ImportChunk).filter(ImportChunk.import_job_id.in_(import_job_ids)).delete(synchronize_session=False)
+        db.query(ImportJob).filter_by(created_by=user.id).delete(synchronize_session=False)
+        db.query(BackgroundJob).filter_by(created_by=user.id).delete(synchronize_session=False)
+
+        # 复核人身份不是流水所有权：别人导入、他复核的记录继续保留，只解除署名。
+        db.query(ImportReviewItem).filter_by(reviewer_id=user.id).update(
+            {ImportReviewItem.reviewer_id: None}, synchronize_session=False
+        )
+
+        db.delete(user)
+        db.commit()
+    except HTTPException:
+        # 运行中任务或并发删除会把事务留在未提交状态，先回滚再交给路由层。
+        db.rollback()
+        raise
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="删除用户失败，请稍后重试")

@@ -1,4 +1,7 @@
-"""Auth API 路由 - 注册、登录、当前用户"""
+"""Auth API 路由 - 登录、当前用户
+
+账号由管理员在用户管理页或 CLI 脚本创建，不提供自助注册。
+"""
 
 from datetime import datetime, timedelta, timezone
 
@@ -7,20 +10,10 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
-from app.core.security import create_access_token, get_password_hash, verify_password
+from app.core.security import create_access_token, verify_password
 from app.models.user import User
 from app.services.exam_service import serialize_exam
-from app.schemas.auth import (
-    ChangePasswordRequest,
-    ErrorResponse,
-    LoginRequest,
-    LoginResponse,
-    MessageResponse,
-    RegisterRequest,
-    RegisterResponse,
-    ResetPasswordRequest,
-    UserResponse,
-)
+from app.schemas.auth import LoginRequest, LoginResponse, UserResponse
 
 router = APIRouter()
 
@@ -67,6 +60,7 @@ def user_to_dict(user: User, db: Session | None = None) -> dict:
         "username": user.username,
         "email": user.email,
         "is_admin": user.is_admin,
+        "is_active": user.is_active,
         "active_exam_id": user.active_exam_id,
         "created_at": user.created_at.isoformat(),
     }
@@ -76,28 +70,6 @@ def user_to_dict(user: User, db: Session | None = None) -> dict:
     return data
 
 
-@router.post("/register", response_model=RegisterResponse, status_code=201)
-def register(data: RegisterRequest, db: Session = Depends(get_db)):
-    if db.query(User).filter_by(username=data.username).first():
-        raise HTTPException(status_code=400, detail="用户名已存在")
-    if db.query(User).filter_by(email=data.email).first():
-        raise HTTPException(status_code=400, detail="邮箱已存在")
-
-    # 第一个注册的用户自动成为管理员
-    is_first_user = db.query(User).count() == 0
-    user = User(
-        username=data.username,
-        email=data.email,
-        password_hash=get_password_hash(data.password),
-        is_admin=is_first_user,
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-
-    return RegisterResponse(message="注册成功")
-
-
 @router.post("/login", response_model=LoginResponse)
 def login(data: LoginRequest, request: Request, db: Session = Depends(get_db)):
     now = datetime.now(timezone.utc)
@@ -105,7 +77,8 @@ def login(data: LoginRequest, request: Request, db: Session = Depends(get_db)):
     _ensure_login_not_rate_limited(rate_limit_key, now)
 
     user = db.query(User).filter_by(username=data.username).first()
-    if not user or not verify_password(data.password, user.password_hash):
+    # 禁用账号与密码错误共用同一提示，不向未认证请求方确认账号存在性。
+    if not user or not verify_password(data.password, user.password_hash) or not user.is_active:
         _record_login_failure(rate_limit_key, now)
         raise HTTPException(status_code=401, detail="用户名或密码错误")
 
@@ -119,6 +92,7 @@ def login(data: LoginRequest, request: Request, db: Session = Depends(get_db)):
             username=user.username,
             email=user.email,
             is_admin=user.is_admin,
+            is_active=user.is_active,
             active_exam_id=user.active_exam_id,
             created_at=user.created_at.isoformat(),
         ),
