@@ -5,7 +5,6 @@ import { waitForStudySave } from '../features/vocabularyStudy/lifecycle.js'
 
 const routes = [
   { path: '/login', name: 'Login', component: () => import('../views/LoginView.vue'), meta: { guest: true } },
-  { path: '/register', name: 'Register', component: () => import('../views/RegisterView.vue'), meta: { guest: true } },
   { path: '/', name: 'Root', component: { render: () => null }, meta: { auth: true } },
   { path: '/onboarding', name: 'Onboarding', component: () => import('../views/FirstTimeOnboarding.vue'), meta: { auth: true, allowWithoutExam: true } },
   { path: '/exams', name: 'MyExamProjects', component: () => import('../views/MyExamProjectsPage.vue'), meta: { auth: true, allowWithoutExam: true } },

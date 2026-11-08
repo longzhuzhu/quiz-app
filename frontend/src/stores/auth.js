@@ -32,10 +32,6 @@ export const useAuthStore = defineStore('auth', () => {
     await fetchMe()
   }
 
-  async function register(username, email, password) {
-    await client.post('/auth/register', { username, email, password })
-  }
-
   function logout() {
     const oldAccountId = user.value?.id
     cleanPreviousAccount(oldAccountId)
@@ -70,5 +66,5 @@ export const useAuthStore = defineStore('auth', () => {
     return true
   }
 
-  return { user, token, isLoggedIn, isAdmin, login, register, logout, fetchMe, synchronizeSession }
+  return { user, token, isLoggedIn, isAdmin, login, logout, fetchMe, synchronizeSession }
 })

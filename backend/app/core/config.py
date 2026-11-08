@@ -22,7 +22,8 @@ class Settings(BaseSettings):
     # JWT
     JWT_SECRET_KEY: str = "jwt-secret-key-change-in-production"
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 7 天
+    # 7 天。停用账号与重置密码都不吊销已签发的 token，旧会话最长可用到 token 过期。
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080
 
     # 文件上传
     MAX_UPLOAD_SIZE_MB: int = 50
