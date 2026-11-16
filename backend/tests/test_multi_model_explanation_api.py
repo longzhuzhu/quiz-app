@@ -79,7 +79,7 @@ def test_admin_configures_ordered_models_and_invalid_lists_are_rejected(api):
     response = c.put('/api/settings/ai', json={"ai_explain_models": [{"model_id": "model-b", "reasoning_effort": None}, {"model_id": " model-a "}]})
     assert response.status_code == 200, response.text
     models = c.get('/api/settings/ai').json()['ai_explain_models']
-    assert models == [{"model_id": "model-b", "reasoning_effort": None}, {"model_id": "model-a", "reasoning_effort": "xhigh"}]
+    assert models == [{"model_id": "model-b", "reasoning_effort": None}, {"model_id": "model-a", "reasoning_effort": "high"}]
     assert c.get('/api/ai/explanation-models').json() == {"models": ["model-b", "model-a"]}
     for invalid in ([{"model_id": "bad\x00id"}], [], [{"model_id": ""}], [{"model_id": "x"}, {"model_id": " x "}], [{"model_id": str(i)} for i in range(6)], None):
         assert c.put('/api/settings/ai', json={"ai_explain_models": invalid}).status_code == 422
@@ -135,7 +135,7 @@ def test_each_model_is_independent_cached_and_refreshed_through_worker(api, monk
     assert detail['result']['analysis']['judged_answer'] == 'A'
     assert '题库答案' not in detail['result']['explanation_zh']
     assert '【题干拆解】' in detail['result']['explanation_zh']
-    assert calls[0]['reasoning_effort'] == 'xhigh'
+    assert calls[0]['reasoning_effort'] == 'high'
     assert 'reasoning_effort' not in calls[1]
     assert '正确答案' not in calls[0]['messages'][1]['content']
     assert 'single' in calls[0]['messages'][1]['content']

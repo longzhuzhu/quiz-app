@@ -72,13 +72,13 @@ def patched_settings(monkeypatch):
     )
 
 
-def test_payload_defaults_to_xhigh_and_keeps_temperature():
+def test_payload_defaults_to_high_and_keeps_temperature():
     payload = ai_service.build_chat_completion_payload(
         "fake-model",
         [{"role": "user", "content": "hi"}],
     )
 
-    assert payload["reasoning_effort"] == "xhigh"
+    assert payload["reasoning_effort"] == "high"
     assert payload["temperature"] == 0.3
 
 
@@ -103,7 +103,7 @@ def test_payload_passes_explicit_reasoning_effort_through():
     assert payload["reasoning_effort"] == "provider-specific"
 
 
-def test_call_ai_api_defaults_to_xhigh(monkeypatch, patched_settings):
+def test_call_ai_api_defaults_to_high(monkeypatch, patched_settings):
     captured = {}
 
     def fake_post(url, **kwargs):
@@ -113,7 +113,7 @@ def test_call_ai_api_defaults_to_xhigh(monkeypatch, patched_settings):
     monkeypatch.setattr(ai_service.httpx, "post", fake_post)
 
     assert ai_service.call_ai_api([], MagicMock()) == "ok"
-    assert captured["json"]["reasoning_effort"] == "xhigh"
+    assert captured["json"]["reasoning_effort"] == "high"
     assert captured["json"]["temperature"] == 0.3
 
 
@@ -165,7 +165,7 @@ def test_question_translation_controls_reasoning_effort(
         db,
         scene="default",
         timeout=60.0,
-        reasoning_effort="xhigh",
+        reasoning_effort="high",
     ):
         captured["scene"] = scene
         captured["reasoning_effort"] = reasoning_effort
@@ -209,7 +209,7 @@ def test_batch_translation_omits_reasoning_effort(monkeypatch):
         db,
         scene="default",
         timeout=60.0,
-        reasoning_effort="xhigh",
+        reasoning_effort="high",
     ):
         captured["scene"] = scene
         captured["reasoning_effort"] = reasoning_effort
@@ -239,7 +239,7 @@ def test_term_translation_omits_reasoning_effort(monkeypatch, patched_settings):
     assert captured["json"]["temperature"] == 0.3
 
 
-def test_connection_test_uses_default_xhigh(monkeypatch):
+def test_connection_test_uses_default_high(monkeypatch):
     captured = {}
 
     monkeypatch.setattr(
@@ -265,5 +265,5 @@ def test_connection_test_uses_default_xhigh(monkeypatch):
     )
 
     assert result["success"] is True
-    assert captured["json"]["reasoning_effort"] == "xhigh"
+    assert captured["json"]["reasoning_effort"] == "high"
     assert captured["json"]["temperature"] == 0.3

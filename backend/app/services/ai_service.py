@@ -121,7 +121,7 @@ def sanitize_options_for_storage(options):
 def build_chat_completion_payload(
     model: str,
     messages: list[dict],
-    reasoning_effort: str | None = "xhigh",
+    reasoning_effort: str | None = "high",
 ) -> dict:
     """构造 Chat Completions 请求；显式传 None 时不启用推理强度。"""
     payload = {"model": model, "messages": messages, "temperature": 0.3}
@@ -150,7 +150,7 @@ def call_ai_api(
             场景应显式传 120.0。该值直接透传给 httpx.post 的 timeout 参数
             （对连接 + 读 + 写都生效）。
         reasoning_effort: 推理强度；未传时翻译场景不发送，其他场景默认
-            ``"xhigh"``。显式传 ``None`` 时不发送，其他值原样透传给上游服务。
+            ``"high"``。显式传 ``None`` 时不发送，其他值原样透传给上游服务。
 
     返回:
         str: LLM 响应中 ``choices[0].message.content`` 字段。
@@ -182,7 +182,7 @@ def call_ai_api(
         "Content-Type": "application/json",
     }
     if reasoning_effort is _REASONING_EFFORT_UNSET:
-        reasoning_effort = None if scene == "translate" else "xhigh"
+        reasoning_effort = None if scene == "translate" else "high"
     payload = build_chat_completion_payload(ai["model"], messages, reasoning_effort)
 
     resp = httpx.post(api_url, json=payload, headers=headers, timeout=timeout, verify=True)
