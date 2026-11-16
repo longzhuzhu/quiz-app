@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, field_validator
 
 class ExplanationModelSettings(BaseModel):
     model_id: str = Field(min_length=1, max_length=255)
-    reasoning_effort: str | None = Field(default="xhigh", min_length=1, max_length=32)
+    reasoning_effort: str | None = Field(default="high", min_length=1, max_length=32)
 
     @field_validator("model_id", "reasoning_effort")
     @classmethod

@@ -88,23 +88,45 @@ def validate_ai_base_url(base_url: str) -> str:
         raise ValueError("AI Base URL 未配置")
 
     parsed = urlparse(normalized)
-    if parsed.scheme != "https" or not parsed.hostname:
+    # 开关关闭时只接受 https，scheme 在这里就被拒，不会触发 DNS 解析，与放开前一致。
+    allowed_schemes = {"http", "https"} if settings.AI_ALLOW_LOOPBACK_BASE_URL else {"https"}
+    if parsed.scheme not in allowed_schemes or not parsed.hostname:
         raise ValueError("AI Base URL 仅允许公网 HTTPS 地址")
     if parsed.username or parsed.password:
         raise ValueError("AI Base URL 不允许包含认证信息")
 
     host = parsed.hostname.strip().rstrip(".").lower()
     if host in DISALLOWED_AI_HOSTS:
+        if settings.AI_ALLOW_LOOPBACK_BASE_URL:
+            raise ValueError("AI Base URL 不允许使用本机地址，同机部署请填写 127.0.0.1 或 ::1")
         raise ValueError("AI Base URL 不允许使用本机地址")
 
     addresses = _resolve_host_addresses(host)
     if not addresses:
         raise ValueError("AI Base URL 主机无法解析")
+
+    # 应用与服务同机部署时允许直连回环地址；要求全部解析结果都是回环，
+    # 避免一个双记录域名把其中一条记录指到内网后仍被放行。
+    if settings.AI_ALLOW_LOOPBACK_BASE_URL and all(
+        _is_loopback_ai_address(address) for address in addresses
+    ):
+        return normalized
+
+    if parsed.scheme != "https":
+        raise ValueError("AI Base URL 仅允许公网 HTTPS 地址")
     for address in addresses:
         if _is_disallowed_ai_address(address):
             raise ValueError("AI Base URL 仅允许公网地址")
 
     return normalized
+
+
+def _is_loopback_ai_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    # ::ffff:127.0.0.1 的 is_loopback 为 False，但它实际指向回环，需先还原映射。
+    mapped = getattr(address, "ipv4_mapped", None)
+    if mapped is not None:
+        address = mapped
+    return address.is_loopback
 
 
 def _resolve_host_addresses(host: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:

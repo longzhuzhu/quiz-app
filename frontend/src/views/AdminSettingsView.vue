@@ -79,12 +79,12 @@
               <summary class="cursor-pointer">高级推理设置</summary>
               <label class="mt-2 flex items-center gap-2">
                 <input type="checkbox" :checked="model.reasoning_effort === null"
-                  @change="model.reasoning_effort = $event.target.checked ? null : 'xhigh'" />
+                  @change="model.reasoning_effort = $event.target.checked ? null : 'high'" />
                 不发送 reasoning_effort
               </label>
-              <label :for="'explain-effort-' + index" class="mt-2 block">推理强度（默认 xhigh）</label>
+              <label :for="'explain-effort-' + index" class="mt-2 block">推理强度（默认 high）</label>
               <input :id="'explain-effort-' + index" v-model="model.reasoning_effort" :disabled="model.reasoning_effort === null"
-                type="text" maxlength="32" placeholder="xhigh"
+                type="text" maxlength="32" placeholder="high"
                 class="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-gray-900 disabled:opacity-40 dark:border-slate-600 dark:bg-slate-700 dark:text-white" />
               <p class="mt-1 text-xs">填写该模型支持的强度；不支持时调用会失败，不自动降级。修改不会重算已有解析。</p>
             </details>
@@ -189,7 +189,7 @@ onMounted(async () => {
       ai_api_key: '',
       ai_model: aiRes.data.ai_model || '',
       ai_translate_model: aiRes.data.ai_translate_model || '',
-      ai_explain_models: aiRes.data.ai_explain_models || [{ model_id: aiRes.data.ai_explain_model || aiRes.data.ai_model || '', reasoning_effort: 'xhigh' }],
+      ai_explain_models: aiRes.data.ai_explain_models || [{ model_id: aiRes.data.ai_explain_model || aiRes.data.ai_model || '', reasoning_effort: 'high' }],
       quiz_ai_prewarm_enabled: quizRes.data.quiz_ai_prewarm_enabled !== false,
       wrong_mastery_correct_streak: quizRes.data.wrong_mastery_correct_streak ?? null,
     }
@@ -212,7 +212,7 @@ function stepStreak(delta) {
 }
 
 function addModel() {
-  if (form.value.ai_explain_models.length < 5) form.value.ai_explain_models.push({ model_id: '', reasoning_effort: 'xhigh' })
+  if (form.value.ai_explain_models.length < 5) form.value.ai_explain_models.push({ model_id: '', reasoning_effort: 'high' })
 }
 
 function moveModel(index, direction) {
