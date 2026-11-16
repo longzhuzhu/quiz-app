@@ -10,9 +10,14 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.core.database import Base, engine
+from app.core.storage import get_frontend_dist_dir
 
 # 导入所有模型，确保 Base.metadata 包含所有表定义
 from app.models import *  # noqa: F401,F403
+
+
+# 静态文件解析结果哨兵：路径解析后落在 dist 之外，必须拒绝而不是回退 SPA
+ESCAPES_DIST = object()
 
 
 SECURITY_HEADERS = {
@@ -94,6 +99,10 @@ def create_app() -> FastAPI:
     from app.api.routes.import_jobs import router as import_jobs_router
     from app.api.routes.import_review import router as import_review_router
     from app.api.routes.background_jobs import router as background_jobs_router
+    from app.api.routes.platform_banks import (
+        admin_router as platform_admin_router,
+        user_router as platform_user_router,
+    )
 
     app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
     app.include_router(account_router, prefix="/api/account", tags=["account"])
@@ -112,10 +121,16 @@ def create_app() -> FastAPI:
     app.include_router(import_jobs_router, prefix="/api/import-jobs", tags=["import-jobs"])
     app.include_router(import_review_router, prefix="/api/import-jobs", tags=["import-review"])
     app.include_router(background_jobs_router, prefix="/api/background-jobs", tags=["background-jobs"])
+    app.include_router(
+        platform_admin_router, prefix="/api/admin/platform-banks", tags=["platform-banks-admin"]
+    )
+    app.include_router(platform_user_router, prefix="/api/platform-banks", tags=["platform-banks"])
 
     # 前端 SPA 回退
-    dist_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist"))
+    dist_dir = get_frontend_dist_dir()
     if os.path.isdir(dist_dir):
+        dist_real = os.path.realpath(dist_dir)
+
         # 静态资源（JS、CSS、图片等）
         assets_dir = os.path.join(dist_dir, "assets")
         if os.path.isdir(assets_dir):
@@ -128,6 +143,27 @@ def create_app() -> FastAPI:
             response.headers["Expires"] = "0"
             return response
 
+        def _resolve_static_file(full_path: str):
+            """解析 dist 内的静态文件
+
+            返回文件绝对路径；路径不存在返回 None（回退 SPA）；
+            解析后落在 dist 之外（编码 / 符号链接 / 绝对路径）返回 ESCAPES_DIST。
+            """
+            if not full_path:
+                return None
+            # 任何含 NUL 的路径都不是合法静态资源
+            if "\x00" in full_path:
+                return ESCAPES_DIST
+            candidate = os.path.realpath(os.path.join(dist_real, full_path))
+            try:
+                if os.path.commonpath([dist_real, candidate]) != dist_real:
+                    return ESCAPES_DIST
+            except ValueError:
+                return ESCAPES_DIST
+            if candidate == dist_real or not os.path.isfile(candidate):
+                return None
+            return candidate
+
         # SPA fallback：所有非 /api/* 且未匹配到静态文件的路径返回 index.html
         # 使用 APIRoute 检查排除 /api 前缀路径，避免 catch-all 路由吞掉 404 API 请求
         @app.get("/{full_path:path}")
@@ -135,8 +171,12 @@ def create_app() -> FastAPI:
         async def serve_frontend(request: Request, full_path: str):
             if full_path == "api" or full_path.startswith("api/"):
                 raise HTTPException(status_code=404)
-            file_path = os.path.join(dist_dir, full_path)
-            if full_path and os.path.isfile(file_path):
+            # 越界路径一律 404：ESCAPES_DIST 表示解析后落在 dist 之外，
+            # 不能退化为读取任意磁盘文件，也不能伪装成正常 SPA 页面。
+            file_path = _resolve_static_file(full_path)
+            if file_path is ESCAPES_DIST:
+                raise HTTPException(status_code=404)
+            if file_path is not None:
                 return FileResponse(file_path)
             if request.method == "HEAD":
                 response = Response(status_code=200)

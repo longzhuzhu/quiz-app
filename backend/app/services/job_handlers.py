@@ -202,14 +202,46 @@ def handle_question_topic_tag(db: Session, job) -> str | None:
 # ─── 智能导入任务处理 ──────────────────────────────────
 
 
+def _assert_import_target_payload(db: Session, job) -> None:
+    """平台任务的 payload 必须与已持久化 ImportJob 的目标一致。
+
+    目标事实来源只有 ImportJob；payload 里的 bank_id/platform_bank_id 只是
+    审计冗余，不允许凭它把任务改写到另一个库。
+    """
+    payload = deserialize_job_payload(job)
+    import_job_id = payload.get("import_job_id")
+    if not import_job_id:
+        return
+    from app.models.import_job import ImportJob
+    import_job = db.get(ImportJob, import_job_id)
+    if import_job is None:
+        return
+    # 只拒绝 payload 明确声明的冲突；历史个人 payload 可以缺少 bank_id，
+    # 不能因此让既有任务失败。
+    payload_bank_id = payload.get("bank_id")
+    payload_platform_id = payload.get("platform_bank_id")
+    if import_job.platform_bank_id is not None:
+        if payload_platform_id not in (None, import_job.platform_bank_id):
+            raise ValueError("导入请求的平台来源与持久化任务不一致")
+        if payload_bank_id is not None:
+            raise ValueError("平台导入请求不能指向个人题库")
+    else:
+        if payload_bank_id is not None and payload_bank_id != import_job.bank_id:
+            raise ValueError("导入请求的个人题库与持久化任务不一致")
+        if payload_platform_id is not None:
+            raise ValueError("个人导入请求不能指向平台来源")
+
+
 def handle_question_import_llm(db: Session, job) -> None:
-    """处理智能导入任务"""
+    """处理智能导入任务（个人题库或平台草稿）"""
+    _assert_import_target_payload(db, job)
     from app.services.smart_import_service import run_smart_import
     run_smart_import(db, job)
 
 
 def handle_question_import_llm_reparse(db: Session, job) -> None:
-    """处理单个 chunk 的重新解析"""
+    """处理单个 chunk 的重新解析（个人题库或平台草稿）"""
+    _assert_import_target_payload(db, job)
     from app.services.smart_import_service import run_reparse
     run_reparse(db, job)
 

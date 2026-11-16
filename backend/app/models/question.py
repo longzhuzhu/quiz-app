@@ -24,6 +24,8 @@ class Question(Base):
     explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
     explanation_zh: Mapped[str | None] = mapped_column(Text, nullable=True)
     order_index: Mapped[int] = mapped_column(Integer, default=0)
+    # D03：平台副本只读保留来源考点描述，不创建 ExamTopic / QuestionTopic。
+    source_topics: Mapped[list | None] = mapped_column(JSONType, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=lambda: datetime.now(timezone.utc),

@@ -14,6 +14,7 @@ from app.models.import_chunk import ImportChunk
 from app.models.import_job import ImportJob
 from app.models.import_parsed_question import ImportParsedQuestion
 from app.models.import_review_item import ImportReviewItem
+from app.models.platform_bank import PlatformBank, PlatformBankRelease
 from app.models.practice import PracticeAccuracyDay, PracticeDayQuestion
 from app.models.question import Question
 from app.models.question_bank import QuestionBank
@@ -311,12 +312,33 @@ def delete_user_data(db: Session, user: User) -> None:
         db.query(PracticeAccuracyDay).filter_by(user_id=user.id).delete(synchronize_session=False)
 
         # 导入流水连带删除；先删任务行再删其后台任务，否则外键挡住。
-        import_job_ids = db.query(ImportJob.id).filter_by(created_by=user.id)
+        # 只清理个人目标的流水：平台来源/草稿/发布快照是独立资产，不随作者删除，
+        # 平台任务只解除作者署名（见下方 update）。
+        personal_import_jobs = db.query(ImportJob).filter(
+            ImportJob.created_by == user.id, ImportJob.platform_bank_id.is_(None)
+        )
+        import_job_ids = personal_import_jobs.with_entities(ImportJob.id)
         db.query(ImportReviewItem).filter(ImportReviewItem.import_job_id.in_(import_job_ids)).delete(synchronize_session=False)
         db.query(ImportParsedQuestion).filter(ImportParsedQuestion.import_job_id.in_(import_job_ids)).delete(synchronize_session=False)
         db.query(ImportChunk).filter(ImportChunk.import_job_id.in_(import_job_ids)).delete(synchronize_session=False)
-        db.query(ImportJob).filter_by(created_by=user.id).delete(synchronize_session=False)
-        db.query(BackgroundJob).filter_by(created_by=user.id).delete(synchronize_session=False)
+        personal_import_jobs.delete(synchronize_session=False)
+        db.query(BackgroundJob).filter(
+            BackgroundJob.created_by == user.id, BackgroundJob.platform_bank_id.is_(None)
+        ).delete(synchronize_session=False)
+        # 平台任务的审计署名可以解除，但任务与结果本身保留。
+        db.query(BackgroundJob).filter(
+            BackgroundJob.created_by == user.id, BackgroundJob.platform_bank_id.is_not(None)
+        ).update({BackgroundJob.created_by: None}, synchronize_session=False)
+        db.query(ImportJob).filter(
+            ImportJob.created_by == user.id, ImportJob.platform_bank_id.is_not(None)
+        ).update({ImportJob.created_by: None}, synchronize_session=False)
+        # 平台内容本身不随作者删除，只解除创建/发布署名。
+        db.query(PlatformBank).filter_by(created_by=user.id).update(
+            {PlatformBank.created_by: None}, synchronize_session=False
+        )
+        db.query(PlatformBankRelease).filter_by(created_by=user.id).update(
+            {PlatformBankRelease.created_by: None}, synchronize_session=False
+        )
 
         # 复核人身份不是流水所有权：别人导入、他复核的记录继续保留，只解除署名。
         db.query(ImportReviewItem).filter_by(reviewer_id=user.id).update(

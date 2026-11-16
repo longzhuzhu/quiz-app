@@ -15,6 +15,7 @@ from app.models.user import User
 from app.schemas.bank import BankCreateRequest, BankUpdateRequest
 from app.services.ai_service import batch_translate_terms
 from app.services.exam_service import delete_bank_data, get_bank_in_exam_or_404
+from app.services.platform_bank_service import ensure_bank_accepts_formal_writes
 from app.services.smart_import_service import create_smart_import_job
 from app.services.topic_service import list_bank_topic_overview
 
@@ -30,6 +31,10 @@ def bank_to_dict(bank: QuestionBank) -> dict:
         "source_filename": bank.source_filename,
         "question_count": bank.question_count,
         "created_at": bank.created_at.isoformat(),
+        # 平台副本的只读来源标识；自建库为 None。前端据此隐藏正式内容编辑入口。
+        "source_platform_bank_id": bank.source_platform_bank_id,
+        "source_platform_release_id": bank.source_platform_release_id,
+        "is_platform_copy": bank.source_platform_bank_id is not None,
     }
 
 
@@ -172,6 +177,8 @@ def import_questions(
     db: Session = Depends(get_db),
 ):
     bank = get_bank_in_exam_or_404(db, bank_id, exam)
+    # 平台副本不允许再导入：在读文件、建任务之前直接拒绝。
+    ensure_bank_accepts_formal_writes(bank)
 
     file_bytes = file.file.read()
     if len(file_bytes) > app_settings.upload_max_size_bytes:

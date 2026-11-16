@@ -10,6 +10,7 @@ from app.models.exam import Exam
 from app.models.user import User
 from app.schemas.job import JobCreateRequest
 from app.services.exam_service import get_bank_in_exam_or_404
+from app.services.platform_bank_service import ensure_bank_accepts_formal_writes
 from app.services.job_service import (
     JOB_TYPE_BANK_FREQUENT_TRANSLATE,
     JOB_TYPE_QUESTION_TOPIC_TAG,
@@ -54,6 +55,9 @@ def _build_payload(job_type: str, source: dict, db: Session, exam: Exam) -> tupl
         if bank_id is None:
             return {}, HTTPException(status_code=400, detail="bank_id 必须为整数")
         bank = get_bank_in_exam_or_404(db, bank_id, exam)
+        # 考点打标写的是正式考点归属，平台副本必须拒绝（管理员自己的副本同样拒绝）。
+        if job_type == JOB_TYPE_QUESTION_TOPIC_TAG:
+            ensure_bank_accepts_formal_writes(bank)
         payload["bank_id"] = bank.id
         if job_type == JOB_TYPE_QUESTION_TOPIC_TAG:
             payload["exam_id"] = exam.id
