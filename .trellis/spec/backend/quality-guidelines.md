@@ -980,3 +980,69 @@ setup.refresh(question); setup.refresh(session)
 **同类陷阱**：断言恒真。例如「被拒绝的值没有落库」——若写入路径只 `flush` 不 `commit`、
 且测试走 HTTP（每次请求新会话，关闭时必然回滚），那么无论实现是否有缺陷该断言都成立。
 写契约测试后务必问一句：**把实现改成错误版本，这条断言会失败吗？**
+
+---
+
+## AI Base URL 回环放行契约
+
+### 1. Scope / Trigger
+
+- Trigger: 应用与 AI 模型代理同机部署时，想让 AI 调用跳过 nginx 回源直接访问本机代理。
+- Scope: 只影响 `validate_ai_base_url` 对回环地址的判定；不放开私网、链路本地或任何非回环地址。
+
+### 2. Signatures
+
+- 配置：`settings.AI_ALLOW_LOOPBACK_BASE_URL: bool = False`（`backend/app/core/config.py`，环境变量同名）
+- 校验：`validate_ai_base_url(base_url: str) -> str`（`backend/app/services/settings_service.py`）
+- 助手：`_is_loopback_ai_address(address) -> bool`
+
+### 3. Contracts
+
+- 开关关闭时行为必须与放开前逐字一致：只接受 https，回环地址报「仅允许公网 HTTPS 地址」或「仅允许公网地址」，`localhost` 报「不允许使用本机地址」。
+- 开关开启时只多放行一格：scheme 为 http/https 且解析出的**全部**地址都是回环地址。
+- 全部地址回环才放行，任一地址非回环即走原有公网校验。防的是双记录域名把其中一条指向内网。
+- `localhost` 始终拒绝，开关开启时文案追加「同机部署请填写 127.0.0.1 或 ::1」。
+- 判定回环必须还原 IPv4 映射：`ipaddress.ip_address("::ffff:127.0.0.1").is_loopback` 为 `False`，但实际指向回环。
+- 该开关属于部署事实，走 `.env`，不进 `system_settings`。
+
+### 4. Validation & Error Matrix
+
+| 输入 | 开关关 | 开关开 |
+|------|--------|--------|
+| `http://127.0.0.1:5020/v1` | 拒 | 放行 |
+| `https://127.0.0.1:5020/v1` | 拒 | 放行 |
+| `http://[::1]:5020/v1` | 拒 | 放行 |
+| `http://[::ffff:127.0.0.1]:5020/v1` | 拒 | 放行 |
+| 私网 / 链路本地 / `0.0.0.0` / http 公网地址 | 拒 | 拒 |
+| `https://` 公网地址 | 放行 | 放行 |
+| `user:pass@` 任意地址 | 拒 | 拒 |
+| `localhost` | 拒 | 拒 |
+
+### 5. Good/Base/Bad Cases
+
+- Good: 同机部署，`.env` 设 `AI_ALLOW_LOOPBACK_BASE_URL=true`，`ai_api_base_url` 为 `http://127.0.0.1:5020/v1`，AI 调用不经 nginx。
+- Base: 不开开关，保持 `https://<公网域名>/v1`，行为与改动前完全一致。
+- Bad: 把判定写成「任一地址是回环就放行」，双记录域名可借此穿透到内网。
+- Bad: 开关开启时顺带放开 `localhost`，其解析结果受 `/etc/hosts` 与 mDNS 影响，不由调用方控制。
+
+### 6. Tests Required
+
+- `backend/tests/test_ai_base_url_validation.py` 覆盖上表全部行，并断言拒绝文案而不只是断言抛异常。
+- 混合解析用 `monkeypatch` 固定 `_resolve_host_addresses` 返回值，不依赖真实 DNS。
+- 运行：`.venv/bin/python -m pytest backend/tests/test_ai_base_url_validation.py -q`
+
+### 7. Wrong vs Correct
+
+#### Wrong
+```python
+if any(_is_loopback_ai_address(a) for a in addresses):
+    return normalized
+```
+
+#### Correct
+```python
+if settings.AI_ALLOW_LOOPBACK_BASE_URL and all(
+    _is_loopback_ai_address(address) for address in addresses
+):
+    return normalized
+```

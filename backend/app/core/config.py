@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     AI_API_BASE_URL: str = "https://api.openai.com"
     AI_API_KEY: str = ""
     AI_MODEL: str = "gpt-4o-mini"
+    # 允许 AI Base URL 指向本机回环地址，用于应用与模型代理同机部署时跳过 nginx 回源。
+    # 默认关闭；关闭时仅接受公网 HTTPS 地址。
+    AI_ALLOW_LOOPBACK_BASE_URL: bool = False
 
     # 安全配置
     ENABLE_OPENAPI: bool = False
