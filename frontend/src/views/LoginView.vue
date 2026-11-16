@@ -51,10 +51,6 @@
             登录
           </BaseButton>
         </form>
-
-        <p class="mt-6 text-center text-sm text-gray-600 dark:text-gray-400">
-          没有账号？<router-link to="/register" class="font-medium text-primary-600 hover:text-primary-500">注册</router-link>
-        </p>
       </div>
     </div>
   </div>

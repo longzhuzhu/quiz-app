@@ -22,7 +22,7 @@
           <div class="text-sm text-gray-900 dark:text-white">{{ account.is_admin ? '管理员' : '普通用户' }}</div>
         </div>
         <div>
-          <div class="text-xs text-gray-500 dark:text-gray-400">注册时间</div>
+          <div class="text-xs text-gray-500 dark:text-gray-400">创建时间</div>
           <div class="text-sm text-gray-900 dark:text-white">{{ createdAtText }}</div>
         </div>
       </div>

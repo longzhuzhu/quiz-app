@@ -94,7 +94,24 @@ npm run dev
 
 打开浏览器访问前端开发服务器地址（当前 Vite 配置为 `http://localhost:5001`）。
 
-**第一个注册的用户自动成为管理员**，拥有题库管理、题目管理、AI 设置等权限。
+系统不提供自助注册，账号由管理员创建。全新部署先用运维脚本建立第一个管理员：
+
+```bash
+cd backend
+python scripts/create_user.py create --username admin --email admin@example.com --admin
+```
+
+密码省略 `--password` 时交互式输入，不会留在 shell 历史里。此后的账号在「用户管理」页创建，脚本也可用于救援：
+
+```bash
+python scripts/create_user.py reset-password --username alice   # 重置密码
+python scripts/create_user.py disable --username alice          # 停用（阻止新登录）
+python scripts/create_user.py enable --username alice           # 恢复启用
+python scripts/create_user.py promote --username alice          # 设为管理员
+python scripts/create_user.py demote --username alice           # 取消管理员
+```
+
+停用与重置密码都不会让已登录的会话立刻失效，旧会话最长可用到登录凭证过期（7 天）。
 
 ## 生产部署
 
@@ -224,7 +241,7 @@ quiz-app/
 
 | 前缀 | 功能 | 权限 |
 |------|------|------|
-| `/api/auth` | 注册、登录、当前用户 | 公开 / JWT |
+| `/api/auth` | 登录、当前用户 | 公开 / JWT |
 | `/api/account` | 当前账号资料、密码等账号操作 | JWT |
 | `/api/admin/users` | 用户管理 | 管理员 |
 | `/api/banks` | 题库 CRUD、文件导入 | JWT / 管理员 |
