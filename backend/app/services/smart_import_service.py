@@ -15,8 +15,9 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 import httpx
+from fastapi import HTTPException
 from pydantic import ValidationError
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -30,11 +31,18 @@ from app.models.import_job import ImportJob
 from app.models.import_parsed_question import ImportParsedQuestion
 from app.models.import_review_item import ImportReviewItem
 from app.models.llm_parse_cache import LlmParseCache
+from app.models.platform_bank import PlatformDraftQuestion
 from app.models.question import Question
 from app.models.question_bank import QuestionBank
 from app.schemas.llm_parse import LlmParseResult, ParsedQuestion
 from app.services.ai_service import call_ai_api
 from app.services.import_service import build_bank_word_frequencies
+# 平台侧规则（校验/来源锁）只在这里复用，不复制实现。
+from app.services.platform_bank_service import (
+    has_active_platform_imports,
+    lock_platform_bank,
+    validate_question_content,
+)
 from app.services.job_service import (
     JOB_TYPE_QUESTION_IMPORT_LLM,
     JOB_TYPE_QUESTION_IMPORT_LLM_REPARSE,
@@ -222,6 +230,157 @@ def _qno_sort_key(qno: str) -> tuple[int, int, str]:
     return (1, 0, qno)
 
 
+# ─── 导入目标（个人题库 / 平台草稿） ──────────────────
+
+# 平台分块含「手工删除痕迹」时 reparse 的固定提示：入队与执行共用同一文案，
+# 避免两处规则漂移。
+REPARSE_DELETED_PLATFORM_QUESTION_ERROR = "该分块含已被删除的题目，请改用新的追加导入"
+
+
+def _platform_bank_id_of(import_job) -> str | None:
+    """只接受真实字符串来源 ID；测试替身（MagicMock）不能误判成平台目标。"""
+    value = getattr(import_job, "platform_bank_id", None)
+    return value if isinstance(value, str) and value else None
+
+
+class ImportTarget:
+    """导入目标适配器：目标只取自已持久化的 ``ImportJob``，不信客户端 payload。
+
+    个人目标维持既有 Question/词频行为；平台目标只写 ``PlatformDraftQuestion``，
+    并额外承担来源锁与草稿签名读取。两个分支共用同一套抽取/LLM/checkpoint 流水线。
+    """
+
+    def __init__(self, db: Session, import_job: ImportJob):
+        self.db = db
+        self.import_job = import_job
+        self.platform_bank_id: str | None = _platform_bank_id_of(import_job)
+
+    @property
+    def is_platform(self) -> bool:
+        return self.platform_bank_id is not None
+
+    # ── 读取目标现状 ──────────────────────────────
+
+    def existing_signatures(self) -> set:
+        """已存在题目的去重签名：个人读 Question，平台读该来源全部草稿题。"""
+        signatures = set()
+        if self.is_platform:
+            drafts = (
+                self.db.query(PlatformDraftQuestion)
+                .filter_by(platform_bank_id=self.platform_bank_id)
+                .all()
+            )
+            for draft in drafts:
+                options = draft.options if isinstance(draft.options, list) else json.loads(draft.options or "[]")
+                answer = [a.strip() for a in (draft.correct_answer or "").split(",")] if draft.correct_answer else []
+                signatures.add(_question_signature(draft.question_type, draft.content, options, answer))
+            return signatures
+
+        existing_questions = (
+            self.db.query(Question).filter_by(bank_id=self.import_job.bank_id).all()
+        )
+        for eq in existing_questions:
+            eq_options = eq.options if isinstance(eq.options, list) else json.loads(eq.options or "[]")
+            eq_answer = [a.strip() for a in (eq.correct_answer or "").split(",")] if eq.correct_answer else []
+            signatures.add(_question_signature(eq.question_type, eq.content, eq_options, eq_answer))
+        return signatures
+
+    def imported_qnos(self) -> set[str]:
+        """本任务已入库题号；平台保留删除草稿后的历史记录，不复活手工删除题。"""
+        query = self.db.query(ImportParsedQuestion).filter_by(
+            import_job_id=self.import_job.id, import_status="imported"
+        )
+        if self.is_platform:
+            # 平台目标以草稿题指针或 inserted_new 证据识别「曾经入库」，
+            # 避免历史上的个人题指针（不可能存在）混入。
+            query = query.filter(
+                or_(
+                    ImportParsedQuestion.imported_platform_question_id.is_not(None),
+                    ImportParsedQuestion.inserted_new.is_(True),
+                )
+            )
+        qnos: set[str] = set()
+        for pq in query.all():
+            normalized = _normalize_qno(pq.source_question_no)
+            if normalized is not None:
+                qnos.add(normalized)
+        return qnos
+
+    def has_deleted_platform_question(self, chunk_id: int) -> bool:
+        """该分块是否存在 inserted_new=True 但草稿指针已被置空的记录（手工删除）。"""
+        if not self.is_platform:
+            return False
+        return (
+            self.db.query(ImportParsedQuestion.id)
+            .filter(
+                ImportParsedQuestion.import_job_id == self.import_job.id,
+                ImportParsedQuestion.chunk_id == chunk_id,
+                ImportParsedQuestion.inserted_new.is_(True),
+                ImportParsedQuestion.imported_platform_question_id.is_(None),
+            )
+            .first()
+            is not None
+        )
+
+    # ── 写入协调 ──────────────────────────────────
+
+    def lock_for_chunk_write(self) -> None:
+        """平台目标进入短写入事务前统一取锁：PlatformBank → ImportJob → BackgroundJob。
+
+        调用点此前均已 commit_import；若仍有未提交业务状态，说明顺序发生变化，
+        直接拒绝，避免在来源锁之外落库。个人目标保持原 guard 语义。
+        """
+        execution = execution_for(self.db)
+        if not self.is_platform or not isinstance(self.db, Session):
+            if execution is not None:
+                execution.guard(self.db)
+            return
+        if self.db.new or self.db.dirty or self.db.deleted:
+            raise ImportRecoveryError("平台写入前存在未提交状态，拒绝在来源锁之外落库")
+        self.db.rollback()
+        lock_platform_bank(self.db, self.platform_bank_id)
+        if execution is not None:
+            execution.guard(self.db)
+
+    def preflight_write_lock(self) -> None:
+        """平台目标首次写入/flush 前的来源协调（每个请求只做一次）。
+
+        之后同一请求的逐题落库已在来源锁与 ImportJob 锁内，不再重复取锁，
+        避免把锁调用塞进逐题循环。
+        """
+        if self.is_platform:
+            self.lock_for_chunk_write()
+            return
+        execution = execution_for(self.db)
+        if execution is not None:
+            execution.guard(self.db)
+
+    def retain_parsed_on_reparse(self, parsed_question: ImportParsedQuestion) -> bool:
+        """reparse 清理旧审计时保留已入库记录。
+
+        个人目标继续要求个人题指针存在；平台目标保留全部已入库审计（含已删除
+        草稿的历史题号），以便题号去重不重复计入新增。
+        """
+        if parsed_question.import_status != "imported":
+            return False
+        if self.is_platform:
+            return True
+        return parsed_question.imported_question_id is not None
+
+    def write_question(self, parsed_question: ImportParsedQuestion):
+        """把已解析题写入目标；平台目标只写草稿题。"""
+        if not self.is_platform:
+            return _write_question_to_bank(self.db, parsed_question, self.import_job.bank_id)
+        return _write_platform_draft_question(self.db, parsed_question, self.platform_bank_id)
+
+    def update_bank_stats(self) -> None:
+        """个人目标收尾词频；平台没有个人题库与词频，必须完全不调用。"""
+        if self.is_platform:
+            return
+        if self.import_job.bank_id is not None:
+            _update_bank_stats(self.db, self.import_job.bank_id)
+
+
 # ─── 创建导入任务 ──────────────────────────────────
 
 
@@ -239,6 +398,70 @@ def create_smart_import_job(
     bank = db.get(QuestionBank, bank_id)
     if not bank:
         return {"error": "题库不存在"}
+    return _create_import_job(
+        db,
+        bank_id=bank_id,
+        platform_bank_id=None,
+        file_bytes=file_bytes,
+        filename=filename,
+        user_id=user_id,
+        auto_import=auto_import,
+        use_llm_cache=use_llm_cache,
+    )
+
+
+def create_platform_import_job(
+    db: Session,
+    platform_bank_id: str,
+    file_bytes: bytes,
+    filename: str,
+    user_id: int,
+    auto_import: bool = True,
+    use_llm_cache: bool = True,
+) -> dict:
+    """创建平台草稿导入任务。
+
+    先取得来源锁校验来源存在；该来源已有 queued/running 任务时允许继续排队
+    （与个人导入一致），但入队本身必须登记 ``platform_bank_id``。
+    """
+    try:
+        lock_platform_bank(db, platform_bank_id)
+    except HTTPException as exc:
+        db.rollback()
+        return {"error": exc.detail}
+    try:
+        result = _create_import_job(
+            db,
+            bank_id=None,
+            platform_bank_id=platform_bank_id,
+            file_bytes=file_bytes,
+            filename=filename,
+            user_id=user_id,
+            auto_import=auto_import,
+            use_llm_cache=use_llm_cache,
+        )
+    except BaseException:
+        # 创建失败的路径也必须释放来源行锁，不能把未提交事务带回路由层。
+        db.rollback()
+        raise
+    if "error" in result:
+        db.rollback()
+    return result
+
+
+def _create_import_job(
+    db: Session,
+    *,
+    bank_id: int | None,
+    platform_bank_id: str | None,
+    file_bytes: bytes,
+    filename: str,
+    user_id: int,
+    auto_import: bool,
+    use_llm_cache: bool,
+) -> dict:
+    """个人 / 平台共用的导入任务创建实现；目标只能由调用方显式指定一次。"""
+    is_platform = platform_bank_id is not None
 
     # 校验文件大小
     if len(file_bytes) > settings.upload_max_size_bytes:
@@ -255,15 +478,30 @@ def create_smart_import_job(
     else:
         return {"error": f"不支持的文件格式: {filename}"}
 
-    # 保存文件（先保存以获取 file_hash）
-    file_path, file_hash = save_upload_file(file_bytes, filename)
+    # 保存文件（先保存以获取 file_hash）；物理文件名由存储层生成，不使用用户文件名。
+    # 个人路径保持原两参数调用签名；平台原件写入独立私有目录。
+    try:
+        if is_platform:
+            file_path, file_hash = save_upload_file(file_bytes, filename, category="platform")
+        else:
+            file_path, file_hash = save_upload_file(file_bytes, filename)
+    except ValueError as exc:
+        return {"error": str(exc)}
 
     # 同文件重复导入仅记录溯源信息，不再硬阻断。
-    # 去重边界在题目级：run_smart_import 会把题库现有 Question 签名加入 seen_signatures，
-    # _save_parsed_question 命中后写入 duplicate/skipped 审计记录，避免重复写正式题库。
+    # 去重边界在题目级：run_smart_import 会把目标现有题目签名加入 seen_signatures
+    # （个人读 Question，平台读该来源草稿），_save_parsed_question 命中后写入
+    # duplicate/skipped 审计记录，避免重复写正式内容。
     duplicate_file_job = (
         db.query(ImportJob)
-        .filter_by(bank_id=bank_id, file_hash=file_hash)
+        .filter_by(
+            **(
+                {"platform_bank_id": platform_bank_id}
+                if is_platform
+                else {"bank_id": bank_id}
+            ),
+            file_hash=file_hash,
+        )
         .order_by(ImportJob.id.desc())
         .first()
     )
@@ -281,6 +519,7 @@ def create_smart_import_job(
     # 创建 ImportJob
     import_job = ImportJob(
         bank_id=bank_id,
+        platform_bank_id=platform_bank_id,
         file_name=filename,
         file_path=file_path,
         file_hash=file_hash,
@@ -303,6 +542,8 @@ def create_smart_import_job(
         "auto_import": auto_import,
         "use_llm_cache": use_llm_cache,
     }
+    if is_platform:
+        payload["platform_bank_id"] = platform_bank_id
     bg_job = BackgroundJob(
         job_type=JOB_TYPE_QUESTION_IMPORT_LLM,
         scope_key=scope_key,
@@ -311,6 +552,7 @@ def create_smart_import_job(
         status="queued",
         progress_total=0,
         status_message="等待后台 worker 执行智能导入",
+        platform_bank_id=platform_bank_id,
         created_by=user_id,
     )
     db.add(bg_job)
@@ -324,6 +566,7 @@ def create_smart_import_job(
         "background_job_id": bg_job.id,
         "status": "pending",
     }
+
 
 
 # ─── 主编排器 ──────────────────────────────────
@@ -465,9 +708,16 @@ def _persist_chunk_questions(
     signatures_before = set(seen_signatures or ())
     qnos_before = set(imported_qnos or ())
     atomic = isinstance(db, Session)
-    execution = execution_for(db)
-    if execution is not None:
-        execution.guard(db)
+    target = ImportTarget(db, import_job)
+    # 平台目标：首次写入/flush 前进入来源协调并重新读取现有签名，
+    # 不能只用模型调用前的进程内集合判断重复。
+    target.preflight_write_lock()
+    if target.is_platform:
+        refreshed = target.existing_signatures()
+        if seen_signatures is not None:
+            seen_signatures.clear()
+            seen_signatures.update(refreshed)
+        signatures_before = set(refreshed)
     try:
         if chunk.status != "failed":
             for question in result.questions:
@@ -561,13 +811,10 @@ def run_smart_import(db: Session, background_job: BackgroundJob) -> None:
     # 阶段3：LLM 解析
     _update_import_job_status(db, import_job, "parsing")
 
-    # 构建 seen_signatures：Bank 已有题目 + 本 Job 已入库题目
-    seen_signatures = set()
-    existing_questions = db.query(Question).filter_by(bank_id=import_job.bank_id).all()
-    for eq in existing_questions:
-        eq_options = eq.options if isinstance(eq.options, list) else json.loads(eq.options or "[]")
-        eq_answer = [a.strip() for a in (eq.correct_answer or "").split(",")] if eq.correct_answer else []
-        seen_signatures.add(_question_signature(eq.question_type, eq.content, eq_options, eq_answer))
+    # 构建 seen_signatures：目标已有题目 + 本 Job 已入库题目
+    # 个人目标读 Question；平台目标读该来源当前全部草稿题。
+    target = ImportTarget(db, import_job)
+    seen_signatures = target.existing_signatures()
 
     # 更新 BackgroundJob progress_total 为实际 chunk 数
     bg_job = db.get(BackgroundJob, background_job.id)
@@ -1349,11 +1596,24 @@ def _save_parsed_question(
         parsed_question.import_status = "skipped"
         parsed_question.review_status = "auto_skipped"
     elif auto_import:
-        question = _write_question_to_bank(db, parsed_question, import_job.bank_id)
-        if parsed_question.import_status == "skipped":
+        target = ImportTarget(db, import_job)
+        question = target.write_question(parsed_question)
+        if question is None:
+            # 平台目标：内容校验不通过时已按 unusable 路径记 skipped + issues，
+            # 不静默过滤，也不计入新增。
+            pass
+        elif parsed_question.import_status == "skipped":
             # _write_question_to_bank 的双重保险命中重复题时，会保留当前解析记录为
             # duplicate/skipped，并且不关联已有正式题，避免被计入已导入题。
             pass
+        elif target.is_platform:
+            # 平台目标：草稿题指针与 inserted_new 是「确实新增过题目」的证据，
+            # 个人题指针必须保持为空；同一事务内与 parsed/checkpoint 一起提交。
+            parsed_question.import_status = "imported"
+            parsed_question.review_status = "auto_accepted"
+            parsed_question.imported_platform_question_id = question.id
+            parsed_question.inserted_new = True
+            import_job.imported_questions = (import_job.imported_questions or 0) + 1
         else:
             parsed_question.import_status = "imported"
             parsed_question.review_status = "auto_accepted"
@@ -1472,6 +1732,69 @@ def _write_question_to_bank(
     return question
 
 
+def _write_platform_draft_question(
+    db: Session,
+    parsed_question: ImportParsedQuestion,
+    platform_bank_id: str,
+) -> PlatformDraftQuestion | None:
+    """将解析结果写入平台草稿题（只写 PlatformDraftQuestion，不碰个人题表）。
+
+    与个人写入的差异：
+    - 使用平台共享校验，非法内容不静默过滤，交由调用方记 skipped + issues；
+    - 不写 ``content_zh``（导入无翻译）与 ``source_topics``（默认 None）；
+    - ``order_index`` 在来源锁内读取当前最大值 +1，保证并发追加不重号。
+    """
+    options = parsed_question.options_json if isinstance(parsed_question.options_json, list) else []
+    correct_answer = parsed_question.correct_answer
+    if isinstance(correct_answer, list):
+        correct_answer_raw = ",".join(correct_answer) if correct_answer else ""
+    else:
+        correct_answer_raw = str(correct_answer) if correct_answer else ""
+
+    full_content = build_full_question_content(
+        parsed_question.scenario_text,
+        parsed_question.content,
+    )
+    question_type = parsed_question.question_type or "single"
+    try:
+        normalized_options, normalized_answer = validate_question_content(
+            question_type, full_content, options, correct_answer_raw
+        )
+    except ValueError as exc:
+        parsed_question.import_status = "skipped"
+        parsed_question.review_status = "auto_skipped"
+        parsed_question.issues_json = {
+            "issues": ["PLATFORM_CONTENT_INVALID"],
+            "details": [{
+                "code": "PLATFORM_CONTENT_INVALID",
+                "severity": "HIGH",
+                "detail": f"平台草稿题内容不合法: {exc}",
+            }],
+        }
+        parsed_question.imported_platform_question_id = None
+        db.flush()
+        return None
+
+    max_order = (
+        db.query(func.max(PlatformDraftQuestion.order_index))
+        .filter_by(platform_bank_id=platform_bank_id)
+        .scalar()
+    )
+    draft = PlatformDraftQuestion(
+        platform_bank_id=platform_bank_id,
+        question_type=question_type,
+        content=full_content,
+        content_zh=None,
+        options=normalized_options,
+        correct_answer=normalized_answer,
+        order_index=(max_order + 1) if max_order is not None else 0,
+        source_topics=None,
+    )
+    db.add(draft)
+    db.flush()
+    return draft
+
+
 # ─── 重新解析 ──────────────────────────────────
 
 
@@ -1489,6 +1812,21 @@ def create_reparse_job(
     chunk = db.get(ImportChunk, chunk_id)
     if not chunk or chunk.import_job_id != import_job_id:
         return {"error": "Chunk 不存在或不属于该导入任务"}
+
+    target = ImportTarget(db, import_job)
+    if target.is_platform:
+        # 入队前先协调来源，再检查活动写者；顺序固定 PlatformBank → ImportJob
+        # → BackgroundJob。个人路径保持原行为（不取来源锁）。
+        try:
+            lock_platform_bank(db, target.platform_bank_id)
+        except HTTPException as exc:
+            db.rollback()
+            return {"error": exc.detail}
+        if target.has_deleted_platform_question(chunk_id):
+            # fail-closed（入队侧）：该块含被管理员手工删除的题，重解析无法
+            # 区分「历史题号」与「有意重新加入」，要求改用新的追加导入。
+            db.rollback()
+            return {"error": REPARSE_DELETED_PLATFORM_QUESTION_ERROR}
 
     # 检查是否已有进行中的 reparse 任务
     scope_key = f"import_reparse:{chunk_id}"
@@ -1510,6 +1848,8 @@ def create_reparse_job(
         "chunk_id": chunk_id,
         "bank_id": import_job.bank_id,
     }
+    if target.is_platform:
+        payload["platform_bank_id"] = target.platform_bank_id
     bg_job = BackgroundJob(
         job_type=JOB_TYPE_QUESTION_IMPORT_LLM_REPARSE,
         scope_key=scope_key,
@@ -1518,6 +1858,7 @@ def create_reparse_job(
         status="queued",
         progress_total=1,
         status_message="等待后台 worker 执行重新解析",
+        platform_bank_id=target.platform_bank_id,
         created_by=user_id,
     )
     db.add(bg_job)
@@ -1546,8 +1887,17 @@ def run_reparse(db: Session, background_job: BackgroundJob) -> None:
         raise ValueError(f"ImportChunk {chunk_id} 不存在")
 
     require_execution(db, background_job.id, import_job.id)
+    target = ImportTarget(db, import_job)
     if chunk.import_job_id != import_job.id or bank_id != import_job.bank_id:
         raise ValueError("重解析 chunk/bank 不属于该导入任务")
+    if target.is_platform and payload.get("platform_bank_id") != target.platform_bank_id:
+        raise ValueError("重解析 chunk/平台来源不属于该导入任务")
+    if target.is_platform:
+        # 执行侧 fail-closed：入队后草稿题可能被手工删除，必须在开始处理前
+        # 再次拒绝，且不删除该块既有审计记录。
+        lock_platform_bank(db, target.platform_bank_id)
+        if target.has_deleted_platform_question(chunk_id):
+            raise ImportRecoveryError(REPARSE_DELETED_PLATFORM_QUESTION_ERROR)
     request_id = _request_id(db, background_job)
     checkpoint = _chunk_checkpoint(chunk, request_id)
     if checkpoint.get("finalization_done"):
@@ -1570,7 +1920,7 @@ def run_reparse(db: Session, background_job: BackgroundJob) -> None:
             old_query = old_query.with_for_update().populate_existing()
         old_parsed = old_query.all()
         for pq in old_parsed:
-            if pq.import_status == "imported" and pq.imported_question_id:
+            if target.retain_parsed_on_reparse(pq):
                 # 已导入的题目保留，不删除
                 continue
             # 删除关联的 review_items
@@ -1597,29 +1947,14 @@ def run_reparse(db: Session, background_job: BackgroundJob) -> None:
     auto_import = config.get("auto_import", True)
     use_llm_cache = False  # 重新解析时跳过缓存
 
-    # 构建已入库题目的 seen_signatures
-    seen_signatures = set()
-    existing_questions = db.query(Question).filter_by(bank_id=import_job.bank_id).all()
-    for eq in existing_questions:
-        eq_options = eq.options if isinstance(eq.options, list) else json.loads(eq.options or "[]")
-        eq_answer = [a.strip() for a in (eq.correct_answer or "").split(",")] if eq.correct_answer else []
-        seen_signatures.add(_question_signature(eq.question_type, eq.content, eq_options, eq_answer))
+    # 构建已入库题目的 seen_signatures：个人读 Question，平台读该来源草稿题。
+    seen_signatures = target.existing_signatures()
 
     # PR-3：构建本 ImportJob 已入库的题号集合（reparse 卫生）。
     # 来源 = ImportParsedQuestion 表（按 import_job_id == this_job AND import_status == 'imported'）。
-    # 选用 ImportParsedQuestion 而非反查 Question 表的理由：
-    #   - source_question_no 字段直接，无需 join；
-    #   - 仅本 job 范围，避免与同 bank 的其他来源题（手工导入等）混淆；
-    #   - 与 PR-4 reconciliation 的同表切片保持 schema 一致。
-    imported_qnos: set[str] = set()
-    for pq in (
-        db.query(ImportParsedQuestion)
-        .filter_by(import_job_id=import_job.id, import_status="imported")
-        .all()
-    ):
-        normalized = _normalize_qno(pq.source_question_no)
-        if normalized is not None:
-            imported_qnos.add(normalized)
+    # 平台目标额外保留 inserted_new 但已手工删除草稿的历史记录题号（上面已 fail-closed
+    # 拒绝含该痕迹的分块），因此不会复活手工删除题或重复计数。
+    imported_qnos = target.imported_qnos()
 
     _process_chunk(
         db=db,
@@ -1639,8 +1974,8 @@ def run_reparse(db: Session, background_job: BackgroundJob) -> None:
     else:
         _update_import_job_status(db, import_job, "imported")
 
-    # 更新题库统计
-    _update_bank_stats(db, import_job.bank_id)
+    # 更新目标统计：平台不写个人题库词频。
+    target.update_bank_stats()
 
     # PR-4：reparse 后也刷新 reconciliation。
     # 注意：reparse **不**走 _finalize_import（避免覆盖 status 状态机），
@@ -1690,13 +2025,29 @@ def accept_review_item(
     if not parsed_question:
         return {"error": "关联的解析题目不存在"}
 
-    # 写入 Question
-    question = _write_question_to_bank(db, parsed_question, import_job.bank_id)
+    # 写入目标：个人 Question 或平台草稿题。平台来源行锁已由
+    # coordinated_review → review_writer 在 ImportJob 锁之前取得，
+    # 此处不再重复取锁（避免反向顺序）。
+    target = ImportTarget(db, import_job)
+    if target.is_platform and has_active_platform_imports(db, target.platform_bank_id):
+        # 同一来源仍有主导入/reparse 在写草稿时，人工 accept 直接 409。
+        db.rollback()
+        return {"error": "题库有导入任务正在写入，请稍后再试", "status_code": 409}
+    question = target.write_question(parsed_question)
+    if question is None:
+        # 平台内容校验失败：保持复核项 pending，交回管理员修订/跳过，
+        # 不能把无效题伪装成已入库。
+        db.rollback()
+        return {"error": "该题不满足平台草稿题要求，请修订内容或跳过"}
 
     # 更新状态
     parsed_question.import_status = "imported"
     parsed_question.review_status = "accepted"
-    parsed_question.imported_question_id = question.id
+    if target.is_platform:
+        parsed_question.imported_platform_question_id = question.id
+        parsed_question.inserted_new = True
+    else:
+        parsed_question.imported_question_id = question.id
     review_item.status = "accepted"
     review_item.reviewer_id = reviewer_id
     review_item.reviewed_at = datetime.now(timezone.utc)
@@ -1705,8 +2056,8 @@ def accept_review_item(
     import_job.review_questions = max(0, (import_job.review_questions or 0) - 1)
     commit_import(db)
 
-    # 更新题库统计
-    _update_bank_stats(db, import_job.bank_id)
+    # 更新目标统计：平台不写个人题库词频。
+    target.update_bank_stats()
 
     return {"question_id": question.id, "message": "题目已入库"}
 
@@ -2435,6 +2786,45 @@ def _duplicate_skipped_count(db: Session, import_job_id: int) -> int:
     ).scalar() or 0
 
 
+def _actual_inserted_count(db: Session, import_job_id: int) -> int:
+    """任务实际新增的题目数：按 ``inserted_new`` 历史证据计数。
+
+    不能用 ``imported_questions`` 冒充（人工 accept 会虚报），也不能只数当前
+    草稿题指针（草稿被删除后会少算）。
+    """
+    return db.query(func.count(ImportParsedQuestion.id)).filter_by(
+        import_job_id=import_job_id,
+        inserted_new=True,
+    ).scalar() or 0
+
+
+def _platform_target_counts(db: Session, import_job: ImportJob) -> dict:
+    """平台目标的当前草稿题数与可发布题数（仅平台任务返回，个人任务不含这些键）。
+
+    「可发布题数」复用发布前的同一套校验，逐题判断，不静默过滤坏题。
+    """
+    if not import_job.platform_bank_id:
+        return {}
+    drafts = (
+        db.query(PlatformDraftQuestion)
+        .filter_by(platform_bank_id=import_job.platform_bank_id)
+        .all()
+    )
+    publishable = 0
+    for draft in drafts:
+        try:
+            validate_question_content(
+                draft.question_type, draft.content, draft.options, draft.correct_answer
+            )
+        except ValueError:
+            continue
+        publishable += 1
+    return {
+        "draft_question_count": len(drafts),
+        "publishable_question_count": publishable,
+    }
+
+
 def _finalize_import(db: Session, import_job: ImportJob) -> None:
     """导入完成后的汇总处理"""
     import_job = db.get(ImportJob, import_job.id)
@@ -2461,6 +2851,11 @@ def _finalize_import(db: Session, import_job: ImportJob) -> None:
         "duplicate_skipped": total_duplicate_skipped,
         "auto_import_rate": round(total_imported / total_parsed, 4) if total_parsed > 0 else 0,
     }
+    if import_job.platform_bank_id:
+        # 平台目标：实际新增按 inserted_new 历史证据计，并与当前草稿量、
+        # 可发布题量分开呈现；不能用 total_imported（人工 accept 会虚报）。
+        summary["actual_inserted_count"] = _actual_inserted_count(db, import_job.id)
+        summary.update(_platform_target_counts(db, import_job))
     import_job.summary_json = summary
 
     # 确定最终状态。失败 chunk 优先标记为 partial_imported，避免被待复核、
@@ -2486,6 +2881,12 @@ def _finalize_import(db: Session, import_job: ImportJob) -> None:
 
     import_job.updated_at = datetime.now(timezone.utc)
     commit_import(db)
+
+    target = ImportTarget(db, import_job)
+    if target.is_platform:
+        # 平台任务不写个人题库、词频或源文件名；草稿量由序列化按当前表计数。
+        _write_reconciliation(db, import_job)
+        return
 
     # 更新题库统计和高频词
     if total_imported > 0:
@@ -2556,7 +2957,11 @@ def _update_bank_stats(db: Session, bank_id: int) -> None:
 
 
 def serialize_import_job(import_job: ImportJob, db: Session | None = None) -> dict:
-    """将 ImportJob 序列化为字典"""
+    """将 ImportJob 序列化为字典
+
+    个人任务保持原有字段（只增不删）；平台任务返回 ``platform_bank_id`` 与
+    ``bank_id=None``，并额外给出实际新增/当前草稿/可发布三类计数。
+    """
     bg_job = None
     if import_job.background_job_id:
         bg_job_record = import_job.background_job
@@ -2576,7 +2981,7 @@ def serialize_import_job(import_job: ImportJob, db: Session | None = None) -> di
         "auto_handled": summary.get("auto_handled", 0),
     }
 
-    return {
+    result = {
         "id": import_job.id,
         "bank_id": import_job.bank_id,
         "background_job_id": import_job.background_job_id,
@@ -2599,7 +3004,21 @@ def serialize_import_job(import_job: ImportJob, db: Session | None = None) -> di
         "updated_at": import_job.updated_at.isoformat() if import_job.updated_at else None,
         "background_job": bg_job,
         "reconciliation": (import_job.config_json or {}).get("reconciliation"),
+        "platform_bank_id": import_job.platform_bank_id,
     }
+
+    # 平台任务：实际新增按 inserted_new 计，草稿量/可发布量按当前目标状态计。
+    if import_job.platform_bank_id:
+        if db is not None:
+            result["actual_inserted_count"] = _actual_inserted_count(db, import_job.id)
+            result.update(_platform_target_counts(db, import_job))
+        else:
+            # 无 db 时退回收尾时写入 summary 的快照计数（仅为只读展示）。
+            result["actual_inserted_count"] = summary.get("actual_inserted_count")
+            result["draft_question_count"] = summary.get("draft_question_count")
+            result["publishable_question_count"] = summary.get("publishable_question_count")
+
+    return result
 
 
 def serialize_chunk(chunk: ImportChunk) -> dict:
@@ -2640,6 +3059,8 @@ def serialize_parsed_question(pq: ImportParsedQuestion) -> dict:
         "review_status": pq.review_status,
         "import_status": pq.import_status,
         "imported_question_id": pq.imported_question_id,
+        "imported_platform_question_id": pq.imported_platform_question_id,
+        "inserted_new": pq.inserted_new,
     }
 
 

@@ -103,6 +103,7 @@ def build_scope_key(job_type: str, payload: dict) -> str:
     if job_type == JOB_TYPE_BANK_FREQUENT_TRANSLATE:
         return f"bank_frequent:{payload['bank_id']}"
     if job_type == JOB_TYPE_QUESTION_IMPORT_LLM:
+        # 导入 scope 只按 ImportJob 区分；平台任务 bank_id 为 None 也能正常工作。
         return f"import_llm:{payload.get('import_job_id', 'unknown')}"
     if job_type == JOB_TYPE_QUESTION_IMPORT_LLM_REPARSE:
         return f"import_reparse:{payload.get('chunk_id', 'unknown')}"
@@ -150,7 +151,7 @@ def count_pending_items(db: Session, job_type: str, payload: dict) -> int:
         return sum(1 for item in items if text_missing(item.term_zh))
 
     if job_type in (JOB_TYPE_QUESTION_IMPORT_LLM, JOB_TYPE_QUESTION_IMPORT_LLM_REPARSE):
-        # 智能导入任务始终需要执行
+        # 智能导入任务始终需要执行；个人与平台目标都没有「个人题库必须存在」的前置。
         return 1
 
     if job_type == JOB_TYPE_QUESTION_TOPIC_TAG:

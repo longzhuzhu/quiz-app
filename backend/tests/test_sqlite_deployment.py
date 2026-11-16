@@ -65,6 +65,20 @@ def _alembic(database: Path, *args: str) -> subprocess.CompletedProcess:
     )
 
 
+def _alembic_head() -> str:
+    """当前迁移链的 head；避免在测试里硬编码 revision。"""
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "heads"],
+        cwd=BACKEND_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={**os.environ, "AI_API_KEY": "", "JWT_SECRET_KEY": "x", "SECRET_KEY": "x"},
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.split()[0]
+
+
 def _tables(database: Path) -> set[str]:
     with sqlite3.connect(database) as connection:
         return {
@@ -85,7 +99,10 @@ def test_empty_sqlite_upgrades_to_head_with_orm_schema(tmp_path):
     expected = set(Base.metadata.tables) | {"alembic_version"}
     assert _tables(database) == expected
     with sqlite3.connect(database) as connection:
-        assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == ("013",)
+        # 断言「停在当前 head」而不是某个固定 revision，
+        # 否则每新增一个迁移都要改这个测试。
+        head = _alembic_head()
+        assert connection.execute("SELECT version_num FROM alembic_version").fetchone() == (head,)
         ddl = connection.execute(
             "SELECT sql FROM sqlite_master WHERE name='questions'"
         ).fetchone()[0]

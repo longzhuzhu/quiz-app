@@ -24,6 +24,8 @@ const routes = [
   { path: '/exams/:examSlug/import-jobs/:jobId/review', name: 'ExamImportReview', component: () => import('../views/ImportReviewView.vue'), meta: { auth: true, admin: true, examScoped: true } },
   { path: '/exams/:examSlug/import-jobs/:jobId/auto-handled', name: 'ExamImportAutoHandled', component: () => import('../views/ImportAutoHandledView.vue'), meta: { auth: true, admin: true, examScoped: true } },
   { path: '/account', name: 'Account', component: () => import('../views/AccountView.vue'), meta: { auth: true, allowWithoutExam: true } },
+  { path: '/admin/platform-banks', name: 'AdminPlatformBanks', component: () => import('../views/AdminPlatformBanksView.vue'), meta: { auth: true, admin: true, allowWithoutExam: true } },
+  { path: '/admin/platform-banks/:sourceId', name: 'AdminPlatformBankDetail', component: () => import('../views/AdminPlatformBankDetailView.vue'), meta: { auth: true, admin: true, allowWithoutExam: true } },
   { path: '/admin/settings', name: 'AdminSettings', component: () => import('../views/AdminSettingsView.vue'), meta: { auth: true, admin: true, allowWithoutExam: true } },
   { path: '/admin/users', name: 'AdminUsers', component: () => import('../views/AdminUsersView.vue'), meta: { auth: true, admin: true, allowWithoutExam: true } },
 ]

@@ -2,7 +2,16 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -32,8 +41,12 @@ class BackgroundJob(Base):
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     lease_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_by: Mapped[int] = mapped_column(
-        Integer, ForeignKey("users.id"), nullable=False
+    # 平台导入/重解析没有个人项目归属；创建者只是审计署名，平台任务允许为空。
+    platform_bank_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("platform_banks.id"), nullable=True
+    )
+    created_by: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
@@ -44,10 +57,17 @@ class BackgroundJob(Base):
 
     # 关系
     creator = relationship("User", back_populates="background_jobs")
+    platform_bank = relationship("PlatformBank")
 
     __table_args__ = (
+        # 平台任务可以没有作者；个人后台任务仍必须有作者。
+        CheckConstraint(
+            "platform_bank_id IS NOT NULL OR created_by IS NOT NULL",
+            name="ck_background_jobs_platform_author",
+        ),
         UniqueConstraint("active_scope_key", name="uq_background_jobs_active_scope_key"),
         Index("idx_background_jobs_status_next_run", "status", "next_run_at"),
         Index("idx_background_jobs_status_lease", "status", "lease_until"),
         Index("idx_background_jobs_type_created_at", "job_type", "created_at"),
+        Index("idx_background_jobs_platform_bank", "platform_bank_id", "status"),
     )

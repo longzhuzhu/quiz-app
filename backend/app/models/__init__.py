@@ -4,6 +4,11 @@ from app.models.user import User
 from app.models.exam import Exam
 from app.models.question_bank import QuestionBank
 from app.models.question import Question
+from app.models.platform_bank import (
+    PlatformBank,
+    PlatformBankRelease,
+    PlatformDraftQuestion,
+)
 from app.models.question_explanation import QuestionExplanation
 from app.models.exam_topic import ExamTopic
 from app.models.question_topic import QuestionTopic
@@ -26,6 +31,9 @@ __all__ = [
     "Exam",
     "QuestionBank",
     "Question",
+    "PlatformBank",
+    "PlatformDraftQuestion",
+    "PlatformBankRelease",
     "QuestionExplanation",
     "ExamTopic",
     "QuestionTopic",

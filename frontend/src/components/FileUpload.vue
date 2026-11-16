@@ -36,7 +36,14 @@ const toast = useToast()
 const route = useRoute()
 const router = useRouter()
 
-const props = defineProps({ bankId: Number })
+const props = defineProps({
+  // 个人题库上传目标；使用 uploadUrl 时可省略。
+  bankId: { type: Number, default: null },
+  // 覆盖上传地址（例如平台题库管理接口）。为空时沿用个人题库路径，保持原行为。
+  uploadUrl: { type: String, default: '' },
+  // 个人导入默认跳转导入详情；平台导入没有个人路由，由父页面内联展示。
+  redirectToJob: { type: Boolean, default: true },
+})
 const emit = defineEmits(['imported'])
 const dragging = ref(false)
 const uploading = ref(false)
@@ -48,7 +55,8 @@ async function uploadFile(file) {
   const formData = new FormData()
   formData.append('file', file)
   try {
-    const res = await client.post(`/banks/${props.bankId}/import`, formData, {
+    const url = props.uploadUrl || `/banks/${props.bankId}/import`
+    const res = await client.post(url, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
 
@@ -57,8 +65,8 @@ async function uploadFile(file) {
     toast.success('文件已上传，正在后台解析中')
     emit('imported', { ...res.data })
 
-    // 跳转到导入任务详情页
-    if (importJobId) {
+    // 个人导入仍跳转导入任务详情页；平台导入由父页面内联轮询，避免落到个人项目路由
+    if (props.redirectToJob && importJobId) {
       router.push(currentExamPath(route, 'importJobDetail', { jobId: importJobId }))
     }
   } catch (e) {

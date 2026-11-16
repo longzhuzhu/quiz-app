@@ -196,13 +196,18 @@ def release_import_execution(db: Session, job: BackgroundJob | None = None) -> N
 
 
 @contextmanager
-def review_writer(db, import_job_id: int):
+def review_writer(db, import_job_id: int, platform_bank_id: str | None = None):
     handle = acquire_import_lock(db, import_job_id)
     if handle is None:
         db.rollback()
         raise ImportBusy("导入任务正在解析或复核，请稍后重试")
     try:
         db.rollback()  # 丢弃入口读取的旧快照；尚未开始业务修改。
+        if platform_bank_id:
+            # 平台复核写者与主导入/发布统一顺序：PlatformBank → ImportJob。
+            # 必须在取得 ImportJob 行锁之前完成，否则会与导入路径形成反向取锁。
+            from app.services.platform_bank_service import lock_platform_bank
+            lock_platform_bank(db, platform_bank_id)
         db.execute(select(ImportJob.id).where(ImportJob.id == import_job_id).with_for_update())
         db.info["import_review_lock"] = (handle, import_job_id)
         yield
@@ -217,11 +222,21 @@ def review_writer(db, import_job_id: int):
             release_import_lock(handle, import_job_id)
 
 
+def _platform_bank_id_for(db, import_job_id: int) -> str | None:
+    """复核入口只读探测目标；真实锁定仍由 review_writer 在丢弃快照后执行。"""
+    if not isinstance(db, Session):
+        return None
+    return db.execute(
+        select(ImportJob.platform_bank_id).where(ImportJob.id == import_job_id)
+    ).scalar_one_or_none()
+
+
 def coordinated_review(function):
     @wraps(function)
     def wrapped(db, import_job_id, *args, **kwargs):
         try:
-            with review_writer(db, import_job_id):
+            platform_bank_id = _platform_bank_id_for(db, import_job_id)
+            with review_writer(db, import_job_id, platform_bank_id=platform_bank_id):
                 return function(db, import_job_id, *args, **kwargs)
         except ImportBusy as exc:
             return {"error": str(exc), "status_code": 409}
@@ -265,6 +280,9 @@ def try_claim_import(
             chunk = db.get(ImportChunk, payload.get("chunk_id"))
             if chunk is None or chunk.import_job_id != import_job_id or payload.get("bank_id") != import_job.bank_id:
                 raise ValueError("重解析 chunk/bank 不属于该导入任务")
+            # 平台目标的来源也必须是该 ImportJob 记录的来源，不能凭 payload 指定。
+            if import_job.platform_bank_id is not None and payload.get("platform_bank_id") != import_job.platform_bank_id:
+                raise ValueError("重解析 chunk/平台来源不属于该导入任务")
         # stale recovery 可以把最后一次执行重排 queued；领取锁内必须再次检查额度。
         # 尚未领取新 attempt，不能调用要求 running token 的 fail_job。
         if (current.attempt_count or 0) >= (current.max_attempts or 0):

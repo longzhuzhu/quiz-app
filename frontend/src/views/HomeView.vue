@@ -1,9 +1,15 @@
 <template>
   <div>
     <!-- 页面标题 -->
-    <div class="mb-6">
-      <p class="text-sm text-primary-600 dark:text-primary-400">{{ examStore.current?.short_name || '考试项目' }}</p>
-      <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ examStore.current?.name || '项目首页' }}</h1>
+    <div class="mb-6 flex flex-wrap items-start justify-between gap-2">
+      <div>
+        <p class="text-sm text-primary-600 dark:text-primary-400">{{ examStore.current?.short_name || '考试项目' }}</p>
+        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ examStore.current?.name || '项目首页' }}</h1>
+      </div>
+      <router-link
+        :to="currentExamPath(route, 'banks')"
+        class="text-sm text-primary-600 hover:underline dark:text-primary-400"
+      >题库管理</router-link>
     </div>
 
     <!-- 统计仪表盘 - 4列 -->
@@ -106,7 +112,19 @@
     </div>
     <div v-else-if="banks.length === 0" class="py-16 text-center">
       <FolderIcon class="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600" />
-      <p class="mt-4 text-gray-400 dark:text-gray-500">暂无题库，请管理员添加</p>
+      <p class="mt-4 text-gray-500 dark:text-gray-400">当前项目还没有题库</p>
+      <p class="mt-1 text-sm text-gray-400 dark:text-gray-500">
+        可以到个人题库创建或导入，也可以从平台题库一键取得副本。
+      </p>
+      <div class="mt-4 flex flex-wrap justify-center gap-2">
+        <BaseButton variant="secondary" @click="router.push(currentExamPath(route, 'banks'))">
+          个人题库
+        </BaseButton>
+        <BaseButton
+          variant="secondary"
+          @click="router.push({ path: currentExamPath(route, 'banks'), query: { directory: '1' } })"
+        >平台题库</BaseButton>
+      </div>
     </div>
     <div v-else class="space-y-4">
       <div v-for="bank in banks" :key="bank.id"

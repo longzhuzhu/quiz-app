@@ -19,6 +19,10 @@ from app.services.ai_service import (
     sanitize_options_for_storage,
 )
 from app.services.exam_service import get_bank_in_exam_or_404, get_question_in_exam_or_404
+from app.services.platform_bank_service import (
+    ensure_bank_accepts_formal_writes,
+    ensure_question_accepts_formal_writes,
+)
 from app.services.question_service import update_question_correct_answer
 from app.services.topic_service import set_question_topics_manually, topics_for_questions
 from app.services.explanation_service import input_fingerprint, invalidate_explanations
@@ -44,6 +48,8 @@ def question_to_dict(
         "order_index": q.order_index,
         "explanation": q.explanation,
         "explanation_zh": q.explanation_zh,
+        # D03：平台副本的来源考点只是只读描述，不参与项目专项练习。
+        "source_topics": q.source_topics,
         "created_at": q.created_at.isoformat(),
     }
     if include_answer:
@@ -84,6 +90,7 @@ def create_question(
     db: Session = Depends(get_db),
 ):
     bank = get_bank_in_exam_or_404(db, data.bank_id, exam)
+    ensure_bank_accepts_formal_writes(bank)
     q = Question(
         bank_id=bank.id,
         question_type=data.question_type,
@@ -108,6 +115,8 @@ def update_question(
     db: Session = Depends(get_db),
 ):
     q = get_question_in_exam_or_404(db, question_id, exam, lock_for_update=True)
+    # 平台副本的正式内容只读：即使只提交答案，也必须走专用更正入口。
+    ensure_question_accepts_formal_writes(db, q)
     original_input = input_fingerprint(q)
 
     if data.content is not None:
@@ -181,6 +190,7 @@ def delete_question(
     db: Session = Depends(get_db),
 ):
     q = get_question_in_exam_or_404(db, question_id, exam, lock_for_update=True)
+    ensure_question_accepts_formal_writes(db, q)
     invalidate_explanations(db, q)
     bank = db.get(QuestionBank, q.bank_id)
     db.query(QuizAnswer).filter_by(question_id=q.id).delete(synchronize_session=False)
